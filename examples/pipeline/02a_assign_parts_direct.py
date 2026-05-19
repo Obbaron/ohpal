@@ -26,14 +26,7 @@ from ampm import DataStore
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
-from config import (
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 MAX_DISTANCE_MM = (
     None  # rows farther than this from any part become "noise"; None = assign every row
@@ -41,6 +34,17 @@ MAX_DISTANCE_MM = (
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python 02a_assign_parts_direct.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()

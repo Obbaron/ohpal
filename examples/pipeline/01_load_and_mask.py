@@ -29,16 +29,20 @@ import polars as pl
 from ampm import DataStore
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
-from config import (
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python 01_load_and_mask.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     needs_rebuild = [L for L in store.layers if store._needs_rebuild(L)]

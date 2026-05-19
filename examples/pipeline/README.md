@@ -1,18 +1,18 @@
 # AMPM analysis pipeline
 
-A four-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a teaching scaffold: read the scripts in order to understand how each stage of `ampm-analyzer` works, then copy what you need into your own analysis scripts.
+A four-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a scaffold to demonstrate how each stage of `ampm-analyzer` works. Copy what you need into your own analysis scripts.
 
 For the conceptual reference on each stage (algorithm choices, tuning tradeoffs, memory math), see [docs/PIPELINE.md](../../docs/PIPELINE.md).
 
 ## TL;DR
 
-Edit `config.py` at the project root with your build's paths, then run:
+Place a `config.toml` in your build directory (see [config.toml](../../config.toml) for the format), then run:
 
 ```bash
-python examples/pipeline/01_load_and_mask.py
-python examples/pipeline/02a_assign_parts_direct.py    # OR 02b for DBSCAN
-python examples/pipeline/03_compute_cov.py
-python examples/pipeline/04_visualize.py
+python examples/pipeline/01_load_and_mask.py /path/to/build_directory
+python examples/pipeline/02a_assign_parts_direct.py /path/to/build_directory  # OR 02b
+python examples/pipeline/03_compute_cov.py /path/to/build_directory
+python examples/pipeline/04_visualize.py /path/to/build_directory
 ```
 
 The first run takes minutes (builds caches). Subsequent runs are seconds.
@@ -47,96 +47,88 @@ The tradeoff: each script re-runs the upstream stages on every invocation. That 
 
 ### 01_load_and_mask.py
 
-**What it does:** Reads the source `.txt` files into per-layer Parquet files, then masks rows to the part region using the STL geometry.
+Reads the source `.txt` files into per-layer Parquet files, then masks rows to the part region using the STL geometry.
 
-**Caches it writes:**
+**Writes the following caches:**
 
-- `<SOURCE>/.cache/layer=NNNNN.parquet` — one per source file
-- `<SOURCE>/.cache/fullplate_mask.pkl` — per-layer 2D polygons sliced from the STL
-- `<SOURCE>/.cache/mask_keep.pq` — surviving-row keys after applying the mask
-
-**Caches it reads:** None (this is the entry point).
-
-**Key constants:** None. The script has no tuning parameters — it just runs the load and mask steps with values from `config.py`.
+- `<SOURCE>/.cache/layer=NNNNN.parquet`: one per source file.
+- `<SOURCE>/.cache/fullplate_mask.pkl`: per-layer 2D polygons sliced from the STL.
+- `<SOURCE>/.cache/mask_keep.pq`: surviving-row keys after applying the mask.
 
 **Expected output:** Total row count loaded and row count surviving the mask. For a typical build, mask survival is 60-95% depending on how much of the build is contour scans, supports, and rapids.
 
 ### 02a_assign_parts_direct.py
 
-**What it does:** Assigns each masked row to its nearest part by 2D Euclidean distance in the `(Demand X, Demand Y)` plane. No clustering involved.
+Assigns each masked row to its nearest part by 2D Euclidean distance in the `(Demand X, Demand Y)` plane (no clustering).
 
 **Caches it reads:** Layer cache + mask cache from 01.
 
-**Caches it writes:** None.
-
 **Key constants:**
 
-- `MAX_DISTANCE_MM` (default `None`) — rows farther than this from every part become `noise`. Default `None` assigns every row regardless.
+- `MAX_DISTANCE_MM` (default `None`). Rows farther than this from every part become `noise`. Default `None` assigns every row regardless.
 
-**When to use:** Builds with few large parts that are well-separated (typical medical implant builds with 1-10 parts).
+**When to use:** The direct assignment method works best with large parts that are well-separated. Always try direct assignment first before resorting to clustering methods.
 
-**Expected output:** Per-part row counts and mean/max distances. With well-separated parts, every row should be assigned and max distance should sit inside each part's bounding radius.
+**Expected output:** Per-part row counts and mean/max distances. Every row should be assigned and max distance should sit inside each part's bounding radius.
 
 ### 02b_assign_parts_dbscan.py
 
-**What it does:** Uses chunked DBSCAN to identify clusters in the masked data, then matches each cluster to the nearest QuantAM Part ID by centroid.
+Uses chunked DBSCAN to identify clusters in the masked data, then matches each cluster to the nearest QuantAM Part ID by centroid.
 
 **Caches it reads:** Layer cache + mask cache from 01.
 
-**Caches it writes:** `<SOURCE>/.cache/cluster_labels.pq` — cluster ID per row.
+**Caches it writes:** `<SOURCE>/.cache/cluster_labels.pq` - cluster ID per row.
 
 **Key constants:**
 
-- `EPS_XY` — in-plane neighbor radius (mm). Run `examples/tune_eps.py` to find the right value for your build.
-- `EPS_Z` — through-thickness radius (mm), typically `2 * LAYER_THICKNESS`.
-- `MIN_SAMPLES` — density threshold (default 10).
-- `LAYERS_PER_CHUNK` — chunk size (default 11). Smaller = lower memory, more chunks.
-- `OVERLAP_LAYERS` — chunk overlap (default `None` for auto). Auto picks `max(2, ceil(EPS_Z / LAYER_THICKNESS) * 2)`.
+- `EPS_XY`: in-plane neighbor radius (mm). Run `examples/tune_eps.py` to find the right value for your build.
+- `EPS_Z`: through-thickness radius (mm), typically `2 * LAYER_THICKNESS`.
+- `MIN_SAMPLES`: density threshold (default 10).
+- `LAYERS_PER_CHUNK`: chunk size (default 11). Smaller = lower memory, more chunks.
+- `OVERLAP_LAYERS`: chunk overlap (default `None` for auto). Auto picks `max(2, ceil(EPS_Z / LAYER_THICKNESS) * 2)`.
 
-**When to use:** Builds with many small, closely-spaced parts (parametric DOEs, lattice builds).
+**When to use:** Use DBSCAN when direct assignment is not possible _e.g._ closely-spaced parts, lattice builds, etc.
 
-**Expected output:** Number of clusters found, noise percentage, per-cluster summary, and the cluster→part mapping. For correct tuning, cluster count matches QuantAM part count and noise is under 1%.
+**Warning:** If memory usage exceeds ~80% during clustering, performance may be severely throttled. Expect processing times increase from minutes to hours due to disk-based memory paging (swap thrashing).
+
+**Expected output:** Number of clusters found, noise percentage, per-cluster summary, and the cluster to part mapping. For correct tuning, cluster count matches QuantAM part count and noise is under 1%.
 
 ### 03_compute_cov.py
 
-**What it does:** Computes Coefficient of Variation (CoV) per part in three different modes (`overall`, `per_layer_mean`, `across_layers`), then joins the `overall` table with QuantAM laser parameters.
+Computes Coefficient of Variation (CoV) per part in three different modes (`overall`, `per_layer_mean`, `across_layers`), then joins the `overall` table with QuantAM laser parameters.
 
 **Caches it reads:** Layer cache + mask cache from 01. Cluster cache from 02b if `USE_DIRECT_ASSIGNMENT = False`.
 
-**Caches it writes:** None.
-
 **Key constants:**
 
-- `USE_DIRECT_ASSIGNMENT` — `True` mirrors 02a's logic, `False` mirrors 02b. Must match your choice of 02.
-- `MAX_DISTANCE_MM` (used when direct assignment is on).
-- DBSCAN constants (used when direct assignment is off).
-- `SIGNALS` — list of column names to compute CoV for.
+- `USE_DIRECT_ASSIGNMENT`: `True` mirrors 02a's logic, `False` mirrors 02b. 03 must match your choice of 02.
+- `MAX_DISTANCE_MM`: used when direct assignment is on.
+- DBSCAN parameters: used when direct assignment is off.
+- `SIGNALS`: list of column names for which to compute CoV.
 
 **Expected output:** Three tables of per-part CoV (one per mode), then a joined table with `Hatches Power`, `Hatch Speed`, and CoV for each part. Comparing the modes diagnoses where instability lives: high `overall` + low `per_layer_mean` means layer-to-layer drift; low `overall` + high `per_layer_mean` means within-layer noise that averages out.
 
 ### 04_visualize.py
 
-**What it does:** Produces three interactive Plotly figures from the assigned data.
+Produces three interactive plotly figures from the part-assigned data.
 
 **Caches it reads:** Same as 03.
-
-**Caches it writes:** None.
 
 **Plots produced:**
 
 1. **3D scatter** colored by per-part overall CoV. Hover shows `part_id`, `Hatches Power`, `Hatch Speed`.
-2. **KDE comparison** of the 3 most stable vs 3 least stable parts on the chosen signal.
-3. **Parametric process map** — contour of CoV vs `(Hatch Speed, Hatches Power)`. Auto-skipped when every part has identical laser parameters.
+2. **KDE comparison** of the 3 most stable vs 3 least stable parts on a chosen signal.
+3. **Parametric contour plot** of overall CoV vs `(Hatch Speed, Hatches Power)`. Automatically skips this plot if every part has identical laser parameters.
 
 **Key constants:**
 
 - Same branching and assignment constants as 03.
-- `SIGNAL` — the signal column to plot (default `"MeltVIEW melt pool (mean)"`).
-- `TARGET_POINTS_3D` — how many points to sample for the 3D scatter (default 80,000).
+- `SIGNAL`: the signal column to plot (default `"MeltVIEW melt pool (mean)"`).
+- `TARGET_POINTS_3D`: how many points to sample for the 3D scatter (default 80,000).
 
 ## Choosing 02a vs 02b
 
-The decision turns on **how dense and how separated** the parts are on the build plate.
+Choosing between direct assignment (02a) and clustering (02b) to resolve part IDs, typically depends on **how dense and how well-separated** the parts are on the build plate.
 
 | Situation | Use |
 |-----------|-----|
@@ -148,7 +140,7 @@ The decision turns on **how dense and how separated** the parts are on the build
 
 When in doubt, try 02a first. It's faster, has no tuning parameters, and produces equivalent results to DBSCAN when parts are well-separated. Switch to 02b only if you find 02a is assigning rows to the wrong parts (rare on real geometries).
 
-For tuning 02b, see `examples/tune_eps.py` and [docs/CLUSTERING.md](../../docs/CLUSTERING.md).
+Clustering methods requires parameter tuning per build. See `examples/tune_eps.py` and [docs/CLUSTERING.md](../../docs/CLUSTERING.md) for more information on DBSCAN tuning.
 
 ## What's cached and when
 
@@ -170,7 +162,7 @@ See [docs/CACHING.md](../../docs/CACHING.md) for the full caching model.
 The four scripts are deliberately simple. Once you understand the flow:
 
 - **Copy a script into a new file** and modify it for your specific analysis. The pipeline scripts are templates, not entry points to a framework.
-- **Skip steps** — if you already have a part-assigned DataFrame on disk, you don't need 01 or 02. Just load it and run the CoV/visualization parts.
-- **Add steps** — between 03 and 04, you might insert a custom statistical test, a write-to-CSV step, or a comparison against historical baseline data.
+- **Skip steps** if you already have a part-assigned DataFrame on disk. You don't need 01 or 02; just load it and run the CoV and/or visualization parts.
+- **Add more steps** between 03 and 04 _e.g._ statistical test, write to a file, comparison against historical baseline data, etc.
 
-The end-to-end scripts in `examples/` (`cov.py`, `cov_direct.py`) show the same workflow in a single file, useful as a reference for what a "production" analysis looks like.
+The end-to-end scripts in `examples/` show the same workflow in a single file, useful as a reference for what a full script looks like.

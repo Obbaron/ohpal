@@ -35,15 +35,7 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import (
-    CLUSTER_CACHE,
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 USE_DIRECT_ASSIGNMENT = True
 MAX_DISTANCE_MM = None  # direct-assignment
@@ -62,6 +54,18 @@ TARGET_POINTS_3D = 80_000  # 3D plots downsample to this many points
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python 04_visualize.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    CLUSTER_CACHE = config["CLUSTER_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()

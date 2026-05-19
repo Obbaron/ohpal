@@ -52,15 +52,7 @@ from ampm.parts import (
     join_parts_with_stats,
 )
 from ampm.stats import compute_cov
-from config import (
-    CLUSTER_CACHE,
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 USE_DIRECT_ASSIGNMENT = True  # False = use DBSCAN clustering
 MAX_DISTANCE_MM = None  # only used when USE_DIRECT_ASSIGNMENT = True
@@ -79,6 +71,18 @@ SIGNALS = [
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python 03_compute_cov.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    CLUSTER_CACHE = config["CLUSTER_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()

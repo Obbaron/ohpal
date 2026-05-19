@@ -42,15 +42,7 @@ from ampm.clustering import cluster_dbscan_chunked, cluster_summary
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map
-from config import (
-    CLUSTER_CACHE,
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 EPS_XY = 0.3  # in-plane neighbor radius (mm); run tune_eps.py to find this
 EPS_Z = 0.06  # through-thickness radius (mm); typically 2 * LAYER_THICKNESS
@@ -60,6 +52,18 @@ OVERLAP_LAYERS = 2  # at least ceil(EPS_Z / LAYER_THICKNESS)
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python 02b_assign_parts_dbscan.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    CLUSTER_CACHE = config["CLUSTER_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()

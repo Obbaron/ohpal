@@ -1,10 +1,13 @@
-# ampm-analysis configuration
-
-
+# ampm build configuration
+#
+# A ``config.toml`` must live in your build directory.
+# Paths can be relative or absolute.
+ 
 [paths]
-source    = 'C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR299_OHP_Ti-Sterling\[3] Export Packets'
-stl       = 'C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR299_OHP_Ti-Sterling\JR299_fullplate.stl'
-parts_csv = 'C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR299_OHP_Ti-Sterling\JR299_sterling_parts.csv'
-
+source    = '[3] Export Packets'
+stl       = 'JR299_fullplate.stl'
+parts_csv = 'JR299_sterling_parts.csv'
+ 
 [build]
 layer_thickness = 0.03  # mm
+ 
