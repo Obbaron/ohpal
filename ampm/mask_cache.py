@@ -205,9 +205,6 @@ def load_mask_keep(
     else:
         df_to_filter = df_full
 
-    # Inner join semantics: keep rows whose (layer, Start time) is in the cache.
-    # Using join with how="semi" is the fastest way to do this in polars as
-    # it returns only matching left rows, no duplicate columns.
     out = df_to_filter.join(cached_keys, on=list(_KEY_COLUMNS), how="semi")
 
     if verbose:

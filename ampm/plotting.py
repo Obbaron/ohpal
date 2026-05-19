@@ -1,13 +1,13 @@
 """
-Dumb plotters for AMPM data.
+Dumb plotters for AMPM data
 
 These functions take a polars DataFrame plus column names and produce a Plotly
-Figure. They do NOT downsample, filter, or transform — pass in pre-downsampled
+Figure. They do NOT downsample, filter, or transform; pass in pre-downsampled
 data (see ampm.sampling) before calling them.
 
 PERFORMANCE NOTE
 ----------------
-Plotly's Scatter3d uses Three.js, not WebGL.  Practical guidance:
+Plotly's Scatter3d uses Three.js, not WebGL. Practical guidance:
   -  ~50k pts:   smooth on most laptops
   - ~100k pts:   comfortable for exploration (recommended ceiling)
   - ~200k pts:   noticeable lag when rotating
@@ -846,7 +846,7 @@ def kde(
     With AMPM-scale data (millions of points per group), running KDE on the
     full data is unnecessary and pushes memory hard. By default, groups
     larger than ``max_points_per_group`` are randomly sampled before the
-    KDE is fit — the resulting curve is visually indistinguishable from the
+    KDE is fit; the resulting curve is visually indistinguishable from the
     full-data version since KDE is a smoothed estimate. Set
     ``max_points_per_group=None`` to opt out and use every row.
 

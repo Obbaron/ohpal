@@ -11,7 +11,7 @@ Key design choices:
   intuitive parameters: eps_xy is your XY radius, eps_z is your Z radius.
 - Stable labels: clusters are renumbered by centroid (X, then Y, then Z) so
   that running on the same data gives the same labels.  Noise stays at -1.
-- Output is a polars DataFrame with the original columns plus a 'cluster'
+- Output is a Polars DataFrame with the original columns plus a 'cluster'
   integer column, ready for plotting (color="cluster") or remapping to
   part IDs.
 
@@ -343,14 +343,13 @@ def cluster_summary(
     return df.group_by(cluster_col).agg(aggs).sort(cluster_col)
 
 
-# Chunked DBSCAN over the FULL dataset (no downsampling)
 class _UnionFind:
     """
     Disjoint-set / union-find over arbitrary hashable keys.
 
     Used to merge cluster labels across chunk boundaries: each global label
     starts as a (chunk_id, local_label) pair, and overlap points create
-    union edges between two such pairs.
+    union edges between two pairs.
     """
 
     def __init__(self) -> None:
@@ -374,7 +373,6 @@ class _UnionFind:
         ra, rb = self.find(a), self.find(b)
         if ra == rb:
             return
-        # Union by rank.
         if self._rank[ra] < self._rank[rb]:
             ra, rb = rb, ra
         self._parent[rb] = ra
@@ -382,7 +380,7 @@ class _UnionFind:
             self._rank[ra] += 1
 
     def components(self) -> dict:
-        """Return {key -> root_key} for every key ever added."""
+        """Return {key: root_key} for every key ever added."""
         return {k: self.find(k) for k in self._parent}
 
 
@@ -531,10 +529,6 @@ def cluster_dbscan_chunked(
             if L >= 0:
                 uf.add((chunk_id, int(L)))
 
-        # For rows that already have a label from a previous chunk (i.e.,
-        # they fell in the previous chunk's overlap zone), union the two
-        # labels — provided neither is noise. Trust non-noise: if one is -1
-        # and the other is a real label, take the real label.
         prev_chunk = row_chunk[chunk_indices]
         prev_local = row_local[chunk_indices]
         already_labeled = prev_chunk >= 0
@@ -574,7 +568,7 @@ def cluster_dbscan_chunked(
     roots: dict = {}
     next_id = 0
     components = uf.components()
-    for key, root in components.items():
+    for _, root in components.items():
         if root not in roots:
             roots[root] = next_id
             next_id += 1
