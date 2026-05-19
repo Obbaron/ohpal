@@ -4,6 +4,7 @@ optionally correct melt-pool signal, analyze process stability via
 CoV, and visualize chosen data columns.
 """
 
+import sys
 from pathlib import Path
 
 import polars as pl
@@ -20,14 +21,7 @@ from ampm.parts import (
 from ampm.plotting import bar, contour, kde, scatter2d, scatter2d_layered, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import (
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
+from config import load_config
 
 MAX_DISTANCE_MM = None
 
@@ -45,6 +39,17 @@ COV_PLOT_SIGNAL = (
 
 
 def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: python explore.py <build_directory>")
+    config = load_config(sys.argv[1])
+
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()
