@@ -1,24 +1,23 @@
 """
-view_layers.py - interactive per-layer viewer
+view_layers.py - interactive per-layer viewer for AMPM data.
 
-Loads cached AMPM data via DataStore, applies the cached mask, and
-hands the result to the scatter2d_layered plotter, which randomly
-downsamples each layer to the target point count.
+Loads cached AMPM data via DataStore (handles bracketed paths and the
+parquet layout), applies the cached mask, and hands the result to the
+scatter2d_layered plotter, which random-downsamples each layer to the
+target point count internally.
 
-Run AFTER populating the mask cache.
+Run AFTER explore.py has populated the mask cache.
 """
 
 import sys
 from pathlib import Path
 
-sys.path.insert(
-    0, str(Path(__file__).parent.parent)
-)  # Only needed to run from within examples/
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm import DataStore
 from ampm.mask_cache import load_mask_keep
 from ampm.plotting import scatter2d_layered
-from config import load_config
+from ampm.config import load_config
 
 LAYERED_SIGNALS = [
     "MeltVIEW melt pool (mean)",
@@ -30,25 +29,24 @@ POINTS_PER_LAYER = 5_000
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python view_layers.py <build_directory>")
-    config = load_config(sys.argv[1])
+    cfg = load_config(sys.argv[1])
 
-    SOURCE = config["SOURCE"]
-    LAYER_THICKNESS = config["LAYER_THICKNESS"]
-    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    SOURCE = cfg["SOURCE"]
+    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
+    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)
 
     needed_cols = ["Demand X", "Demand Y", "Start time", *LAYERED_SIGNALS]
     print(f"Loading columns {needed_cols}...")
-    dataframe = store.query(columns=needed_cols)
-    print(f"  loaded {dataframe.height:,} rows")
+    df = store.query(columns=needed_cols)
+    print(f"  loaded {df.height:,} rows")
 
     print("Applying cached mask...")
-    df_masked = load_mask_keep(dataframe, MASK_KEEP_CACHE, strict=False, verbose=True)
+    df_masked = load_mask_keep(df, MASK_KEEP_CACHE, strict=False, verbose=True)
     print(f"  {df_masked.height:,} rows after mask")
-
-    del dataframe
+    del df
 
     print(
         f"Building interactive viewer ({len(LAYERED_SIGNALS)} signals, "

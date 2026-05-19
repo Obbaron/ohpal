@@ -29,7 +29,7 @@ import polars as pl
 from ampm import DataStore
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
-from config import load_config
+from ampm.config import load_config
 
 
 def main() -> None:

@@ -5,6 +5,10 @@ Usage:
     from config import load_config
     config = load_config("path/to/build_directory")
 
+    Or to auto-generate config.toml if it doesn't exist:
+    from config import create_or_load_config
+    config = create_or_load_config("path/to/build_directory")
+
     The build directory should contain a `config.toml` file.
     Paths in the TOML can be relative or absolute.
 """
@@ -76,3 +80,46 @@ def load_config(build_dir: str | Path) -> dict:
         "MASK_KEEP_CACHE": str(Path(source) / ".cache" / "mask_keep.pq"),
         "CLUSTER_CACHE": str(Path(source) / ".cache" / "cluster_labels.pq"),
     }
+
+
+def create_or_load_config(
+    build_dir: str | Path,
+    *,
+    source: str | Path | None = None,
+    stl: str | Path | None = None,
+    parts_csv: str | Path | None = None,
+) -> dict:
+    """
+    Load config.toml from the build directory, creating it first if absent.
+
+    Parameters
+    ----------
+    build_dir : str | Path
+        Path to the build directory.
+    source : str, Path, or None
+        Override for the packet data directory. Forwarded to
+        ``setup_build.create_config`` if the TOML needs to be generated.
+    stl : str, Path, or None
+        Override for the STL file.
+    parts_csv : str, Path, or None
+        Override for the QuantAM parts CSV.
+
+    Returns
+    -------
+    dict with keys: SOURCE, STL, PARTS_CSV, LAYER_THICKNESS,
+                    MASK_CACHE, MASK_KEEP_CACHE, CLUSTER_CACHE
+    """
+    build_dir = Path(build_dir).resolve()
+    toml_path = build_dir / "config.toml"
+
+    if not toml_path.exists():
+        from ampm.setup_build import create_config
+
+        create_config(
+            build_dir,
+            source=source,
+            stl=stl,
+            parts_csv=parts_csv,
+        )
+
+    return load_config(build_dir)

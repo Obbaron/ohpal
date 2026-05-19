@@ -35,7 +35,7 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import load_config
+from ampm.config import load_config
 
 USE_DIRECT_ASSIGNMENT = True
 MAX_DISTANCE_MM = None  # direct-assignment

@@ -8,15 +8,13 @@ its nearest part by 2D Euclidean distance, then produces three plots:
    Hover shows part_id, Power, Speed for context.
 2. KDE comparison of the most-stable vs least-stable parts on the
    chosen signal.
-3. Parametric contour plot of x = Speed, y = Power, z = Cov.
+3. Parametric contour plot of CoV vs (Speed, Power).
 """
 
 import sys
 from pathlib import Path
 
-sys.path.insert(
-    0, str(Path(__file__).parent.parent)
-)  # Only needed to run from within examples/
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 
@@ -31,7 +29,7 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import load_config
+from ampm.config import load_config
 
 MAX_DISTANCE_MM = None
 SIGNAL = "MeltVIEW melt pool (mean)"
@@ -42,19 +40,19 @@ N_BEST_WORST = 3
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python parametric.py <build_directory>")
-    config = load_config(sys.argv[1])
+    cfg = load_config(sys.argv[1])
 
-    SOURCE = config["SOURCE"]
-    STL = config["STL"]
-    PARTS_CSV = config["PARTS_CSV"]
-    LAYER_THICKNESS = config["LAYER_THICKNESS"]
-    MASK_CACHE = config["MASK_CACHE"]
-    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    SOURCE = cfg["SOURCE"]
+    STL = cfg["STL"]
+    PARTS_CSV = cfg["PARTS_CSV"]
+    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
+    MASK_CACHE = cfg["MASK_CACHE"]
+    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
-    dataframe = store.query()
-    print(f"Loaded {dataframe.height:,} rows across {len(store.layers)} layers.")
+    df = store.query()
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
@@ -74,7 +72,7 @@ def main() -> None:
         return apply_mask(d, mask)
 
     df_masked = mask_or_load(
-        dataframe,
+        df,
         cache_path=MASK_KEEP_CACHE,
         mask_fn=masking_wrapper,
         params=mask_params,
@@ -82,7 +80,7 @@ def main() -> None:
     )
     print(f"After mask: {df_masked.height:,} rows.")
 
-    del dataframe
+    del df
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()

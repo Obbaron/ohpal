@@ -23,10 +23,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import polars as pl
 
 from ampm import DataStore
+from ampm.config import load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
-from config import load_config
 
 MAX_DISTANCE_MM = (
     None  # rows farther than this from any part become "noise"; None = assign every row

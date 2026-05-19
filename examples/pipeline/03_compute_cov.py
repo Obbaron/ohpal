@@ -52,7 +52,7 @@ from ampm.parts import (
     join_parts_with_stats,
 )
 from ampm.stats import compute_cov
-from config import load_config
+from ampm.config import load_config
 
 USE_DIRECT_ASSIGNMENT = True  # False = use DBSCAN clustering
 MAX_DISTANCE_MM = None  # only used when USE_DIRECT_ASSIGNMENT = True

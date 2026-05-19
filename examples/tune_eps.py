@@ -1,5 +1,5 @@
 """
-tune_eps.py - DBSCAN tuning workflow
+tune_eps.py - interactive DBSCAN tuning workflow.
 
 Walks through three stages of tuning the in-plane neighborhood radius
 EPS_XY for clustering AMPM data into individual parts:
@@ -41,17 +41,21 @@ rather than full-height columns, EPS_Z is too small.
 import sys
 from pathlib import Path
 
-sys.path.insert(
-    0, str(Path(__file__).parent.parent)
-)  # Only needed to run from within examples/
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 
 from ampm import DataStore
-from ampm.clustering import k_distance_curve
+from ampm.clustering import (
+    cluster_dbscan,
+    cluster_summary,
+    k_distance_curve,
+)
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
-from config import load_config
+from ampm.parts import QuantAMParts, compute_part_id_map
+from ampm.plotting import scatter2d
+from ampm.config import load_config
 
 EPS_XY = 0.65
 K = 10
@@ -62,21 +66,22 @@ SAMPLE_SIZE = 1000000
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python tune_eps.py <build_directory>")
-    config = load_config(sys.argv[1])
+    cfg = load_config(sys.argv[1])
 
-    SOURCE = config["SOURCE"]
-    STL = config["STL"]
-    LAYER_THICKNESS = config["LAYER_THICKNESS"]
-    MASK_CACHE = config["MASK_CACHE"]
-    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    SOURCE = cfg["SOURCE"]
+    STL = cfg["STL"]
+    PARTS_CSV = cfg["PARTS_CSV"]
+    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
+    MASK_CACHE = cfg["MASK_CACHE"]
+    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
 
     EPS_Z = 2 * LAYER_THICKNESS
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)
 
-    dataframe = store.query()
-    print(f"Full slice: {dataframe.height:,} rows")
+    df = store.query()
+    print(f"Full slice: {df.height:,} rows")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
@@ -96,15 +101,14 @@ def main() -> None:
         return apply_mask(d, mask)
 
     df_masked = mask_or_load(
-        dataframe,
+        df,
         cache_path=MASK_KEEP_CACHE,
         mask_fn=masking_wrapper,
         params=mask_params,
         strict=True,
     )
     print(f"After mask: {df_masked.height:,} rows")
-
-    del dataframe
+    del df
 
     print(f"Stage 1: k-distance curve (k={K}, sample={SAMPLE_SIZE:,})")
     print(

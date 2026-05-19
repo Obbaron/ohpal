@@ -2,20 +2,18 @@
 view_3d.py
 
 Loads cached AMPM data, applies the cached mask, assigns each row to
-its nearest part centroid, then opens a single 3D scatter plot whose
-color encodes a user-chosen signal. A dropdown menu at the top of the
-figure lets you swap between several signals without re-rendering.
+its nearest part, then opens a single 3D scatter plot whose colour
+encodes a user-chosen signal. A dropdown menu at the top of the figure
+lets you swap between several signals without re-rendering.
 
 Hover on any point shows the active signal value, the part_id, and the
-laser parameters: Hatches Power and Hatch Speed.
+laser parameters (Hatches Power, Hatch Speed).
 """
 
 import sys
 from pathlib import Path
 
-sys.path.insert(
-    0, str(Path(__file__).parent.parent)
-)  # Only needed to run from within examples/
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 import plotly.graph_objects as go
@@ -26,7 +24,7 @@ from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
 from ampm.sampling import prepare_for_plot
-from config import load_config
+from ampm.config import load_config
 
 MAX_DISTANCE_MM = None
 TARGET_POINTS = 50_000
@@ -45,19 +43,19 @@ COLORSCALE = "Turbo"
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python view_3d.py <build_directory>")
-    config = load_config(sys.argv[1])
+    cfg = load_config(sys.argv[1])
 
-    SOURCE = config["SOURCE"]
-    STL = config["STL"]
-    PARTS_CSV = config["PARTS_CSV"]
-    LAYER_THICKNESS = config["LAYER_THICKNESS"]
-    MASK_CACHE = config["MASK_CACHE"]
-    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    SOURCE = cfg["SOURCE"]
+    STL = cfg["STL"]
+    PARTS_CSV = cfg["PARTS_CSV"]
+    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
+    MASK_CACHE = cfg["MASK_CACHE"]
+    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
-    dataframe = store.query()
-    print(f"Loaded {dataframe.height:,} rows across {len(store.layers)} layers.")
+    df = store.query()
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
@@ -77,15 +75,14 @@ def main() -> None:
         return apply_mask(d, mask)
 
     df_masked = mask_or_load(
-        dataframe,
+        df,
         cache_path=MASK_KEEP_CACHE,
         mask_fn=masking_wrapper,
         params=mask_params,
         strict=True,
     )
     print(f"After mask: {df_masked.height:,} rows.")
-
-    del dataframe
+    del df
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()

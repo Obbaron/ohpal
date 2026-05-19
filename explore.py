@@ -18,16 +18,10 @@ from ampm.parts import (
     assign_nearest_part,
     join_parts_with_stats,
 )
-from ampm.plotting import (  # noqa: F401
-    bar,
-    contour,
-    scatter2d,
-    scatter2d_layered,
-    scatter3d,
-)
+from ampm.plotting import bar, contour, kde, scatter2d, scatter2d_layered, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import load_config
+from ampm.config import load_config
 
 MAX_DISTANCE_MM = None
 
@@ -58,8 +52,8 @@ def main() -> None:
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
-    dataframe = store.query()
-    print(f"Full slice: {dataframe.height:,} rows")
+    df = store.query()
+    print(f"Full slice: {df.height:,} rows")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
@@ -80,16 +74,15 @@ def main() -> None:
         return apply_mask(d, mask)
 
     df_masked = mask_or_load(
-        dataframe,
+        df,
         cache_path=MASK_KEEP_CACHE,
         mask_fn=masking_wrapper,
         params=mask_params,
         strict=True,
     )
-    survival = df_masked.height / dataframe.height
+    survival = df_masked.height / df.height
     print(f"After mask: {df_masked.height:,} rows ({survival:.1%} kept)")
-
-    del dataframe  # freed for memory
+    del df
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()
@@ -102,7 +95,6 @@ def main() -> None:
         max_distance_mm=MAX_DISTANCE_MM,
         noise_label="noise",
     )
-
     del df_masked
 
     if CORRECT_MELTPOOL:

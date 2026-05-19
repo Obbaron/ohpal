@@ -42,7 +42,7 @@ from ampm.clustering import cluster_dbscan_chunked, cluster_summary
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map
-from config import load_config
+from ampm.config import load_config
 
 EPS_XY = 0.3  # in-plane neighbor radius (mm); run tune_eps.py to find this
 EPS_Z = 0.06  # through-thickness radius (mm); typically 2 * LAYER_THICKNESS

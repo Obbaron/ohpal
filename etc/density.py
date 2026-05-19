@@ -5,6 +5,15 @@ import polars as pl
 from ampm import DataStore
 from ampm.cluster_cache import cluster_or_load
 from ampm.clustering import cluster_dbscan, cluster_summary
+from ampm.config import (
+    CLUSTER_CACHE,
+    LAYER_THICKNESS,
+    MASK_CACHE,
+    MASK_KEEP_CACHE,
+    PARTS_CSV,
+    SOURCE,
+    STL,
+)
 from ampm.correction import MeltPoolCorrection
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
@@ -17,15 +26,6 @@ from ampm.parts import (
 from ampm.plotting import bar, contour, kde, scatter2d, scatter2d_layered, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from config import (
-    CLUSTER_CACHE,
-    LAYER_THICKNESS,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
-    PARTS_CSV,
-    SOURCE,
-    STL,
-)
 
 EPS_XY = 0.3
 EPS_Z = 0.06
