@@ -11,7 +11,6 @@ import traceback
 from pathlib import Path
 from typing import cast
 
-import polars as pl
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
@@ -36,21 +35,6 @@ from PyQt6.QtWidgets import (
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
-
-from ampm import DataStore
-from ampm.cluster_cache import cluster_or_load
-from ampm.clustering import cluster_dbscan_chunked
-from ampm.config import create_or_load_config
-from ampm.mask_cache import mask_or_load
-from ampm.masking import apply_mask, build_mask
-from ampm.parts import (
-    QuantAMParts,
-    apply_part_id_map,
-    assign_nearest_part,
-    compute_part_id_map,
-)
-from ampm.stats import CovMode, compute_cov
-from ampm.views import discover
 
 
 def build_widget(spec: dict) -> QWidget:
@@ -165,6 +149,20 @@ class LoadWorker(QThread):
             builtins.print = original_print
 
     def _load_mask_assign(self):
+        import polars as pl
+
+        from ampm import DataStore
+        from ampm.cluster_cache import cluster_or_load
+        from ampm.clustering import cluster_dbscan_chunked
+        from ampm.mask_cache import mask_or_load
+        from ampm.masking import apply_mask, build_mask
+        from ampm.parts import (
+            QuantAMParts,
+            apply_part_id_map,
+            assign_nearest_part,
+            compute_part_id_map,
+        )
+
         config = self.config
         SOURCE = config["SOURCE"]
         STL = config["STL"]
@@ -325,12 +323,22 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AMPM Analyzer")
         self.setMinimumSize(1000, 700)
 
+        from PyQt6.QtGui import QIcon
+
+        base = (
+            Path(sys._MEIPASS)
+            if getattr(sys, "frozen", False)
+            else Path(__file__).parent
+        )
+        self.setWindowIcon(QIcon(str(base / "assets" / "ampm.ico")))
+
         self._load_worker = None
         self._plot_worker = None
         self._config = None
         self._df = None
         self._derived = {}
-        self._views = discover()
+        self._views = {}
+        self._views_loaded = False
         self._axis_combos = {}
         self._setting_widgets = {}
 
@@ -357,11 +365,11 @@ class MainWindow(QMainWindow):
         sources_layout = QVBoxLayout(sources_group)
 
         dir_row = QHBoxLayout()
-        dir_lbl = QLabel("Build directory:")
+        dir_lbl = QLabel("Project root:")
         dir_lbl.setFixedWidth(self._LABEL_WIDTH)
         dir_row.addWidget(dir_lbl)
         self._dir_edit = QLineEdit()
-        self._dir_edit.setPlaceholderText("Select a build directory...")
+        self._dir_edit.setPlaceholderText("Select root project directory...")
         self._dir_edit.setReadOnly(True)
         dir_browse = QPushButton("Browse...")
         dir_browse.clicked.connect(self._browse_build_dir)
@@ -467,7 +475,6 @@ class MainWindow(QMainWindow):
         analysis_widget = QWidget()
         analysis_layout = QVBoxLayout(analysis_widget)
         analysis_scroll.setWidget(analysis_widget)
-        self._tabs.addTab(analysis_scroll, "Analysis")
 
         # Derived columns
         derived_group = QGroupBox("Derived Columns")
@@ -624,6 +631,8 @@ class MainWindow(QMainWindow):
         self._log.append(f"Selected: {path}")
 
         try:
+            from ampm.config import create_or_load_config
+
             config = create_or_load_config(path)
         except Exception as e:
             self._log.append(f"ERROR loading config: {e}")
@@ -843,6 +852,8 @@ class MainWindow(QMainWindow):
         self._log.append(f"Computing {col_name}...")
 
         try:
+            from ampm.stats import CovMode, compute_cov
+
             cov = compute_cov(
                 self._df,
                 [signal],
@@ -888,6 +899,8 @@ class MainWindow(QMainWindow):
         return True
 
     def _build_group_df(self, needed_columns):
+        import polars as pl
+
         if self._df is None:
             raise ValueError("No data loaded.")
 
@@ -968,11 +981,24 @@ class MainWindow(QMainWindow):
     def _on_log(self, msg):
         self._log.append(msg)
 
+    def _load_views(self):
+        """Lazily discover views and populate the combo box."""
+        if self._views_loaded:
+            return
+        from ampm.views import discover
+
+        self._views = discover()
+        self._view_combo.addItems(list(self._views.keys()))
+        self._views_loaded = True
+
 
 def main():
+    from PyQt6.QtCore import QTimer
+
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+    QTimer.singleShot(0, window._load_views)
     sys.exit(app.exec())
 
 

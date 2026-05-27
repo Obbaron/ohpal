@@ -144,11 +144,9 @@ def _compute_per_layer_mean(
     layer_col: str,
     eps: float,
 ) -> pl.DataFrame:
-    # Step 1: CoV within each (group, layer).
     per_layer = df.group_by([group_by, layer_col]).agg(
         [_cov_expr(c, eps) for c in cols]
     )
-    # Step 2: average those layer-CoVs per group, ignoring nulls (zero-mean layers).
     final = (
         per_layer.group_by(group_by)
         .agg(
@@ -167,11 +165,9 @@ def _compute_across_layers(
     layer_col: str,
     eps: float,
 ) -> pl.DataFrame:
-    # Step 1: per-layer mean of each column.
     per_layer_mean = df.group_by([group_by, layer_col]).agg(
         [pl.col(c).mean().alias(c) for c in cols]
     )
-    # Step 2: CoV across those per-layer means within each group.
     final = (
         per_layer_mean.group_by(group_by)
         .agg([pl.len().alias("n_rows")] + [_cov_expr(c, eps) for c in cols])

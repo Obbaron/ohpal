@@ -4,11 +4,11 @@ End-to-end walkthrough of how data flows from raw `.txt` files to final plots. E
 
 ## Configuration
 
-Each build directory needs a `config.toml` that tells the pipeline where to find the source data, STL, and parts CSV. The scripts use `create_or_load_config` which auto-generates this file on first run by scanning the build directory for the expected files. Subsequent runs reuse the existing `config.toml`.
+Each project root directory needs a `config.toml` that tells the pipeline where to find the source data, STL, and parts CSV. The scripts use `create_or_load_config` which auto-generates this file on first run by scanning the project root for the expected files. Subsequent runs reuse the existing `config.toml`.
 
 ### From the command line
 
-Point any script at a build directory:
+Point any script at a project root directory:
 
 ```bash
 python examples/pipeline/01_load_and_mask.py /path/to/build_directory
@@ -18,7 +18,7 @@ If no `config.toml` exists, the script auto-detects the source packet data direc
 
 ### From an IDE
 
-If you prefer to run scripts directly (e.g. via a "Run" button in VS Code or PyCharm) rather than passing command-line arguments, you can hardcode the build directory and use overrides for any file that auto-detection gets wrong:
+If you prefer to run scripts directly (e.g. via a "Run" button in VS Code or PyCharm) rather than passing command-line arguments, you can hardcode the project directory and use overrides for any file that auto-detection gets wrong:
 
 ```python
 from ampm.config import create_or_load_config
@@ -50,7 +50,7 @@ parts_csv = 'JR299_sterling_parts.csv'
 layer_thickness = 0.03  # mm
 ```
 
-Paths are stored relative to the build directory so the whole folder is portable. Absolute paths are also supported if you need to reference files outside the build directory.
+Paths are stored relative to the project root so the whole folder is portable. Absolute paths are also supported if you need to reference files outside the project root.
 
 ## Stage 1: Data loading via DataStore
 

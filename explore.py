@@ -32,7 +32,7 @@ def main() -> None:
         build_dir = sys.argv[1]
     else:
         QApplication(sys.argv)
-        build_dir = QFileDialog.getExistingDirectory(None, "Select Build Directory")
+        build_dir = QFileDialog.getExistingDirectory(None, "Select Project Root")
         if not build_dir:
             sys.exit("No directory selected.")
     config = create_or_load_config(build_dir)

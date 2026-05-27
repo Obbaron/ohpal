@@ -232,7 +232,6 @@ def prepare_for_plot(
     method: Literal["random", "stride", "grid"] = "random",
     *,
     seed: int | None = None,
-    # grid-only kwargs:
     x_col: str = "Demand X",
     y_col: str = "Demand Y",
     z_col: str = "Z",

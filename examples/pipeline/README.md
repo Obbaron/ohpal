@@ -13,7 +13,7 @@ python examples/pipeline/03_compute_cov.py /path/to/build_directory
 python examples/pipeline/04_visualize.py /path/to/build_directory
 ```
 
-On first run, the script auto-detects the source data, STL, and parts CSV, writes a `config.toml` into the build directory, then proceeds. Subsequent runs reuse the existing `config.toml`. See [docs/PIPELINE.md](../../docs/PIPELINE.md) for details on configuration, including how to use overrides from an IDE.
+On first run, the script auto-detects the source data, STL, and parts CSV, writes a `config.toml` into the project root, then proceeds. Subsequent runs reuse the existing `config.toml`. See [docs/PIPELINE.md](../../docs/PIPELINE.md) for details on configuration, including how to use overrides from an IDE.
 
 The first run takes minutes (builds caches). Subsequent runs are seconds.
 

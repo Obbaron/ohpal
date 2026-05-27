@@ -9,7 +9,7 @@ Usage:
     from config import create_or_load_config
     config = create_or_load_config("path/to/build_directory")
 
-    The build directory should contain a `config.toml` file.
+    The project root should contain a `config.toml` file.
     Paths in the TOML can be relative or absolute.
 """
 
@@ -40,12 +40,12 @@ def _resolve_path(path_str: str, base_dir: Path) -> str:
 
 def load_config(build_dir: str | Path) -> dict:
     """
-    Load configuration from a build directory's config.toml
+    Load configuration from a project root's config.toml
 
     Parameters
     ----------
     build_dir : str | Path
-        Path to the build directory containing config.toml
+        Path to the project root containing config.toml
 
     Returns
     -------
@@ -63,7 +63,6 @@ def load_config(build_dir: str | Path) -> dict:
     except tomllib.TOMLDecodeError as e:
         sys.exit(f"ERROR: {toml_path} has invalid syntax:\n{e}")
 
-    # --- Required: paths and build ---
     try:
         source = _resolve_path(_config["paths"]["source"], build_dir)
         stl = _resolve_path(_config["paths"]["stl"], build_dir)
@@ -72,14 +71,12 @@ def load_config(build_dir: str | Path) -> dict:
     except KeyError as e:
         sys.exit(f"ERROR: Missing required key in {toml_path}: {e}")
 
-    # --- Optional: assignment (defaults to direct, no distance cap) ---
     assignment = _config.get("assignment", {})
     method = assignment.get("method", "direct")
     max_distance_mm = assignment.get("max_distance_mm", "none")
     if isinstance(max_distance_mm, str) and max_distance_mm.lower() == "none":
         max_distance_mm = None
 
-    # --- Optional: clustering (sensible defaults) ---
     clustering = _config.get("clustering", {})
     eps_xy = clustering.get("eps_xy", 0.3)
     eps_z = clustering.get("eps_z", 0.06)
@@ -89,12 +86,14 @@ def load_config(build_dir: str | Path) -> dict:
     if isinstance(overlap_layers, str) and overlap_layers.lower() == "auto":
         overlap_layers = None
 
-    # --- Optional: signals ---
     signals_section = _config.get("signals", {})
-    signals = signals_section.get("columns", [
-        "MeltVIEW melt pool (mean)",
-        "Laser output power (mean)",
-    ])
+    signals = signals_section.get(
+        "columns",
+        [
+            "MeltVIEW melt pool (mean)",
+            "Laser output power (mean)",
+        ],
+    )
 
     return {
         "SOURCE": source,
@@ -123,12 +122,12 @@ def create_or_load_config(
     parts_csv: str | Path | None = None,
 ) -> dict:
     """
-    Load config.toml from the build directory, creating it first if absent.
+    Load config.toml from the project root, creating it first if absent.
 
     Parameters
     ----------
     build_dir : str | Path
-        Path to the build directory.
+        Path to the project root.
     source : str, Path, or None
         Override for the packet data directory. Forwarded to
         ``setup_build.create_config`` if the TOML needs to be generated.

@@ -39,9 +39,15 @@ if exist .venv (
     )
 )
 
-echo  Installing dependencies...
 call .venv\Scripts\activate.bat
-pip install -e . --quiet
+
+if exist wheels\windows (
+    echo  Installing from local wheels (offline)...
+    pip install -e . --no-index --find-links wheels\windows --quiet
+) else (
+    echo  Installing dependencies (online)...
+    pip install -e . --quiet
+)
 if errorlevel 1 (
     echo  ERROR: pip install failed.
     pause

@@ -31,9 +31,15 @@ else
     $PY -m venv .venv
 fi
 
-echo "  Installing dependencies..."
 source .venv/bin/activate
-pip install -e . --quiet
+
+if [ -d wheels/linux ]; then
+    echo "  Installing from local wheels (offline)..."
+    pip install -e . --no-index --find-links wheels/linux --quiet
+else
+    echo "  Installing dependencies (online)..."
+    pip install -e . --quiet
+fi
 
 echo
 echo "Done!"

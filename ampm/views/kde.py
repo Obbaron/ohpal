@@ -29,7 +29,6 @@ def run(df, config, axes, settings):
     n_groups = settings.get("N_GROUPS", 6)
     n_each = n_groups // 2
 
-    # Pick best and worst by mean of the signal
     group_means = (
         df.filter(df[group_by] != "noise")
         .group_by(group_by)
