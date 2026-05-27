@@ -8,7 +8,7 @@ DESCRIPTION = "Filled contour over a (x, y) grid, e.g. CoV vs speed and power."
 AXES = {
     "x": {"label": "X axis", "default": "Hatch Speed"},
     "y": {"label": "Y axis", "default": "Hatches Power"},
-    "z": {"label": "Z (colour)", "default": None},
+    "z": {"label": "Z (color)", "default": None},
 }
 
 SETTINGS = {

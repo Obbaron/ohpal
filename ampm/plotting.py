@@ -320,7 +320,7 @@ def bar(
     y
         Numeric value column.
     color
-        Optional column to colour bars by. Numeric columns produce a
+        Optional column to color bars by. Numeric columns produce a
         continuous colorscale; string columns get discrete categorical
         coloring with a label-aware colorbar.
     title, xaxis_title, yaxis_title, colorbar_title

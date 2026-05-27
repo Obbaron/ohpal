@@ -8,7 +8,7 @@ DESCRIPTION = "Bar chart over a categorical axis, e.g. CoV per part."
 AXES = {
     "x": {"label": "Category axis", "default": "part_id"},
     "y": {"label": "Value axis", "default": None},
-    "color": {"label": "Colour (optional)", "default": None},
+    "color": {"label": "Color (optional)", "default": None},
 }
 
 SETTINGS = {

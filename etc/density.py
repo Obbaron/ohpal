@@ -174,7 +174,7 @@ def main() -> None:
         color=f"cov_{COV_PLOT_SIGNAL}",
         size=2,
         colorscale="Turbo",
-        title=f"3D view coloured by overall CoV — {COV_PLOT_SIGNAL}",
+        title=f"3D view colored by overall CoV — {COV_PLOT_SIGNAL}",
         xaxis_title="X (mm)",
         yaxis_title="Y (mm)",
         zaxis_title="Z (mm)",

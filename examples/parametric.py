@@ -4,7 +4,7 @@ parametric.py
 Loads cached AMPM data, applies the cached mask, assigns each row to
 its nearest part by 2D Euclidean distance, then produces three plots:
 
-1. 3D scatter coloured by per-part overall CoV of the chosen signal.
+1. 3D scatter colored by per-part overall CoV of the chosen signal.
    Hover shows part_id, Power, Speed for context.
 2. KDE comparison of the most-stable vs least-stable parts on the
    chosen signal.
@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import polars as pl
 
 from ampm import DataStore
+from ampm.config import create_or_load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import (
@@ -29,7 +30,6 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from ampm.config import create_or_load_config
 
 TARGET_POINTS_3D = 80_000
 N_BEST_WORST = 3
@@ -120,7 +120,7 @@ def main() -> None:
         how="left",
     )
 
-    print("\nPlot 1/3: 3D scatter coloured by per-part CoV...")
+    print("\nPlot 1/3: 3D scatter colored by per-part CoV...")
     fig_cov_3d = scatter3d(
         sample,
         x="Demand X",
@@ -129,7 +129,7 @@ def main() -> None:
         color=f"cov_{SIGNAL}",
         size=2,
         colorscale="Turbo",
-        title=f"Parts coloured by overall CoV of '{SIGNAL}'",
+        title=f"Parts colored by overall CoV of '{SIGNAL}'",
         xaxis_title="X (mm)",
         yaxis_title="Y (mm)",
         zaxis_title="Z (mm)",

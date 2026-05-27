@@ -2,7 +2,7 @@
 view_3d.py
 
 Loads cached AMPM data, applies the cached mask, assigns each row to
-its nearest part, then opens a single 3D scatter plot whose colour
+its nearest part, then opens a single 3D scatter plot whose color
 encodes a user-chosen signal. A dropdown menu at the top of the figure
 lets you swap between several signals without re-rendering.
 
@@ -20,11 +20,11 @@ import plotly.graph_objects as go
 import polars as pl
 
 from ampm import DataStore
+from ampm.config import create_or_load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
 from ampm.sampling import prepare_for_plot
-from ampm.config import create_or_load_config
 
 TARGET_POINTS = 50_000
 POINT_SIZE = 2

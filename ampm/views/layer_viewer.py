@@ -8,7 +8,7 @@ DESCRIPTION = "Per-layer slider viewer with signal dropdown."
 AXES = {
     "x": {"label": "X axis", "default": "Demand X"},
     "y": {"label": "Y axis", "default": "Demand Y"},
-    "color": {"label": "Colour", "default": "MeltVIEW melt pool (mean)"},
+    "color": {"label": "Color", "default": "MeltVIEW melt pool (mean)"},
 }
 
 SETTINGS = {

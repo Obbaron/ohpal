@@ -3,7 +3,7 @@
 
 Generates the three standard visualizations for AMPM analysis:
 
-1. 3D scatter coloured by per-part overall CoV, showing which parts
+1. 3D scatter colored by per-part overall CoV, showing which parts
    were noisy across the build.
 2. KDE comparison of the 3 most stable vs 3 least stable parts on the
    melt-pool signal to show distribution shape (not just summary CoV).
@@ -23,6 +23,7 @@ import polars as pl
 from ampm import DataStore
 from ampm.cluster_cache import cluster_or_load
 from ampm.clustering import cluster_dbscan_chunked
+from ampm.config import create_or_load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import (
@@ -35,7 +36,6 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from ampm.config import create_or_load_config
 
 TARGET_POINTS_3D = 80_000  # 3D plots downsample to this many points
 
@@ -170,7 +170,7 @@ def main() -> None:
         how="left",
     )
 
-    print("\nPlot 1/3: 3D scatter coloured by per-part CoV...")
+    print("\nPlot 1/3: 3D scatter colored by per-part CoV...")
     fig_cov_3d = scatter3d(
         sample,
         x="Demand X",
@@ -179,7 +179,7 @@ def main() -> None:
         color=f"cov_{SIGNAL}",
         size=2,
         colorscale="Turbo",
-        title=f"Parts coloured by overall CoV of '{SIGNAL}'",
+        title=f"Parts colored by overall CoV of '{SIGNAL}'",
         xaxis_title="X (mm)",
         yaxis_title="Y (mm)",
         zaxis_title="Z (mm)",
