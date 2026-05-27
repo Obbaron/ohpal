@@ -425,7 +425,6 @@ class MainWindow(QMainWindow):
         self._cluster_widget.setVisible(False)
         assign_layout.addWidget(self._cluster_widget)
 
-        # Now build the Settings group
         settings_group = QGroupBox("Settings")
         settings_layout = QVBoxLayout(settings_group)
 
