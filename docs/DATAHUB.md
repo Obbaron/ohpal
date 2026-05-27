@@ -18,7 +18,7 @@ Click the `...` button next to **Build Data Folder** and select your build from 
 
 ![Step 2a](images/02a_machine.png)
 
-Then, create a folder in `D:\PROCESSED_DATA_ONLY_JRef_plus_date\` with the job reference number and the date. Once created, select it as the location for the  **Output Folder**. 
+Then, create a folder in `D:\PROCESSED_DATA_ONLY_JRef_plus_date\` with the job reference number and the date. Once created, select it as the location for the  **Output Folder**.
 
 ![Step 2b](images/02b_populate.png)
 
