@@ -45,7 +45,7 @@ import csv
 import io
 from collections import Counter
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterator
 
 import numpy as np
 import polars as pl
@@ -608,11 +608,12 @@ def assign_nearest_part(
 
     Memory note
     -----------
-    Builds a distance matrix of shape (n_rows, n_parts) in NumPy. For 80M
-    rows and 6 parts this peaks at ~2 GB. For builds with 50+ parts the
-    matrix grows and a KDTree approach would be more efficient — but this
-    function is intentionally simple for the small-parts-count case it's
-    designed for.
+    Computes nearest-part assignments in row-chunks so peak memory is bounded
+    by the chunk size (~128 MB per intermediate array) rather than scaling
+    with the total row count. The full (n_rows, n_parts) distance matrix is
+    never materialized, so this is safe for tens of millions of rows. For
+    builds with very many parts a KDTree approach would still be faster, but
+    this stays intentionally simple and is no longer memory-bound.
 
     Parameters
     ----------
@@ -668,21 +669,31 @@ def assign_nearest_part(
 
     x = masked[x_col].to_numpy()
     y = masked[y_col].to_numpy()
+    n_rows = x.shape[0]
 
-    dx = x[:, None] - px[None, :]
-    dy = y[:, None] - py[None, :]
-    dist2 = dx * dx + dy * dy
-    del dx, dy
+    nearest_idx = np.empty(n_rows, dtype=np.intp)
+    nearest_dist = np.empty(n_rows, dtype=np.float32)
 
-    nearest_idx = dist2.argmin(axis=1)
-    nearest_dist2 = np.take_along_axis(dist2, nearest_idx[:, None], axis=1).ravel()
-    del dist2
-    nearest_dist = np.sqrt(nearest_dist2)
-    del nearest_dist2
+    # Size chunks so each (chunk, n_parts) float32 array is ~128 MB.
+    target_bytes = 128 * 1024 * 1024
+    chunk = int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 4))))
 
-    idx_to_id = {i: part_ids[i] for i in range(n_parts)}
-    assigned = np.array([idx_to_id[int(i)] for i in nearest_idx], dtype=object)
+    for start in range(0, n_rows, chunk):
+        stop = min(start + chunk, n_rows)
+        dx = x[start:stop, None] - px[None, :]
+        dy = y[start:stop, None] - py[None, :]
+        dist2 = dx * dx + dy * dy
+        del dx, dy
+        idx = dist2.argmin(axis=1)
+        nearest_idx[start:stop] = idx
+        nearest_dist[start:stop] = np.sqrt(
+            np.take_along_axis(dist2, idx[:, None], axis=1).ravel()
+        )
+        del dist2, idx
 
+    assigned = np.asarray(part_ids, dtype=object)[nearest_idx]
+
+    too_far = None
     if max_distance_mm is not None:
         too_far = nearest_dist > max_distance_mm
         n_too_far = int(too_far.sum())
@@ -705,7 +716,7 @@ def assign_nearest_part(
         )
         for i, pid in enumerate(part_ids):
             mask = nearest_idx == i
-            if max_distance_mm is not None:
+            if too_far is not None:
                 mask = mask & ~too_far
             n = int(mask.sum())
             if n == 0:
