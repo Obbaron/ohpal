@@ -6,13 +6,14 @@ pick a view (plot type), configure axes and settings, and plot.
 """
 
 import builtins
+import json
 import re
 import sys
 import traceback
 from pathlib import Path
 from typing import cast
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -41,9 +42,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 
 class NoScrollComboBox(QComboBox):
-    """A combo box that ignores wheel events."""
+    """A combo box that ignores wheel events.
 
-    def wheelEvent(self, e):
+    By default a QComboBox cycles through its options when the mouse wheel is
+    scrolled over it, which makes it easy to change a selection by accident
+    while scrolling the page. Ignoring the wheel event stops that and lets the
+    event propagate to the parent scroll area, so scrolling still moves the page.
+    """
+
+    def wheelEvent(self, e):  # noqa: N802 (Qt naming)
         if e is not None:
             e.ignore()
 
@@ -139,6 +146,60 @@ def _layer_range_tag(layer_range) -> str:
         return "all"
     lo, hi = int(layer_range[0]), int(layer_range[1])
     return f"L{lo:05d}-{hi:05d}"
+
+
+UI_STATE_VERSION = 1
+UI_STATE_FILENAME = ".ampm-ui.json"
+
+# Pipeline params the GUI may edit
+_OVERLAY_KEYS = (
+    "LAYER_THICKNESS",
+    "METHOD",
+    "MAX_DISTANCE_MM",
+    "EPS_XY",
+    "EPS_Z",
+    "MIN_SAMPLES",
+    "LAYERS_PER_CHUNK",
+    "OVERLAP_LAYERS",
+    "APPLY_MASK",
+    "ASSIGN_PARTS",
+    "LAYER_RANGE",
+)
+
+
+def _ui_state_path(project_root) -> Path:
+    return Path(project_root) / UI_STATE_FILENAME
+
+
+def load_ui_state(project_root) -> dict:
+    """Load the sidecar UI state. Returns {} on any problem (tolerant)."""
+    path = _ui_state_path(project_root)
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Future versions degrade to defaults rather than mis-loading
+    if data.get("version") not in (None, UI_STATE_VERSION):
+        return {}
+    return data
+
+
+def save_ui_state(project_root, state: dict) -> None:
+    """Write the sidecar UI state atomically. Never raises."""
+    path = _ui_state_path(project_root)
+    tmp = path.parent / (path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        tmp.replace(path)
+    except OSError:
+        pass
 
 
 class CollapsibleSection(QWidget):
@@ -248,7 +309,7 @@ class LoadWorker(QThread):
         MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
         APPLY_MASK = config.get("APPLY_MASK", True)
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
-        LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi) inclusive
+        LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi)
 
         if APPLY_MASK and ASSIGN_PARTS:
             self._load_band, mask_band, assign_band = (2, 50), (50, 68), (68, 96)
@@ -453,11 +514,15 @@ class MainWindow(QMainWindow):
         self._config = None
         self._df = None
         self._derived = {}
+        self._derived_recipes = {}  # {"stat","signal","mode"}
         self._views = {}
         self._views_loaded = False
         self._axis_combos = {}
         self._setting_widgets = {}
         self._available_layers = None
+        self._project_root = None
+        self._pending_resume = None  # analysis state
+        self._settings = QSettings("AMPM", "AMPM Analysis")
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -923,10 +988,21 @@ class MainWindow(QMainWindow):
         return problems
 
     def _browse_build_dir(self):
-        path = QFileDialog.getExistingDirectory(self, "Select packet directory")
+        start_dir = ""
+        last = self._settings.value("last_project_root", "", type=str)
+        if last:
+            parent = Path(last).parent
+            if parent.is_dir():
+                start_dir = str(parent)
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Select packet directory", start_dir
+        )
         if not path:
             return
 
+        self._project_root = path
+        self._settings.setValue("last_project_root", path)
         self._dir_edit.setText(path)
         self._log.clear()
         self._log.append(f"Selected: {path}")
@@ -937,12 +1013,14 @@ class MainWindow(QMainWindow):
             config = create_or_load_config(path)
         except Exception as e:
             self._config = None
+            self._project_root = None
             self._log.append(f"ERROR loading config: {e}")
             self._update_load_enabled()
             return
 
         self._config = config
         self._populate_config(config)
+        self._load_resume_state(path)
         self._update_load_enabled()
         self._log.append(
             "Config loaded. Review paths and click 'Load Data' when ready."
@@ -964,6 +1042,173 @@ class MainWindow(QMainWindow):
         self._chunk_spin.setValue(config["LAYERS_PER_CHUNK"])
         overlap = config["OVERLAP_LAYERS"]
         self._overlap_edit.setText("auto" if overlap is None else str(overlap))
+
+    ## UI STATE
+    def _load_resume_state(self, project_root) -> None:
+        """Read the sidecar, overlay pipeline params now, stash analysis state."""
+        self._pending_resume = None
+        state = load_ui_state(project_root)
+        if not state:
+            return
+
+        overrides = state.get("config_overrides")
+        if isinstance(overrides, dict):
+            self._apply_config_overrides(overrides)
+            if self._config is not None:
+                for key in _OVERLAY_KEYS:
+                    if key in overrides:
+                        self._config[key] = overrides[key]
+
+        self._pending_resume = {
+            "derived": state.get("derived_columns") or [],
+            "view": state.get("view"),
+            "axes": state.get("axes") or {},
+            "settings": state.get("settings") or {},
+        }
+        self._log.append("Found a saved setup; it will be restored after load.")
+
+    def _apply_config_overrides(self, o: dict) -> None:
+        """Apply persisted pipeline params to the config-tab widgets."""
+        if "LAYER_THICKNESS" in o:
+            self._lt_edit.setText(str(o["LAYER_THICKNESS"]))
+        if "METHOD" in o:
+            self._method_combo.setCurrentText(str(o["METHOD"]))
+        if "MAX_DISTANCE_MM" in o:
+            md = o["MAX_DISTANCE_MM"]
+            self._max_dist_edit.setText("none" if md is None else str(md))
+        if "EPS_XY" in o:
+            self._eps_xy_edit.setText(str(o["EPS_XY"]))
+        if "EPS_Z" in o:
+            self._eps_z_edit.setText(str(o["EPS_Z"]))
+        if "MIN_SAMPLES" in o:
+            try:
+                self._min_samples_spin.setValue(int(o["MIN_SAMPLES"]))
+            except (TypeError, ValueError):
+                pass
+        if "LAYERS_PER_CHUNK" in o:
+            try:
+                self._chunk_spin.setValue(int(o["LAYERS_PER_CHUNK"]))
+            except (TypeError, ValueError):
+                pass
+        if "OVERLAP_LAYERS" in o:
+            ov = o["OVERLAP_LAYERS"]
+            self._overlap_edit.setText("auto" if ov is None else str(ov))
+        if "APPLY_MASK" in o:
+            self._mask_check.setChecked(bool(o["APPLY_MASK"]))
+        if "ASSIGN_PARTS" in o:
+            self._assign_check.setChecked(bool(o["ASSIGN_PARTS"]))
+        if "LAYER_RANGE" in o:
+            lr = o["LAYER_RANGE"]
+            if lr is None:
+                self._all_layers_check.setChecked(True)
+            elif isinstance(lr, (list, tuple)) and len(lr) == 2:
+                self._all_layers_check.setChecked(False)
+                try:
+                    self._layer_from_spin.setValue(int(lr[0]))
+                    self._layer_to_spin.setValue(int(lr[1]))
+                except (TypeError, ValueError):
+                    pass
+
+    def _current_analysis_state(self) -> dict:
+        """Snapshot the live analysis setup (recipes + view/axes/settings)."""
+        derived = [
+            {"stat": r["stat"], "signal": r["signal"], "mode": r["mode"], "name": name}
+            for name, r in self._derived_recipes.items()
+        ]
+        axes = {k: (c.currentText() or None) for k, c in self._axis_combos.items()}
+        settings = {}
+        for key, (widget, spec) in self._setting_widgets.items():
+            try:
+                settings[key] = read_widget(widget, spec)
+            except Exception:
+                pass
+        return {
+            "derived": derived,
+            "view": self._view_combo.currentText() or None,
+            "axes": axes,
+            "settings": settings,
+        }
+
+    def _gather_ui_state(self) -> dict:
+        """Build the full sidecar dict from the current GUI state."""
+        try:
+            cfg = self._gather_full_config()
+            overrides = {}
+            for key in _OVERLAY_KEYS:
+                if key in cfg:
+                    val = cfg[key]
+                    overrides[key] = list(val) if isinstance(val, tuple) else val
+        except Exception:
+            overrides = {
+                key: (list(v) if isinstance(v := self._config[key], tuple) else v)
+                for key in _OVERLAY_KEYS
+                if self._config and key in self._config
+            }
+
+        a = self._current_analysis_state()
+        return {
+            "version": UI_STATE_VERSION,
+            "config_overrides": overrides,
+            "derived_columns": a["derived"],
+            "view": a["view"],
+            "axes": a["axes"],
+            "settings": a["settings"],
+        }
+
+    def _save_ui_state(self) -> None:
+        if not self._project_root:
+            return
+        try:
+            save_ui_state(self._project_root, self._gather_ui_state())
+        except Exception:
+            pass
+
+    def _apply_resume_state(self) -> None:
+        """After load: recompute derived recipes, restore view/axes/settings.
+
+        Does not plot. Anything stale (missing signal/view/column) is skipped
+        with a log note.
+        """
+        resume = self._pending_resume
+        self._pending_resume = None
+
+        if not resume:
+            self._on_view_changed(self._view_combo.currentText())
+            return
+
+        for rec in resume.get("derived", []):
+            if not isinstance(rec, dict):
+                continue
+            signal = rec.get("signal")
+            if signal:
+                self._compute_derived(
+                    rec.get("stat", "CoV"), signal, rec.get("mode", "overall")
+                )
+
+        view = resume.get("view")
+        if view and view in self._views:
+            self._view_combo.blockSignals(True)
+            self._view_combo.setCurrentText(view)
+            self._view_combo.blockSignals(False)
+        self._on_view_changed(self._view_combo.currentText())
+
+        for key, val in (resume.get("axes") or {}).items():
+            combo = self._axis_combos.get(key)
+            if combo is not None and val:
+                idx = combo.findText(val)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+        for key, val in (resume.get("settings") or {}).items():
+            pair = self._setting_widgets.get(key)
+            if pair is not None:
+                widget, spec = pair
+                try:
+                    set_widget_value(widget, spec, val)
+                except Exception:
+                    pass
+
+        self._log.append("Analysis setup restored. Click Plot when ready.")
 
     def _gather_full_config(self):
         """Read config from GUI fields, merging with the loaded config."""
