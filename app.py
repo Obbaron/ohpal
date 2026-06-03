@@ -522,7 +522,7 @@ class MainWindow(QMainWindow):
         self._available_layers = None
         self._project_root = None
         self._pending_resume = None  # analysis state
-        self._settings = QSettings("AMPM", "AMPM Analysis")
+        self._settings = QSettings("AMPM", "AMPM Analyzer")
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -795,7 +795,8 @@ class MainWindow(QMainWindow):
             self._on_view_changed(self._view_combo.currentText())
 
     def closeEvent(self, a0):
-        """Wait for any running threads before closing."""
+        """Save UI state and wait for any running threads before closing."""
+        self._save_ui_state()
         for worker in (self._load_worker, self._plot_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
@@ -1277,8 +1278,14 @@ class MainWindow(QMainWindow):
         if idx != -1:
             self._tabs.removeTab(idx)
 
+        # On a reload, preserve current Analysis
+        # On a first load, pending resume comes from sidecar
+        if self._df is not None:
+            self._pending_resume = self._current_analysis_state()
+
         self._df = None
         self._derived.clear()
+        self._derived_recipes.clear()
         self._derived_list.clear()
 
         self._log.append("")
@@ -1307,7 +1314,8 @@ class MainWindow(QMainWindow):
 
         self._tabs.setCurrentIndex(self._tabs.indexOf(self._analysis_tab))
         self._refresh_column_combos()
-        self._on_view_changed(self._view_combo.currentText())
+        self._apply_resume_state()
+        self._save_ui_state()
 
         if self._load_worker is not None:
             self._load_worker.wait()
@@ -1407,26 +1415,29 @@ class MainWindow(QMainWindow):
 
         self._settings_group.setVisible(bool(settings))
 
-    def _add_derived(self):
+    def _compute_derived(self, stat, signal, mode):
+        """Compute and register one derived column. Returns its name or None.
+
+        Used by the Add button and by resume-state restoration. Skips (with a
+        log note) if the signal isn't present in the loaded data.
+        """
         if self._df is None:
-            return
-
-        stat = self._derived_stat.currentText()  # for future stats
-        signal = self._derived_signal.currentText()
-        mode = self._derived_mode.currentText()
-
+            return None
         if not signal:
             self._log.append("Select a signal for the derived column.")
-            return
+            return None
 
         col_name = f"cov_{mode}_{signal}"
-
         if col_name in self._derived:
             self._log.append(f"'{col_name}' already exists.")
-            return
+            return col_name
+        if signal not in self._df.columns:
+            self._log.append(
+                f"Skipped derived '{col_name}': signal '{signal}' not in this build."
+            )
+            return None
 
         self._log.append(f"Computing {col_name}...")
-
         try:
             from ampm.stats import CovMode, compute_cov
 
@@ -1441,21 +1452,39 @@ class MainWindow(QMainWindow):
             derived_df = cov.select(["part_id", raw_col]).rename({raw_col: col_name})
 
             self._derived[col_name] = derived_df
+            self._derived_recipes[col_name] = {
+                "stat": stat,
+                "signal": signal,
+                "mode": mode,
+            }
             self._derived_list.addItem(col_name)
             self._refresh_column_combos()
             self._log.append(f"Added '{col_name}' ({derived_df.height} rows).")
+            return col_name
         except Exception as e:
             self._log.append(f"ERROR computing derived column: {e}")
+            return None
+
+    def _add_derived(self):
+        if self._df is None:
+            return
+        stat = self._derived_stat.currentText()  # for future stats
+        signal = self._derived_signal.currentText()
+        mode = self._derived_mode.currentText()
+        if self._compute_derived(stat, signal, mode):
+            self._save_ui_state()
 
     def _remove_derived(self):
         current = self._derived_list.currentItem()
         if current is None:
             return
         name = current.text()
-        del self._derived[name]
+        self._derived.pop(name, None)
+        self._derived_recipes.pop(name, None)
         self._derived_list.takeItem(self._derived_list.row(current))
         self._refresh_column_combos()
         self._log.append(f"Removed '{name}'.")
+        self._save_ui_state()
 
     def _all_axes_group_level(self, axes):
         if self._df is None:
@@ -1545,6 +1574,7 @@ class MainWindow(QMainWindow):
         self._plot_progress.setVisible(False)
         self._log.append("Plot complete.")
         self._plot_btn.setEnabled(True)
+        self._save_ui_state()
         if self._plot_worker is not None:
             self._plot_worker.wait()
         self._plot_worker = None
@@ -1573,12 +1603,34 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    import os
+    import signal
+
     from PyQt6.QtCore import QTimer
 
     app = QApplication(sys.argv)
+    app.setOrganizationName("AMPM")
+    app.setApplicationName("AMPM Analyzer")
     window = MainWindow()
     window.show()
     QTimer.singleShot(0, window._load_views)
+
+    sigint_fired = False
+
+    def _handle_sigint(*_):
+        nonlocal sigint_fired
+        if sigint_fired:
+            os._exit(130)  # second Ctrl+C: force quit immediately
+        sigint_fired = True
+        print("\nInterrupt received \u2014 closing (Ctrl+C again to force quit)...")
+        window.close()  # triggers closeEvent: saves UI state, waits for threads
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+
+    _sigint_timer = QTimer()
+    _sigint_timer.timeout.connect(lambda: None)
+    _sigint_timer.start(200)
+
     sys.exit(app.exec())
 
 
