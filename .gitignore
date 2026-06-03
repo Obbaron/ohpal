@@ -209,6 +209,8 @@ __marimo__/
 # Project data directories
 data/
 data_files/
+
+# Scratch files
 archi.py
 explore.py
 mtt.py
