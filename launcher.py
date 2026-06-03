@@ -12,7 +12,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
 
-def run_app():  # wrapper function stops leaky retries
+def run_app():  # stops leaky retries
     import app
 
     app.main()
