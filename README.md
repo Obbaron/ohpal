@@ -1,12 +1,10 @@
 # AMPM Analysis
 
-Analysis pipeline for Renishaw 500S PBF-LB AMPM (Additive Manufacturing Process Monitoring) data.
+Analysis pipeline for Renishaw 500S PBF-LB AMPM data.
 
 Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 monitoring rows recording meltpool intensity, plasma intensity, laser back-reflection, and laser power along with the demanded XY position. A full build is ~80M rows. This package loads that data, masks it to the printed parts, assigns points to individual physical parts (via direct nearest-part or DBSCAN clustering), and produces coefficient-of-variation analysis plus interactive plots.
 
-<!-- TODO: add a screenshot of the GUI (Config tab or a plot) and uncomment:
-![AMPM Analyzer](assets/screenshot.png)
--->
+[AMPM Analyzer](assets/screenshot.png)
 
 ## Quickstart
 
@@ -33,11 +31,11 @@ source .venv/bin/activate
 python launcher.py          # recommended (retries a failed startup); or: python app.py
 ```
 
-Select a project root directory, review the auto-detected configuration, load data, add derived columns, and plot. See [APP.md](APP.md) for a full walkthrough of the GUI.
+Select a project root directory, review the auto-detected configuration, load data, add derived columns, and plot. See [docs/APP.md](docs/APP.md) for a full walkthrough of the GUI.
 
 ### Compiled executable (no Python required)
 
-Download the latest release for the appropriate platform from the [Releases](https://github.com/Obbaron/ampm-analysis/releases) page. Unzip the folder and double-click `ampm-analysis.exe`.
+Download the latest release from the [Releases](https://github.com/Obbaron/ampm-analysis/releases) page for the appropriate platform.
 
 ### CLI / scripts
 
@@ -94,6 +92,7 @@ ampm-analysis/
 │   ├── parts.py                # QuantAM CSV parser
 │   ├── stats.py                # CoV
 │   ├── correction.py           # XY-bias correction polynomial
+│   ├── plotting.py             # Shared plotting helpers
 │   ├── sampling.py             # Downsamplers
 │   └── views/                  # Discoverable plot types
 │       ├── __init__.py         # discover() auto-loader
@@ -104,7 +103,8 @@ ampm-analysis/
 │       ├── kde.py
 │       ├── layer_viewer.py
 │       ├── scatter_2d.py
-│       └── scatter_3d.py
+│       ├── scatter_3d.py
+│       └── single_layer.py
 ├── examples/                   # Runnable example scripts
 ├── tests/                      # Test suite
 └── docs/                       # Documentation
@@ -112,14 +112,14 @@ ampm-analysis/
 
 ## Configuration
 
-Each project root directory contains a `config.toml` with paths and parameters. On first use, `setup_build.py` auto-detects the STL, parts CSV, and layer thickness, and writes a default config. You can edit it manually or review it in the GUI before loading.
+Each project root directory contains a `config.toml` with paths and parameters. On first use, `setup_build.py` autodetects the STL, parts CSV, and layer thickness, and writes a default config. You can edit it manually or review it in the GUI before loading.
 
 See the project root's `config.toml` for all available options.
 
 ## Where to next?
 
 - **Just want to see results** → download the compiled `.exe` from Releases
-- **Setting up environment** → run `setup.bat` / `setup.sh`, then `python launcher.py`
+- **Setting up environment** → run `setup.bat` / `setup.sh`, then `python app.py`
 - **Build has few, large, well-separated parts** → use `direct` assignment method in config
 - **Tuning DBSCAN for a new build** → run `python examples/tune_eps.py`, also see [docs/CLUSTERING.md](docs/CLUSTERING.md)
 - **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
@@ -141,7 +141,7 @@ To also install the test framework:
 pip install -e ".[dev]"
 ```
 
-### Offline
+### Offline (no internet)
 
 If a `wheels/windows/` or `wheels/linux/` folder is present, the setup scripts install from those automatically. Otherwise, to create the wheels on a machine with internet:
 
@@ -154,7 +154,8 @@ Requires Python 3.11 or newer.
 
 ## License
 
-This project is for internal use only. See the [LICENSE](LICENSE) file for details.
+Copyright (c) 2026 Centre for Custom Medical Devices (CMD). All rights reserved.
+This software is proprietary and confidential. Unauthorized copying, modification, distribution, or use, via any medium, is strictly prohibited. See the [LICENSE](LICENSE) file for details.
 
 ## Running tests
 
