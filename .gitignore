@@ -209,6 +209,8 @@ __marimo__/
 # Project data directories
 data/
 data_files/
+archi.py
+explore.py
 mtt.py
 y.py
 z.py

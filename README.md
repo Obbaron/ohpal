@@ -1,8 +1,12 @@
 # AMPM Analysis
 
-Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data.
+Analysis pipeline for Renishaw 500S PBF-LB AMPM (Additive Manufacturing Process Monitoring) data.
 
 Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 monitoring rows recording meltpool intensity, plasma intensity, laser back-reflection, and laser power along with the demanded XY position. A full build is ~80M rows. This package loads that data, masks it to the printed parts, assigns points to individual physical parts (via direct nearest-part or DBSCAN clustering), and produces coefficient-of-variation analysis plus interactive plots.
+
+<!-- TODO: add a screenshot of the GUI (Config tab or a plot) and uncomment:
+![AMPM Analyzer](assets/screenshot.png)
+-->
 
 ## Quickstart
 
@@ -26,14 +30,14 @@ chmod +x setup.sh && ./setup.sh
 source .venv/bin/activate
 
 # Launch the GUI
-python app.py
+python launcher.py          # recommended (retries a failed startup); or: python app.py
 ```
 
-Select a project root directory, review the auto-detected configuration, load data, add derived columns, and plot.
+Select a project root directory, review the auto-detected configuration, load data, add derived columns, and plot. See [APP.md](APP.md) for a full walkthrough of the GUI.
 
 ### Compiled executable (no Python required)
 
-Download the latest release from the [Releases](https://github.com/Obbaron/ampm-analysis/releases) page. Unzip the folder and double-click `ampm-analysis.exe`.
+Download the latest release for the appropriate platform from the [Releases](https://github.com/Obbaron/ampm-analysis/releases) page. Unzip the folder and double-click `ampm-analysis.exe`.
 
 ### CLI / scripts
 
@@ -63,6 +67,8 @@ flowchart LR
 
 Each stage is independent and cacheable. If you change clustering parameters but not the mask, only the cluster cache invalidates.
 
+The diagram shows the **DBSCAN** path. **Direct** assignment skips the clustering and centroid-matching steps (`cluster_labels.pq`, `compute_part_id_map`) and matches each point to its nearest part directly.
+
 See [docs/PIPELINE.md](docs/PIPELINE.md) for the full step-by-step of how to build a script.
 
 ## Project layout
@@ -70,6 +76,7 @@ See [docs/PIPELINE.md](docs/PIPELINE.md) for the full step-by-step of how to bui
 ```
 ampm-analysis/
 ├── app.py                      # GUI entry point (PyQt6)
+├── launcher.py                 # CLI launcher (startup retry + Ctrl+C handling)
 ├── pyproject.toml              # Project dependencies
 ├── setup.bat                   # Windows setup script
 ├── setup.sh                    # Linux/macOS setup script
@@ -112,12 +119,12 @@ See the project root's `config.toml` for all available options.
 ## Where to next?
 
 - **Just want to see results** → download the compiled `.exe` from Releases
-- **Setting up environment** → run `setup.bat` / `setup.sh`, then `python app.py`
+- **Setting up environment** → run `setup.bat` / `setup.sh`, then `python launcher.py`
 - **Build has few, large, well-separated parts** → use `direct` assignment method in config
 - **Tuning DBSCAN for a new build** → run `python examples/tune_eps.py`, also see [docs/CLUSTERING.md](docs/CLUSTERING.md)
 - **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
 - **A part isn't being identified correctly** → [docs/PARTS.md](docs/PARTS.md)
-- **Want to add a new view** → create a new `.py` file in `ampm/views/` following the contract (NAME, AXES, SETTINGS, run)
+- **Want to add a new view** → create a new `.py` file in `ampm/views/` following the contract (NAME, DESCRIPTION, AXES, SETTINGS, run)
 - **Different machine or sensor** → [docs/CORRECTION.md](docs/CORRECTION.md)
 
 ## Installation
@@ -134,7 +141,7 @@ To also install the test framework:
 pip install -e ".[dev]"
 ```
 
-### Offline (no internet)
+### Offline
 
 If a `wheels/windows/` or `wheels/linux/` folder is present, the setup scripts install from those automatically. Otherwise, to create the wheels on a machine with internet:
 
@@ -145,11 +152,15 @@ pip download . -d wheels/linux/     # run on Linux
 
 Requires Python 3.11 or newer.
 
+## License
+
+This project is for internal use only. See the [LICENSE](LICENSE) file for details.
+
 ## Running tests
 
 ```bash
 pytest                          # Full suite
-pytest tests/test_phase8.py     # Single module
+pytest tests/test_<module>.py   # Single module
 ```
 
 Requires `pip install -e ".[dev]"` to get pytest.
