@@ -182,7 +182,7 @@ class QuantAMParts:
         """Load and parse a QuantAM parts CSV."""
         path = Path(path)
         if not path.is_file():
-            raise FileNotFoundError(f"QuantAM parts file not found: {path}")
+            raise FileNotFoundError(f"QuantAM parts file not found:\n{path}")
         text = path.read_text(encoding="utf-8-sig")  # handles BOM if present
 
         sections: dict[str, pl.DataFrame] = {}

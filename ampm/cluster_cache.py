@@ -159,7 +159,7 @@ def load_cluster_labels(
     """
     cache_path = Path(cache_path)
     if not cache_path.is_file():
-        msg = f"Cluster cache not found: {cache_path}"
+        msg = f"Cluster cache not found:\n{cache_path}"
         if strict:
             raise FileNotFoundError(msg)
         if verbose:

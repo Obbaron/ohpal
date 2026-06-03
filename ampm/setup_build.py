@@ -201,7 +201,7 @@ def create_config(
     """
     build_dir = Path(build_dir).resolve()
     if not build_dir.is_dir():
-        raise FileNotFoundError(f"Directory not found: {build_dir}")
+        raise FileNotFoundError(f"Directory not found:\n{build_dir}")
 
     if source is not None:
         source_path = Path(source).resolve()

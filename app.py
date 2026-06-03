@@ -125,6 +125,14 @@ def set_widget_value(widget, spec, value):
         widget.setText(str(value))
 
 
+def _layer_range_tag(layer_range) -> str:
+    """Filesystem-safe tag for a layer range, used to name per-range caches."""
+    if layer_range is None:
+        return "all"
+    lo, hi = int(layer_range[0]), int(layer_range[1])
+    return f"L{lo:05d}-{hi:05d}"
+
+
 class CollapsibleSection(QWidget):
     """A header button that shows/hides a content area below it."""
 
@@ -234,7 +242,6 @@ class LoadWorker(QThread):
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
         LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi) inclusive
 
-        # Make bar reach 100% regardless of enabled steps
         if APPLY_MASK and ASSIGN_PARTS:
             self._load_band, mask_band, assign_band = (2, 50), (50, 68), (68, 96)
         elif APPLY_MASK:
@@ -298,7 +305,7 @@ class LoadWorker(QThread):
                 cache_path=MASK_KEEP_CACHE,
                 mask_fn=masking_wrapper,
                 params=mask_params,
-                strict=True,
+                strict=False,
             )
             print(f"After mask: {df.height:,} rows.")
             if mask_band is not None:
@@ -314,7 +321,7 @@ class LoadWorker(QThread):
             print(f"Loaded {parts_table.height} parts.")
 
             if METHOD == "direct":
-                print("Assigning parts (direct)...")
+                print("Assigning parts (direct)...\n")
                 df = assign_nearest_part(
                     df,
                     parts_table,
@@ -360,7 +367,7 @@ class LoadWorker(QThread):
                     cache_path=CLUSTER_CACHE,
                     cluster_fn=clustering_wrapper,
                     params=cluster_params,
-                    strict=True,
+                    strict=False,
                 )
                 mapping = compute_part_id_map(clustered, parts_table)
                 df = apply_part_id_map(clustered, mapping, noise_label="noise")
@@ -706,6 +713,11 @@ class MainWindow(QMainWindow):
 
         splitter.setSizes([600, 400])  # left, 60%; right, 40%
 
+        for edit in (self._source_edit, self._stl_edit, self._csv_edit, self._lt_edit):
+            edit.textChanged.connect(self._update_load_enabled)
+        self._mask_check.toggled.connect(self._update_load_enabled)
+        self._assign_check.toggled.connect(self._update_load_enabled)
+
         if self._views:
             self._on_view_changed(self._view_combo.currentText())
 
@@ -806,6 +818,102 @@ class MainWindow(QMainWindow):
         self._load_progress.setValue(pct)
         self._load_progress.setFormat(f"{label} \u2014 %p%")
 
+    def _update_load_enabled(self) -> None:
+        """Enable Load only once a config is loaded and required paths are set.
+
+        STL is only required when masking is on; Parts CSV only when assigning.
+        """
+        ready = self._config is not None and bool(self._source_edit.text().strip())
+        if ready and self._mask_check.isChecked():
+            ready = bool(self._stl_edit.text().strip())
+        if ready and self._assign_check.isChecked():
+            ready = bool(self._csv_edit.text().strip())
+        self._load_btn.setEnabled(ready)
+
+    def _validate_inputs(self) -> list[str]:
+        """Check inputs before loading. Returns a list of human-readable problems."""
+        problems: list[str] = []
+
+        source = self._source_edit.text().strip()
+        if not source:
+            problems.append("Source directory is not set.")
+        elif not Path(source).is_dir():
+            problems.append(f"Source directory does not exist: {source}")
+
+        lt = self._lt_edit.text().strip()
+        try:
+            if float(lt) <= 0:
+                problems.append("Layer thickness must be greater than 0.")
+        except ValueError:
+            problems.append(f"Layer thickness is not a number: {lt or '(empty)'}")
+
+        if self._mask_check.isChecked():
+            stl = self._stl_edit.text().strip()
+            if not stl:
+                problems.append("Apply mask is on but no STL file is set.")
+            elif not Path(stl).is_file():
+                problems.append(f"STL file does not exist: {stl}")
+
+        if self._assign_check.isChecked():
+            csv = self._csv_edit.text().strip()
+            if not csv:
+                problems.append("Assign parts is on but no Parts CSV is set.")
+            elif not Path(csv).is_file():
+                problems.append(f"Parts CSV does not exist: {csv}")
+
+            md = self._max_dist_edit.text().strip().lower()
+            if md != "none":
+                try:
+                    if float(md) <= 0:
+                        problems.append(
+                            "Max distance must be greater than 0 (or 'none')."
+                        )
+                except ValueError:
+                    problems.append(
+                        f"Max distance must be a number or 'none': "
+                        f"{self._max_dist_edit.text()!r}"
+                    )
+
+            if self._method_combo.currentText() == "dbscan":
+                for label, widget in (
+                    ("EPS_XY", self._eps_xy_edit),
+                    ("EPS_Z", self._eps_z_edit),
+                ):
+                    txt = widget.text().strip()
+                    try:
+                        if float(txt) <= 0:
+                            problems.append(f"{label} must be greater than 0.")
+                    except ValueError:
+                        problems.append(f"{label} is not a number: {txt or '(empty)'}")
+
+                ov = self._overlap_edit.text().strip().lower()
+                if ov != "auto":
+                    try:
+                        if int(ov) < 0:
+                            problems.append(
+                                "Overlap layers must be 0 or more (or 'auto')."
+                            )
+                    except ValueError:
+                        problems.append(
+                            f"Overlap layers must be an integer or 'auto': "
+                            f"{self._overlap_edit.text()!r}"
+                        )
+
+        if (
+            not self._all_layers_check.isChecked()
+            and self._available_layers is not None
+        ):
+            lo = min(self._layer_from_spin.value(), self._layer_to_spin.value())
+            hi = max(self._layer_from_spin.value(), self._layer_to_spin.value())
+            alo, ahi = self._available_layers
+            if hi < alo or lo > ahi:
+                problems.append(
+                    f"Selected layer range {lo}\u2013{hi} is outside the "
+                    f"available range {alo}\u2013{ahi}."
+                )
+
+        return problems
+
     def _browse_build_dir(self):
         path = QFileDialog.getExistingDirectory(self, "Select packet directory")
         if not path:
@@ -820,13 +928,14 @@ class MainWindow(QMainWindow):
 
             config = create_or_load_config(path)
         except Exception as e:
+            self._config = None
             self._log.append(f"ERROR loading config: {e}")
-            self._load_btn.setEnabled(False)
+            self._update_load_enabled()
             return
 
         self._config = config
         self._populate_config(config)
-        self._load_btn.setEnabled(True)
+        self._update_load_enabled()
         self._log.append(
             "Config loaded. Review paths and click 'Load Data' when ready."
         )
@@ -881,13 +990,28 @@ class MainWindow(QMainWindow):
             config["LAYER_RANGE"] = (min(lo, hi), max(lo, hi))
 
         source = config["SOURCE"]
-        config["MASK_CACHE"] = str(Path(source) / ".cache" / "fullplate_mask.pkl")
-        config["MASK_KEEP_CACHE"] = str(Path(source) / ".cache" / "mask_keep.pq")
-        config["CLUSTER_CACHE"] = str(Path(source) / ".cache" / "cluster_labels.pq")
+        cache_dir = Path(source) / ".cache"
+        if config["LAYER_RANGE"] is None:
+            config["MASK_CACHE"] = str(cache_dir / "fullplate_mask.pkl")
+            config["MASK_KEEP_CACHE"] = str(cache_dir / "mask_keep.pq")
+            config["CLUSTER_CACHE"] = str(cache_dir / "cluster_labels.pq")
+        else:
+            tag = _layer_range_tag(config["LAYER_RANGE"])
+            config["MASK_CACHE"] = str(cache_dir / f"mask_geom_{tag}.pkl")
+            config["MASK_KEEP_CACHE"] = str(cache_dir / f"mask_keep_{tag}.pq")
+            config["CLUSTER_CACHE"] = str(cache_dir / f"cluster_labels_{tag}.pq")
 
         return config
 
     def _load_data(self):
+        problems = self._validate_inputs()
+        if problems:
+            self._log.append("")
+            self._log.append("Cannot load \u2014 please fix the following:")
+            for p in problems:
+                self._log.append(f"  \u2022 {p}")
+            return
+
         config = self._gather_full_config()
         self._config = config
 

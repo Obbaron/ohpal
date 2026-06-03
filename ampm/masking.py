@@ -85,7 +85,7 @@ def build_mask(
     """
     stl_path = Path(stl_path)
     if not stl_path.is_file():
-        raise FileNotFoundError(f"STL not found: {stl_path}")
+        raise FileNotFoundError(f"STL not found:\n{stl_path}")
 
     layer_list = sorted(set(int(L) for L in layers))
     if not layer_list:
