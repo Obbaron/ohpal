@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-04
+
+### Added
+
+- Drop-in plot views. Additional views are loaded at runtime from three
+  locations, in increasing precedence: a per-user views folder, a build's
+  `<project_root>/views/` folder, and the `AMPM_VIEWS_PATH` environment
+  variable. Any external view may override a built-in of the same name. Works
+  in the compiled executable without rebuilding. Documented in `docs/APP.md`.
+- **Reload Views** button (next to the plot *Type* selector) to re-scan the
+  view folders without restarting.
+- The per-user views folder is created automatically on first launch.
+
+### Changed
+
+- Distribution is now a single self-contained executable (PyInstaller one-file
+  build) instead of an executable plus a companion folder.
+- Cleaned up the PyInstaller spec: removed stale hidden imports and corrected
+  the bundled `ampm` module list.
+
 ## [1.0.0] - 2026-06-03
 
 Initial release.
@@ -43,5 +63,6 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Obbaron/ampm-analysis/releases/tag/v1.0.0

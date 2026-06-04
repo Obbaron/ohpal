@@ -109,11 +109,77 @@ Build per-part statistics from a signal:
 ### Plotting
 
 1. Pick a **Type**: the available plot views are discovered automatically; a
-   short description appears below the selector.
+   short description appears below the selector. (You can add your own. See
+   [Adding plot views](#adding-plot-views).)
 2. Set the **Axes** and any **Settings** the view exposes (these change with
    the selected view).
 3. Click **Plot** (bottom of the tab). Plotting runs in the background with a
    busy indicator; the result opens in the plot window.
+
+---
+
+## Adding plot views
+
+Plot views are pluggable: the app ships with a set of built-in views, and you
+can add your own by dropping a `.py` file into one of the folders below. New
+views are picked up **without rebuilding the app**. This works in the compiled
+executable too, because these folders are read from disk at runtime.
+
+### Where view files go
+
+The app looks in these locations, in increasing priority (a view's `NAME`
+decides identity; a higher-priority folder overrides a lower one, and any of
+them can override a built-in of the same name):
+
+1. **User views folder** (lowest): shared across every build. Created for you
+   on first launch:
+   - Windows: `%APPDATA%\AMPM\views`
+   - macOS: `~/Library/Application Support/AMPM/views`
+   - Linux: `$XDG_DATA_HOME/AMPM/views` (or `~/.local/share/AMPM/views`)
+2. **Per-build**: `<project_root>/views/`, for views specific to one build.
+3. **`AMPM_VIEWS_PATH`** (highest): one or more folders set in this environment
+   variable (separated by `;` on Windows, `:` elsewhere). If you list several,
+   earlier entries win.
+
+### Reloading
+
+After adding, editing, or removing a view file, click **Reload Views** (next to
+the *Type* selector) to re-scan all the folders without restarting. New views
+also appear automatically the next time you launch the app, and a build's own
+`views/` folder is re-scanned whenever you select that build. Any file that
+fails to import or doesn't match the required structure is skipped, with a note
+in the log.
+
+### What a view file must contain
+
+A view module must define:
+
+```python
+NAME = "My View"                       # shown in the Type dropdown
+DESCRIPTION = "What this view shows."  # shown under the selector
+
+AXES = {  # column pickers shown for this view
+    # ...
+}
+SETTINGS = {  # extra option widgets (may be empty)
+    # ...
+}
+
+def run(df, config, axes, settings):
+    # df       : the loaded (masked / part-assigned) data
+    # axes     : the columns the user picked for AXES
+    # settings : the values the user chose for SETTINGS
+    ...
+```
+
+The easiest way to start is to copy a built-in view (for example
+`ampm/views/scatter_2d.py`) and adapt it; that shows the exact shape of `AXES`
+and `SETTINGS`. Files whose name starts with `_` are ignored.
+
+> **Note for the compiled app:** a dropped-in view can use anything already
+> bundled in the executable (the `ampm` package, `polars`, `numpy`, the
+> plotting stack, …), but it can't pull in a third-party library that wasn't
+> bundled. To use additional third-party libraries, recompile the app binary.
 
 ---
 
@@ -170,4 +236,5 @@ setup (`.ampm-ui.json`) is **not** in `.cache/`, so it survives.
 | Analysis tab didn't appear | The load failed. Check the log for the error. |
 | Load is very slow the first time | First-time Parquet cache build for that build/range. Subsequent loads are fast. |
 | A remembered layer range came back smaller | It was clamped to the layers available in the build you opened. |
+| An additional view doesn't appear | Click **Reload Views** and check the log. The file may have failed to import or be missing `NAME`/`AXES`/`SETTINGS`/`run`. Files starting with `_` are ignored. |
 | Last folder not remembered after an update | The app's stored-settings key changed; pick a folder once and it's remembered again. |

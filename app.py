@@ -744,6 +744,12 @@ class MainWindow(QMainWindow):
         self._view_combo.addItems(list(self._views.keys()))
         self._view_combo.currentTextChanged.connect(self._on_view_changed)
         selector_row.addWidget(self._view_combo, stretch=1)
+        self._reload_views_btn = QPushButton("Reload Views")
+        self._reload_views_btn.setToolTip(
+            "Re-scan for view files (built-in, per-build, user, AMPM_VIEWS_PATH)"
+        )
+        self._reload_views_btn.clicked.connect(self._on_reload_views)
+        selector_row.addWidget(self._reload_views_btn)
         view_layout.addLayout(selector_row)
 
         self._description_label = QLabel()
@@ -1021,6 +1027,7 @@ class MainWindow(QMainWindow):
 
         self._config = config
         self._populate_config(config)
+        self._refresh_views(path)
         self._load_resume_state(path)
         self._update_load_enabled()
         self._log.append(
@@ -1595,10 +1602,38 @@ class MainWindow(QMainWindow):
         """Lazily discover views and populate the combo box."""
         if self._views_loaded:
             return
+        from ampm.views import ensure_user_views_dir
+
+        ensure_user_views_dir()  # create the per-user views folder on first run
+        self._refresh_views(None)
+
+    def _on_reload_views(self):
+        """Re-scan view folders on demand (built-in + external)."""
+        before = set(self._views)
+        self._refresh_views(self._project_root)
+        after = set(self._views)
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        if added:
+            self._log.append(f"Views reloaded. Added: {', '.join(added)}.")
+        elif removed:
+            self._log.append(f"Views reloaded. Removed: {', '.join(removed)}.")
+        else:
+            self._log.append(f"Views reloaded ({len(after)} available).")
+
+    def _refresh_views(self, project_root=None):
+        """(Re)discover views, including any external/per-build folders, and
+        repopulate the combo while preserving the current selection."""
         from ampm.views import discover
 
-        self._views = discover()
+        current = self._view_combo.currentText()
+        self._views = discover(project_root=project_root, log=self._on_log)
+        self._view_combo.blockSignals(True)
+        self._view_combo.clear()
         self._view_combo.addItems(list(self._views.keys()))
+        if current in self._views:
+            self._view_combo.setCurrentText(current)
+        self._view_combo.blockSignals(False)
         self._views_loaded = True
 
 
