@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ampm-analyzer"
-version = "1.1.0"
+version = "1.1.1"
 description = "Analysis pipeline for Renishaw 500S PBF-LB AMPM monitoring data"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     {name = "Oliver H. Page", email = "oliverhpage@gmail.com"},
 ]
-license = {text = "For internal use only"}
+license = {text = "All rights reserved."}
 dependencies = [
     "polars>=1.0",
     "pyarrow>=14",
