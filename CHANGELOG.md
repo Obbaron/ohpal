@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-06-11
+
+### Fixed
+
+- 3D scatter no longer fails with a Plotly `ValueError` ("Invalid element(s)
+  received for the 'color' property") when the selected color column contains
+  nulls — e.g. coloring by a per-part statistic while some rows are
+  unassigned (`noise`). Null-colored points are now excluded from the plot
+  with a logged count, and an explicit error is raised if *every* sampled
+  point has a null color.
+- Plotting no longer requires `part_id` to exist. Hover columns are now
+  best-effort across all views (3D scatter, 2D scatter, contour, and the
+  layered viewer): columns missing from the data — such as `part_id` when
+  part assignment is skipped at import — are omitted from the hover tooltip
+  with a logged note instead of raising `KeyError`. Missing axis or color
+  columns still fail loudly.
+
+### Changed
+
+- `stl_stream.py` docstrings reformatted to the numpy convention, with full
+  `Parameters`/`Returns`/`Raises` sections added to all helpers (no behavior
+  change; verified against a known build).
+
+## [1.1.1] - 2026-06-04
+
+### Changed
+
+- Reverted distribution from the single self-contained executable (one-file
+  PyInstaller build, introduced in 1.1.0) back to a folder build: a smaller
+  executable alongside an `_internal` folder.
+
 ## [1.1.0] - 2026-06-04
 
 ### Added
@@ -63,6 +94,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Obbaron/ampm-analysis/releases/tag/v1.0.0
