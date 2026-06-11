@@ -55,7 +55,7 @@ def main() -> None:
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()
-    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.\n")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),

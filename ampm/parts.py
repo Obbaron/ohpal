@@ -242,13 +242,30 @@ class QuantAMParts:
         Y Position      : float
         Layers Count    : int
 
-        Each row is one physical part on the build plate.
+        Each row is one physical part *instance* on the build plate.
+
+        Duplicate instances
+        -------------------
+        QuantAM lists each placed copy of a part as its own row, all sharing
+        the same "Source Index" (e.g. fifteen rows of ``Part(1)`` in a
+        parameter-study build). To keep ``Part ID`` unique, duplicated names
+        are suffixed with their QuantAM instance number (the "Sr. No." column):
+        ``Part(1)#1``, ``Part(1)#4``, etc.
+        """
+        return self._parent_with_instances().drop("Sr. No.")
+
+    def _parent_with_instances(self) -> pl.DataFrame:
+        """
+        ``parent_parts()`` plus the "Sr. No." instance-number column —
+        the key used to join parameter tabs (whose "Sr. No." values are
+        ``"<instance>.<variant>"``) back to the right instance.
         """
         if SECTION_PARENT not in self._sections:
             raise ValueError(f"No {SECTION_PARENT!r} section found in {self.path}")
         df = self._sections[SECTION_PARENT]
 
         wanted = {
+            "Sr. No.": "Sr. No.",
             "Source Index": "Part ID",
             "Layer Thickness": "Layer Thickness",
             "X Position": "X Position",
@@ -261,7 +278,15 @@ class QuantAMParts:
                 f"{SECTION_PARENT!r} section missing columns {missing}. "
                 f"Found: {df.columns}"
             )
-        return df.select([pl.col(src).alias(dst) for src, dst in wanted.items()])
+        out = df.select([pl.col(src).alias(dst) for src, dst in wanted.items()])
+        out = out.with_columns(pl.col("Sr. No.").cast(pl.Int64))
+
+        return out.with_columns(
+            pl.when(pl.len().over("Part ID") > 1)
+            .then(pl.col("Part ID") + pl.lit("#") + pl.col("Sr. No.").cast(pl.String))
+            .otherwise(pl.col("Part ID"))
+            .alias("Part ID")
+        )
 
     def volume_parameters(self, *, variant: str = "1") -> pl.DataFrame:
         """
@@ -283,7 +308,7 @@ class QuantAMParts:
         """
         if SECTION_SCAN_VOLUME not in self._sections:
             raise ValueError(f"No {SECTION_SCAN_VOLUME!r} section found in {self.path}")
-        parent = self.parent_parts()
+        parent = self._parent_with_instances()
         volume = self._sections[SECTION_SCAN_VOLUME]
 
         if "Sr. No." not in volume.columns or "Source Index" not in volume.columns:
@@ -294,12 +319,18 @@ class QuantAMParts:
 
         sr_str = volume["Sr. No."].cast(pl.String)
         variant_suffix = f".{variant}"
-        keep = sr_str.str.ends_with(variant_suffix)
-        volume_v = volume.filter(keep).rename({"Source Index": "Part ID"})
-
-        if "Sr. No." in volume_v.columns:
-            volume_v = volume_v.drop("Sr. No.")
-        return parent.join(volume_v, on="Part ID", how="left")
+        volume_v = (
+            volume.filter(sr_str.str.ends_with(variant_suffix))
+            .with_columns(
+                pl.col("Sr. No.")
+                .cast(pl.String)
+                .str.split(".")
+                .list.first()
+                .cast(pl.Int64)
+            )
+            .drop("Source Index")
+        )
+        return parent.join(volume_v, on="Sr. No.", how="left").drop("Sr. No.")
 
     def volume_parameters_with_speed(self, *, variant: str = "1") -> pl.DataFrame:
         """
@@ -674,9 +705,8 @@ def assign_nearest_part(
     nearest_idx = np.empty(n_rows, dtype=np.intp)
     nearest_dist = np.empty(n_rows, dtype=np.float32)
 
-    # Size chunks so each (chunk, n_parts) float32 array is ~128 MB.
-    target_bytes = 128 * 1024 * 1024
-    chunk = int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 4))))
+    target_bytes = 128 * 1024 * 1024  # 128 MB
+    chunk = max(1, int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 4)))))
 
     for start in range(0, n_rows, chunk):
         stop = min(start + chunk, n_rows)

@@ -39,10 +39,10 @@ import polars as pl
 from ampm import DataStore
 from ampm.cluster_cache import cluster_or_load
 from ampm.clustering import cluster_dbscan_chunked, cluster_summary
+from ampm.config import create_or_load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map
-from ampm.config import create_or_load_config
 
 
 def main() -> None:
@@ -66,7 +66,7 @@ def main() -> None:
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()
-    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.\n")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),

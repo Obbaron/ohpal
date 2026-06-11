@@ -68,6 +68,9 @@ def save_mask_keep(
     """
     cache_path = Path(cache_path)
 
+    if df_masked.is_empty():
+        raise ValueError("ERROR: Mask empty.")
+
     for c in _KEY_COLUMNS:
         if c not in df_masked.columns:
             raise KeyError(f"Column {c!r} required for mask cache; missing from input.")
@@ -195,6 +198,14 @@ def load_mask_keep(
 
     cached_keys = pl.read_parquet(cache_path, glob=False)
 
+    if cached_keys.is_empty():
+        msg = f"Mask cache contains 0 keys:\n{cache_path}"
+        if strict:
+            raise ValueError(msg)
+        if verbose:
+            print(f"  [mask_cache] {msg}")
+        raise FileNotFoundError(msg)
+
     cast_exprs = []
     for k in _KEY_COLUMNS:
         target_dtype = cached_keys[k].dtype
@@ -206,6 +217,14 @@ def load_mask_keep(
         df_to_filter = df_full
 
     out = df_to_filter.join(cached_keys, on=list(_KEY_COLUMNS), how="semi")
+
+    if out.is_empty() and not df_full.is_empty():
+        msg = f"Mask cache matched 0 of {df_full.height:,} rows.\n" f"{cache_path}"
+        if strict:
+            raise ValueError(msg)
+        if verbose:
+            print(f"  [mask_cache] {msg}")
+        raise FileNotFoundError(msg)
 
     if verbose:
         kept = out.height
@@ -275,7 +294,9 @@ def mask_or_load(
         )
     except FileNotFoundError:
         if verbose:
-            print(f"  [mask_cache] computing fresh mask → {cache_path}")
+            print(f"  [mask_cache] computing fresh mask:\n{cache_path}")
         masked = mask_fn(df_full)
+        if masked.is_empty() and not df_full.is_empty():
+            raise RuntimeError(f"Masking kept 0 of {df_full.height:,} rows.")
         save_mask_keep(masked, cache_path, params=params, verbose=verbose)
         return masked

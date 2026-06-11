@@ -1,0 +1,1 @@
+https://www.inf.ufpr.br/murilo/public/CAD-slicing.pdf <- stl streaming algorithm

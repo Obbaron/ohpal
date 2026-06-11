@@ -40,9 +40,10 @@ import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
-Mask = dict[
-    int, BaseGeometry
-]  # mapping of layer number -> 2D geometry (Polygon or MultiPolygon)
+Mask = dict[int, BaseGeometry]
+
+# STLs above this size are sliced with the streaming slicer instead of trimesh
+LARGE_STL_BYTES = 256 * 2**20  # 256mm
 
 
 def build_mask(
@@ -100,13 +101,38 @@ def build_mask(
             if cached is not None and cached.get("key") == cache_key:
                 return cached["mask"]
 
-    mesh = trimesh.load(stl_path, force="mesh")
+    if stl_path.stat().st_size > LARGE_STL_BYTES:
+        raw_mask = _slice_streaming(stl_path, layer_list, layer_thickness)
+    else:
+        raw_mask = _slice_trimesh(stl_path, layer_list, layer_thickness)
+
+    mask: Mask = {}
+    for layer_n, geom in raw_mask.items():
+        if buffer_mm != 0.0:
+            geom = geom.buffer(buffer_mm)
+            if geom.is_empty:
+                continue
+        if not isinstance(geom, (Polygon, MultiPolygon)):
+            continue
+        mask[layer_n] = geom
+
+    if cache_path is not None:
+        _save_cache(cache_path, {"key": cache_key, "mask": mask})
+
+    return mask
+
+
+def _slice_trimesh(
+    stl_path: Path, layer_list: list[int], layer_thickness: float
+) -> Mask:
+    """In-memory slicing via trimesh."""
+    mesh = trimesh.load_mesh(stl_path)
     if not isinstance(mesh, trimesh.Trimesh):
         raise TypeError(
             f"Expected a single mesh from {stl_path}, got {type(mesh).__name__}. "
-            "STL files containing multiple disjoint components should still load "
-            "as one Trimesh; please report if this fails."
         )
+    if mesh.is_empty or mesh.bounds is None or len(mesh.faces) == 0:
+        raise ValueError(f"trimesh loaded {stl_path} as an EMPTY mesh.")
 
     heights = np.array([L * layer_thickness for L in layer_list], dtype=float)
 
@@ -133,27 +159,20 @@ def build_mask(
             ) from e
         if not polys:
             continue
-
-        geom: BaseGeometry
-        if len(polys) == 1:
-            geom = polys[0]
-        else:
-            geom = MultiPolygon(polys)
-
-        if buffer_mm != 0.0:
-            geom = geom.buffer(buffer_mm)
-            if geom.is_empty:
-                continue
-
-        if not isinstance(geom, (Polygon, MultiPolygon)):
-            continue
-
-        mask[layer_n] = geom
-
-    if cache_path is not None:
-        _save_cache(cache_path, {"key": cache_key, "mask": mask})
-
+        mask[layer_n] = polys[0] if len(polys) == 1 else MultiPolygon(polys)
     return mask
+
+
+def _slice_streaming(
+    stl_path: Path, layer_list: list[int], layer_thickness: float
+) -> Mask:
+    """Constant-memory slicing for huge STL files (e.g. lattice builds)."""
+    try:
+        from .stl_stream import slice_stl_streaming
+    except ImportError:  # running as a plain module outside the package
+        from stl_stream import slice_stl_streaming
+
+    return slice_stl_streaming(stl_path, layer_list, layer_thickness)
 
 
 def apply_mask(
@@ -198,11 +217,30 @@ def apply_mask(
         idx = np.flatnonzero(layers == layer_n)
         if idx.size == 0:
             continue
+        shapely.prepare(geom)
         points = shapely.points(xs[idx], ys[idx])
         inside = shapely.contains(geom, points)
         keep[idx] = inside
 
     return df.filter(pl.Series(keep))
+
+
+def stl_hash(stl_path: str | Path) -> str:
+    """SHA-256 fingerprint of the STL file contents."""
+    stl = Path(stl_path)
+    size = stl.stat().st_size
+    hash = hashlib.sha256()
+    with stl.open("rb") as file:
+        if size <= LARGE_STL_BYTES:
+            for chunk in iter(lambda: file.read(1 << 20), b""):
+                hash.update(chunk)
+        else:
+            sample = 8 * 2**20
+            hash.update(f"sampled:{size}:".encode())
+            for offset in sorted({0, max(0, size // 2), max(0, size - sample)}):
+                file.seek(offset)
+                hash.update(file.read(sample))
+    return hash.hexdigest()
 
 
 def _cache_key(
@@ -212,12 +250,9 @@ def _cache_key(
     buffer_mm: float,
 ) -> str:
     """Hash STL contents + slicing params so the cache invalidates correctly."""
-    h = hashlib.sha256()
-    with stl_path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    h.update(repr((layers, layer_thickness, buffer_mm)).encode())
-    return h.hexdigest()
+    hash = hashlib.sha256(stl_hash(stl_path).encode())
+    hash.update(repr((layers, layer_thickness, buffer_mm)).encode())
+    return hash.hexdigest()
 
 
 def _save_cache(path: Path, payload: dict) -> None:

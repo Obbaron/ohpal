@@ -52,7 +52,7 @@ def main() -> None:
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
     df = store.query()
-    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.\n")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
@@ -84,9 +84,9 @@ def main() -> None:
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()
-    print(f"Loaded {parts_table.height} parts from {Path(PARTS_CSV).name}.")
+    print(f"Loaded {parts_table.height} parts from {Path(PARTS_CSV).name}.\n")
 
-    print("\nAssigning each row to its nearest part...")
+    print("Assigning each row to its nearest part...")
     assigned = assign_nearest_part(
         df_masked,
         parts_table,

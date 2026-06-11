@@ -289,7 +289,7 @@ class LoadWorker(QThread):
         from ampm.cluster_cache import cluster_or_load
         from ampm.clustering import cluster_dbscan_chunked
         from ampm.mask_cache import mask_or_load
-        from ampm.masking import apply_mask, build_mask
+        from ampm.masking import apply_mask, build_mask, stl_hash
         from ampm.parts import (
             QuantAMParts,
             apply_part_id_map,
@@ -343,7 +343,7 @@ class LoadWorker(QThread):
         layer_span = (min(queried_layers), max(queried_layers))
         print(
             f"Loaded {df.height:,} rows across {len(queried_layers)} layers "
-            f"({layer_span[0]}–{layer_span[1]})."
+            f"({layer_span[0]}–{layer_span[1]}).\n"
         )
         self._phase = None
         self._emit_progress(self._load_band[1], "Loaded")
@@ -354,6 +354,7 @@ class LoadWorker(QThread):
             mask_params = {
                 "layers": layer_span,
                 "stl": str(STL),
+                "stl_sha256": stl_hash(STL),
                 "buffer_mm": 0.0,
                 "layer_thickness": LAYER_THICKNESS,
             }
@@ -387,7 +388,7 @@ class LoadWorker(QThread):
                 self._emit_progress(assign_band[0], "Assigning parts")
             quantam = QuantAMParts.from_path(PARTS_CSV)
             parts_table = quantam.parent_parts()
-            print(f"Loaded {parts_table.height} parts.")
+            print(f"Loaded {parts_table.height} parts.\n")
 
             if METHOD == "direct":
                 print("Assigning parts (direct)...")

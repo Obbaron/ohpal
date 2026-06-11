@@ -98,10 +98,10 @@ def main() -> None:
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()
-    print(f"Loaded {parts_table.height} parts from {Path(PARTS_CSV).name}.")
+    print(f"Loaded {parts_table.height} parts from {Path(PARTS_CSV).name}.\n")
 
     if USE_DIRECT_ASSIGNMENT:
-        print("\nAssigning each row to its nearest part (direct method)...")
+        print("Assigning each row to its nearest part (direct method)...")
         assigned = assign_nearest_part(
             df_masked,
             parts_table,

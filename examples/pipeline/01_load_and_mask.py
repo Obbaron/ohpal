@@ -27,9 +27,9 @@ sys.path.insert(
 import polars as pl
 
 from ampm import DataStore
+from ampm.config import create_or_load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
-from ampm.config import create_or_load_config
 
 
 def main() -> None:
@@ -57,7 +57,7 @@ def main() -> None:
         )
 
     df = store.query()  # Load the full dataset
-    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
+    print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.\n")
 
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
