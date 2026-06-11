@@ -92,9 +92,14 @@ def _build_hover(
     """
     cols = list(base_cols)
     if extra:
-        _check_columns(df, extra)
+        missing = [c for c in extra if c not in df.columns]
+        if missing:
+            print(
+                f"[hover] column(s) {missing} not in the data."
+                "Omitted from hover tooltip."
+            )
         for c in extra:
-            if c not in cols:
+            if c in df.columns and c not in cols:
                 cols.append(c)
 
     customdata = df.select(cols).rows()
@@ -157,6 +162,18 @@ def scatter3d(
     """
     base = [x, y, z] + ([color] if color else [])
     _check_columns(df, base)
+
+    if color:
+        n_null = df[color].null_count()
+        if n_null:
+            total = df.height
+            df = df.filter(pl.col(color).is_not_null())
+            print(
+                f"[scatter3d] {n_null:,}/{total:,} points have null {color!r}."
+                "Excluded from the plot."
+            )
+            if df.is_empty():
+                raise ValueError(f"All {total:,} sampled points have null {color!r}")
 
     if df.height > 200_000:
         print(
@@ -601,7 +618,13 @@ def scatter2d_layered(
     base_cols = [x, y, layer_col, *color_columns]
     _check_columns(df, base_cols)
     if hover_columns:
-        _check_columns(df, hover_columns)
+        missing = [c for c in hover_columns if c not in df.columns]
+        if missing:
+            print(
+                f"[hover] column(s) {missing} not in the data."
+                f"Omitted from hover tooltip."
+            )
+        hover_columns = [c for c in hover_columns if c in df.columns] or None
 
     color_ranges: dict[str, tuple[float, float]] = {}
     for c in color_columns:
