@@ -48,10 +48,44 @@ def slice_stl_streaming(
     verbose: bool = True,
 ) -> dict[int, BaseGeometry]:
     """
-    Slice an STL at layer * layer_thickness for each
-    requested layer, with memory bounded by chunk_triangles.
+    Slice a binary STL into per-layer 2D geometry with bounded memory.
 
-    Returns dict{layer_number: Polygon | MultiPolygon}
+    Each requested layer is sliced at ``layer * layer_thickness``. Peak
+    memory is bounded by ``chunk_triangles`` rather than mesh size.
+
+    Parameters
+    ----------
+    stl_path : str | Path
+        Path to a binary STL file. ASCII STL is rejected.
+    layers : iterable of int
+        Layer numbers to slice. Duplicates are dropped and the layers are
+        processed in sorted order.
+    layer_thickness : float
+        Layer thickness in the STL's units (typically mm). Layer ``N`` is
+        sliced at height ``N * layer_thickness``.
+    chunk_triangles : int, optional
+        Number of triangle records to read per pass. Bounds peak memory.
+        Default 500,000.
+    layers_per_bucket : int, optional
+        Number of adjacent layers whose segments share one spill file.
+        Default 64.
+    tmp_dir : str | Path, optional
+        Directory in which to create the temporary spill directory.
+        Default ``None`` (system temp).
+    verbose : bool, optional
+        Print progress for both passes. Default True.
+
+    Returns
+    -------
+    dict[int, BaseGeometry]
+        Mapping of layer number to ``Polygon`` or ``MultiPolygon``. Layers
+        whose slice plane misses the mesh are absent from the dict.
+
+    Raises
+    ------
+    ValueError
+        If no layers are requested, or the STL is ASCII, truncated,
+        size-inconsistent, or empty.
     """
     stl_path = Path(stl_path)
     layer_list = np.array(sorted(set(int(L) for L in layers)), dtype=np.int64)
@@ -90,6 +124,26 @@ def slice_stl_streaming(
 
 
 def _read_binary_stl_header(stl_path: Path) -> int:
+    """
+    Validate a binary STL header and return its triangle count.
+
+    Parameters
+    ----------
+    stl_path : Path
+        Path to the STL file.
+
+    Returns
+    -------
+    int
+        Number of triangle records declared in the header.
+
+    Raises
+    ------
+    ValueError
+        If the file is too small, appears to be ASCII STL, declares a
+        triangle count inconsistent with the file size, or contains zero
+        triangles.
+    """
     size = stl_path.stat().st_size
     with stl_path.open("rb") as f:
         head = f.read(_HEADER_BYTES)
@@ -119,6 +173,31 @@ def _pass1_extract_segments(
     layers_per_bucket: int,
     verbose: bool,
 ) -> int:
+    """
+    Pass 1: stream triangles, intersect with slice planes, spill segments.
+
+    Parameters
+    ----------
+    stl_path : Path
+        Path to the binary STL file.
+    n_tri : int
+        Triangle count from the validated header.
+    plane_z : ndarray of float
+        Sorted Z heights of the slice planes.
+    work_dir : Path
+        Directory receiving the per-bucket spill files.
+    chunk_triangles : int
+        Number of triangle records to read per iteration.
+    layers_per_bucket : int
+        Number of adjacent planes that share one spill file.
+    verbose : bool
+        Print a progress line after each chunk.
+
+    Returns
+    -------
+    int
+        Total number of 2D segments extracted across all planes.
+    """
     total_segments = 0
     done = 0
     with stl_path.open("rb") as f:
@@ -151,7 +230,22 @@ def _pass1_extract_segments(
 
 
 def _batch_bounds(cum_rows: np.ndarray, cap: int) -> list[tuple[int, int]]:
-    """Split [0, len()] into slices whose expanded-row totals stay under cap."""
+    """
+    Split a triangle range into slices bounded by expanded-row count.
+
+    Parameters
+    ----------
+    cum_rows : ndarray[int]
+        Cumulative sum of expanded rows (plane crossings) per triangle.
+    cap : int
+        Maximum number of expanded rows allowed per slice. A slice may
+        exceed the cap only when a single triangle does on its own.
+
+    Returns
+    -------
+    list of tuple[int, int]
+        ``(start, end)`` index pairs covering ``[0, len(cum_rows))``.
+    """
     bounds = []
     start = 0
     base = 0
@@ -172,13 +266,24 @@ def _intersect_chunk(
     """
     Intersect a chunk of triangles with the horizontal slice planes.
 
-    verts: (n_tris, 3 vertices, 3 coords) float32.
+    Parameters
+    ----------
+    verts : ndarray[float32, shape (n_tris, 3, 3)]
+        Triangle vertices as ``(triangle, vertex, xyz)``.
+    plane_z : ndarray of float
+        Sorted Z heights of the slice planes.
 
-    Returns: tuple(segments, plane_of_segment)`` where ``segments`` is
-    (n_segments, 4) float32 rows of [x1, y1, x2, y2] and ``plane_of_segment``
-    is (n_segments,) int32 indices into ``plane_z``. Each segment is ordered
-    so that material lies to its LEFT, which makes outer rings come out CCW
-    and hole rings CW when stitched.
+    Returns
+    -------
+    segments : ndarray[float32, shape (n_segments, 4)]
+        One row ``[x1, y1, x2, y2]`` per triangle/plane intersection.
+    plane_of_segment : ndarray of int32, shape (n_segments,)
+        Index into ``plane_z`` for each segment.
+
+    Notes
+    -----
+    Each segment is ordered so that material lies to its LEFT, which makes
+    outer rings come out CCW and hole rings CW when stitched.
     """
     verts = verts.astype(np.float32, copy=False)
 
@@ -254,7 +359,26 @@ def _spill_segments(
     work_dir: Path,
     layers_per_bucket: int,
 ) -> None:
-    """Append rows [plane_idx, x1, y1, x2, y2] (f4) to per-bucket files."""
+    """
+    Append segments to per-bucket spill files on disk.
+
+    Parameters
+    ----------
+    segs : ndarray[float32, shape (n_segments, 4)]
+        Segment endpoints as ``[x1, y1, x2, y2]`` rows.
+    plane_idx : ndarray[int32, shape (n_segments,)]
+        Plane index of each segment.
+    work_dir : Path
+        Directory holding the ``bucket_*.f32`` spill files.
+    layers_per_bucket : int
+        Number of adjacent planes that share one spill file.
+
+    Returns
+    -------
+    None
+        Rows ``[plane_idx, x1, y1, x2, y2]`` (float32) are appended to
+        ``bucket_{plane_idx // layers_per_bucket:05d}.f32``.
+    """
     bucket = plane_idx // layers_per_bucket
     order = np.argsort(bucket, kind="stable")
     bucket = bucket[order]
@@ -275,6 +399,27 @@ def _pass2_build_polygons(
     layers_per_bucket: int,
     verbose: bool,
 ) -> dict[int, BaseGeometry]:
+    """
+    Pass 2: read spilled segments and assemble per-layer polygons.
+
+    Parameters
+    ----------
+    work_dir : Path
+        Directory containing the ``bucket_*.f32`` spill files from pass 1.
+    layer_list : ndarray of int
+        Sorted layer numbers; maps plane indices back to layer numbers.
+    layers_per_bucket : int
+        Number of adjacent planes per spill file (as used in pass 1).
+    verbose : bool
+        Print a progress line after each bucket.
+
+    Returns
+    -------
+    dict[int, BaseGeometry]
+        Mapping of layer number to assembled ``Polygon`` or
+        ``MultiPolygon``. Layers that produced no valid geometry are
+        absent.
+    """
     mask: dict[int, BaseGeometry] = {}
     bucket_files = sorted(work_dir.glob("bucket_*.f32"))
     for n_done, bf in enumerate(bucket_files, 1):
@@ -298,7 +443,22 @@ def _pass2_build_polygons(
 
 
 def _stitch_rings(segs: np.ndarray) -> list[np.ndarray]:
-    """Chain directed segments end-to-start into closed rings."""
+    """
+    Chain directed segments end-to-start into closed rings.
+
+    Parameters
+    ----------
+    segs : ndarray[float, shape (n_segments, 4)]
+        Directed segments as ``[x1, y1, x2, y2]`` rows. Endpoints are
+        matched after quantization to a grid of ``_QUANT``.
+
+    Returns
+    -------
+    list[ndarray]
+        One ``(n_points, 2)`` array of XY vertices per closed ring (the
+        start point of each chained segment). Open chains and rings with
+        fewer than three segments are discarded.
+    """
     quant = np.round(segs / _QUANT).astype(np.int64)  # (M, 4) quantized
     start_keys = list(map(tuple, quant[:, :2]))
     end_keys = list(map(tuple, quant[:, 2:]))
@@ -336,6 +496,24 @@ def _stitch_rings(segs: np.ndarray) -> list[np.ndarray]:
 
 
 def _polygonize_layer(segs: np.ndarray) -> BaseGeometry | None:
+    """
+    Assemble one layer's segments into polygons with holes.
+
+    Rings are classified by signed area (CCW outers, CW holes), each hole
+    is assigned to the smallest outer ring that contains it, and the
+    resulting polygons are validated and unioned.
+
+    Parameters
+    ----------
+    segs : ndarray[float, shape (n_segments, 4)]
+        Directed segments for a single layer, as ``[x1, y1, x2, y2]`` rows.
+
+    Returns
+    -------
+    BaseGeometry | None
+        ``Polygon`` or ``MultiPolygon`` for the layer, or ``None`` if no
+        valid closed geometry could be assembled.
+    """
     rings = _stitch_rings(segs)
     if not rings:
         return None
