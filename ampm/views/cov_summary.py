@@ -160,5 +160,5 @@ def run(df, config, axes, settings):
         ),
     )
 
-    fig.show()
     print("Done.")
+    return fig

@@ -59,7 +59,7 @@ def run(df, config, axes, settings):
     else:
         print(f"Layer {layer}: {n:,} points.")
 
-    scatter2d(
+    fig = scatter2d(
         sub,
         x=x,
         y=y,
@@ -70,6 +70,7 @@ def run(df, config, axes, settings):
         yaxis_title=y,
         colorscale="Turbo",
         equal_aspect=True,
-    ).show()
+    )
 
     print("Done.")
+    return fig

@@ -67,7 +67,7 @@ def run(df, config, axes, settings):
     print("\nThe elbow usually sits between the 90th and 99th percentile.")
 
     print("\nPlotting k-distance curve...")
-    scatter2d(
+    fig = scatter2d(
         curve,
         x="Rank",
         y="k-distance (mm)",
@@ -76,6 +76,7 @@ def run(df, config, axes, settings):
         title=f"k-distance curve (k={k}). Look for the elbow.",
         xaxis_title="Rank (sorted)",
         yaxis_title=f"Distance to {k}-th neighbor (mm)",
-    ).show()
+    )
 
     print("Done.")
+    return fig

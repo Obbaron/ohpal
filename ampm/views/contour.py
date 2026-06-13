@@ -26,7 +26,7 @@ def run(df, config, axes, settings):
     show_points = settings.get("SHOW_POINTS", True)
 
     print(f"Plotting contour: {axes['z']} vs ({axes['x']}, {axes['y']})...")
-    contour(
+    fig = contour(
         df,
         x=axes["x"],
         y=axes["y"],
@@ -38,6 +38,7 @@ def run(df, config, axes, settings):
         colorscale="Turbo",
         show_points=show_points,
         hover_columns=["part_id"] if "part_id" in df.columns else [],
-    ).show()
+    )
 
     print("Done.")
+    return fig

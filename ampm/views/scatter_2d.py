@@ -46,7 +46,7 @@ def run(df, config, axes, settings):
     sample = prepare_for_plot(df, target_points=sample_size, method="random", seed=0)
 
     print("Rendering 2D scatter...")
-    scatter2d(
+    fig = scatter2d(
         sample,
         x=axes["x"],
         y=axes["y"],
@@ -58,6 +58,7 @@ def run(df, config, axes, settings):
         xaxis_title=axes["x"],
         yaxis_title=axes["y"],
         colorbar_title=axes.get("color", ""),
-    ).show()
+    )
 
     print("Done.")
+    return fig

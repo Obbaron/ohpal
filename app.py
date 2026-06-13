@@ -7,14 +7,15 @@ pick a view (plot type), configure axes and settings, and plot.
 
 import builtins
 import json
+import os
 import re
 import sys
 import traceback
 from pathlib import Path
 from typing import cast
 
-from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtCore import QSettings, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,6 +38,12 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+)
+
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    "--disable-gpu-compositing --enable-unsafe-swiftshader --use-gl=angle "
+    "--use-angle=swiftshader",
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -165,9 +172,6 @@ _OVERLAY_KEYS = (
     "APPLY_MASK",
     "ASSIGN_PARTS",
     "LAYER_RANGE",
-    "LOAD_COLUMNS",
-    "X_RANGE",
-    "Y_RANGE",
 )
 
 
@@ -194,7 +198,7 @@ def load_ui_state(project_root) -> dict:
 
 
 def save_ui_state(project_root, state: dict) -> None:
-    """Write the sidecar UI state atomically."""
+    """Write the sidecar UI state atomically. Never raises."""
     path = _ui_state_path(project_root)
     tmp = path.parent / (path.name + ".tmp")
     try:
@@ -293,8 +297,7 @@ class LoadWorker(QThread):
         from ampm.cluster_cache import cluster_or_load
         from ampm.clustering import cluster_dbscan_chunked
         from ampm.mask_cache import mask_or_load
-        from ampm.masking import apply_mask_keep, build_mask, stl_hash
-        from ampm.memprof import phase
+        from ampm.masking import apply_mask, build_mask, stl_hash
         from ampm.parts import (
             QuantAMParts,
             apply_part_id_map,
@@ -314,10 +317,7 @@ class LoadWorker(QThread):
         MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
         APPLY_MASK = config.get("APPLY_MASK", True)
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
-        LAYER_RANGE = config.get("LAYER_RANGE")  # None or (lo, hi)
-        LOAD_COLUMNS = config.get("LOAD_COLUMNS")  # None or [cols]
-        X_RANGE = config.get("X_RANGE")  # None or (min, max)
-        Y_RANGE = config.get("Y_RANGE")  # None or (min, max)
+        LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi)
 
         if APPLY_MASK and ASSIGN_PARTS:
             self._load_band, mask_band, assign_band = (2, 50), (50, 68), (68, 96)
@@ -335,29 +335,7 @@ class LoadWorker(QThread):
         layers_arg = (
             None if LAYER_RANGE is None else (int(LAYER_RANGE[0]), int(LAYER_RANGE[1]))
         )
-        if LOAD_COLUMNS is None:
-            columns_arg = None
-        else:
-            required = ["Demand X", "Demand Y", "Start time"]
-            columns_arg = list(dict.fromkeys([*required, *LOAD_COLUMNS]))
-            print(
-                f"Column pruning active: loading {len(columns_arg)} signal "
-                f"column(s) + layer, Z."
-            )
-        if X_RANGE is not None or Y_RANGE is not None:
-            bounds = []
-            if X_RANGE is not None:
-                bounds.append(f"X\u2208[{X_RANGE[0]}, {X_RANGE[1]}]")
-            if Y_RANGE is not None:
-                bounds.append(f"Y\u2208[{Y_RANGE[0]}, {Y_RANGE[1]}]")
-            print("Spatial filter active: " + ", ".join(bounds) + ".")
-        with phase("load: store.query"):
-            df = store.query(
-                layers=layers_arg,
-                columns=columns_arg,
-                x_range=X_RANGE,
-                y_range=Y_RANGE,
-            )
+        df = store.query(layers=layers_arg)
 
         if LAYER_RANGE is None:
             queried_layers = list(store.layers)
@@ -387,11 +365,9 @@ class LoadWorker(QThread):
                 "stl_sha256": stl_hash(STL),
                 "buffer_mm": 0.0,
                 "layer_thickness": LAYER_THICKNESS,
-                "x_range": list(X_RANGE) if X_RANGE is not None else None,
-                "y_range": list(Y_RANGE) if Y_RANGE is not None else None,
             }
 
-            def keep_wrapper(d):
+            def masking_wrapper(d):
                 mask = build_mask(
                     STL,
                     layers=queried_layers,
@@ -399,17 +375,16 @@ class LoadWorker(QThread):
                     buffer_mm=0.0,
                     cache_path=MASK_CACHE,
                 )
-                return apply_mask_keep(d, mask)
+                return apply_mask(d, mask)
 
             print("Applying mask...")
-            with phase("mask: mask_or_load total"):
-                df = mask_or_load(
-                    df,
-                    cache_path=MASK_KEEP_CACHE,
-                    keep_fn=keep_wrapper,
-                    params=mask_params,
-                    strict=False,
-                )
+            df = mask_or_load(
+                df,
+                cache_path=MASK_KEEP_CACHE,
+                mask_fn=masking_wrapper,
+                params=mask_params,
+                strict=False,
+            )
             print(f"After mask: {df.height:,} rows.")
             if mask_band is not None:
                 self._emit_progress(mask_band[1], "Masked")
@@ -425,13 +400,12 @@ class LoadWorker(QThread):
 
             if METHOD == "direct":
                 print("Assigning parts (direct)...")
-                with phase("assign: assign_nearest_part"):
-                    df = assign_nearest_part(
-                        df,
-                        parts_table,
-                        max_distance_mm=MAX_DISTANCE_MM,
-                        noise_label="noise",
-                    )
+                df = assign_nearest_part(
+                    df,
+                    parts_table,
+                    max_distance_mm=MAX_DISTANCE_MM,
+                    noise_label="noise",
+                )
             else:
                 EPS_XY = config["EPS_XY"]
                 EPS_Z = config["EPS_Z"]
@@ -477,35 +451,31 @@ class LoadWorker(QThread):
                 df = apply_part_id_map(clustered, mapping, noise_label="noise")
 
             parts_with_speed = quantam.volume_parameters_with_speed()
-            with phase("assign: attach power/speed (lookup)"):
-                _ids = parts_with_speed["Part ID"].to_list()
-                _power = dict(zip(_ids, parts_with_speed["Hatches Power"].to_list()))
-                _speed = dict(zip(_ids, parts_with_speed["Hatch Speed"].to_list()))
-                _pid_dtype = df["part_id"].dtype
-                if isinstance(_pid_dtype, pl.Enum) and df["part_id"].null_count() == 0:
-                    import numpy as np
 
-                    _cats = _pid_dtype.categories.to_list()
-                    _phys = df["part_id"].to_physical().to_numpy()
-                    _pw = np.array(
-                        [_power.get(c, np.nan) for c in _cats], dtype=np.float32
-                    )
-                    _sp = np.array(
-                        [_speed.get(c, np.nan) for c in _cats], dtype=np.float32
-                    )
-                    df = df.with_columns(
-                        pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
-                        pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
-                    )
-                else:  # String part_id (e.g. DBSCAN path)
-                    df = df.with_columns(
-                        pl.col("part_id")
-                        .replace_strict(_power, default=None, return_dtype=pl.Float64)
-                        .alias("Hatches Power"),
-                        pl.col("part_id")
-                        .replace_strict(_speed, default=None, return_dtype=pl.Float64)
-                        .alias("Hatch Speed"),
-                    )
+            _ids = parts_with_speed["Part ID"].to_list()
+            _power = dict(zip(_ids, parts_with_speed["Hatches Power"].to_list()))
+            _speed = dict(zip(_ids, parts_with_speed["Hatch Speed"].to_list()))
+            _pid_dtype = df["part_id"].dtype
+            if isinstance(_pid_dtype, pl.Enum) and df["part_id"].null_count() == 0:
+                import numpy as np
+
+                _cats = _pid_dtype.categories.to_list()
+                _phys = df["part_id"].to_physical().to_numpy()
+                _pw = np.array([_power.get(c, np.nan) for c in _cats], dtype=np.float32)
+                _sp = np.array([_speed.get(c, np.nan) for c in _cats], dtype=np.float32)
+                df = df.with_columns(
+                    pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
+                    pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
+                )
+            else:  # String part_id (DBSCAN path) or part_id containing nulls
+                df = df.with_columns(
+                    pl.col("part_id")
+                    .replace_strict(_power, default=None, return_dtype=pl.Float64)
+                    .alias("Hatches Power"),
+                    pl.col("part_id")
+                    .replace_strict(_speed, default=None, return_dtype=pl.Float64)
+                    .alias("Hatch Speed"),
+                )
             if assign_band is not None:
                 self._emit_progress(assign_band[1], "Assigned")
         else:
@@ -517,19 +487,24 @@ class LoadWorker(QThread):
 
 
 class PlotWorker(QThread):
-    """Runs a view's run() function in a background thread."""
+    """
+    Build a view's figure on a background thread and emit it as HTML. Qt widgets
+    must only be touched on the main thread, so no view object is created here.
+    """
 
     log = pyqtSignal(str)
-    finished_ok = pyqtSignal()
+    figure_ready = pyqtSignal(str)  # filesystem path to the plot HTML
     finished_err = pyqtSignal(str)
 
-    def __init__(self, view_module, df, config, axes, settings):
+    def __init__(self, view_module, df, config, axes, settings, plot_dir, plotlyjs_ref):
         super().__init__()
         self.view_module = view_module
         self.df = df
         self.config = config
         self.axes = axes
         self.settings = settings
+        self.plot_dir = plot_dir
+        self.plotlyjs_ref = plotlyjs_ref
 
     def _print(self, msg):
         self.log.emit(msg)
@@ -539,8 +514,32 @@ class PlotWorker(QThread):
         builtins.print = lambda *a, **kw: self._print(" ".join(str(x) for x in a))
 
         try:
-            self.view_module.run(self.df, self.config, self.axes, self.settings)
-            self.finished_ok.emit()
+            fig = self.view_module.run(self.df, self.config, self.axes, self.settings)
+            if fig is None:
+                raise RuntimeError(
+                    f"View {getattr(self.view_module, 'NAME', '?')!r} returned "
+                    f"no figure. Views must return a plotly Figure."
+                )
+
+            from pathlib import Path
+
+            fig.update_layout(autosize=True, width=None, height=None)
+            full_bleed = (
+                "<style>html,body{margin:0;padding:0;height:100%;width:100%;}"
+                ".plotly-graph-div{height:100vh !important;width:100vw "
+                "!important;}</style>"
+            )
+            html = fig.to_html(
+                include_plotlyjs=self.plotlyjs_ref,
+                full_html=True,
+                config={"responsive": True},
+                default_width="100%",
+                default_height="100%",
+            )
+            html = html.replace("<head>", "<head>" + full_bleed, 1)
+            out = Path(self.plot_dir) / "plot.html"
+            out.write_text(html, encoding="utf-8")
+            self.figure_ready.emit(str(out))
         except Exception:
             self.finished_err.emit(traceback.format_exc())
         finally:
@@ -551,7 +550,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AMPM Analyzer")
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(1100, 720)
+        self._size_and_center()
 
         from PyQt6.QtGui import QIcon
 
@@ -710,59 +710,6 @@ class MainWindow(QMainWindow):
         self._layer_range_widget.setEnabled(False)  # follows "All layers" checkbox
         settings_layout.addWidget(self._layer_range_widget)
 
-        # Columns to load
-        cols_row = QHBoxLayout()
-        cols_row.addWidget(QLabel("Columns:"))
-        self._columns_edit = QLineEdit()
-        self._columns_edit.setText("all")
-        self._columns_edit.setPlaceholderText(
-            "all  — or comma-separated signal columns"
-        )
-        self._columns_edit.setToolTip(
-            "Signal columns to load, comma-separated (e.g. 'MeltVIEW melt pool "
-            "(mean), Laser output power (mean)'). 'all' loads every column. "
-            "Demand X/Y, Start time, layer, and Z are always included. For "
-            "dense builds, loading only the columns you analyze cuts memory "
-            "roughly in proportion."
-        )
-        cols_row.addWidget(self._columns_edit, stretch=1)
-        settings_layout.addLayout(cols_row)
-
-        # X / Y spatial range (optional). Blank = no bound on that side.
-        xr_row = QHBoxLayout()
-        xr_row.addWidget(QLabel("X range:"))
-        self._x_min_edit = QLineEdit()
-        self._x_min_edit.setPlaceholderText("min")
-        self._x_min_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._x_min_edit)
-        xr_row.addWidget(QLabel("to"))
-        self._x_max_edit = QLineEdit()
-        self._x_max_edit.setPlaceholderText("max")
-        self._x_max_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._x_max_edit)
-        xr_row.addWidget(QLabel("Y range:"))
-        self._y_min_edit = QLineEdit()
-        self._y_min_edit.setPlaceholderText("min")
-        self._y_min_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._y_min_edit)
-        xr_row.addWidget(QLabel("to"))
-        self._y_max_edit = QLineEdit()
-        self._y_max_edit.setPlaceholderText("max")
-        self._y_max_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._y_max_edit)
-        _xy_tip = (
-            "Optional inclusive bounds on Demand X / Demand Y (mm), applied "
-            "at load time. Leave a box blank for no bounds."
-        )
-        for _w in (
-            self._x_min_edit,
-            self._x_max_edit,
-            self._y_min_edit,
-            self._y_max_edit,
-        ):
-            _w.setToolTip(_xy_tip)
-        settings_layout.addLayout(xr_row)
-
         self._mask_check = QCheckBox("Apply STL mask")
         self._mask_check.setChecked(True)
         self._mask_check.setToolTip(
@@ -889,14 +836,31 @@ class MainWindow(QMainWindow):
 
         self._analysis_tab = analysis_scroll
 
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        plot_group = QGroupBox("Plot")
+        plot_layout = QVBoxLayout(plot_group)
+        self._plot_view = QWebEngineView()
+        self._plot_view.setHtml(
+            "<html><body style='margin:0;display:flex;align-items:center;"
+            "justify-content:center;height:100vh;font-family:sans-serif;"
+            "color:#888;background:#1e1e1e;'>"
+            "<div>Run a plot to see results here.</div></body></html>"
+        )
+        plot_layout.addWidget(self._plot_view)
+        right_splitter.addWidget(plot_group)
+
         log_group = QGroupBox("Log")
         log_layout = QVBoxLayout(log_group)
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         log_layout.addWidget(self._log)
-        splitter.addWidget(log_group)
+        right_splitter.addWidget(log_group)
 
-        splitter.setSizes([600, 400])  # left, 60%; right, 40%
+        right_splitter.setSizes([620, 200])  # left ~75%, right ~25%
+        splitter.addWidget(right_splitter)
+
+        splitter.setSizes([450, 550])
 
         for edit in (self._source_edit, self._stl_edit, self._csv_edit, self._lt_edit):
             edit.textChanged.connect(self._update_load_enabled)
@@ -913,6 +877,11 @@ class MainWindow(QMainWindow):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait()
+        plot_dir = getattr(self, "_plot_dir", None)
+        if plot_dir is not None:
+            import shutil
+
+            shutil.rmtree(plot_dir, ignore_errors=True)
         if a0 is not None:
             a0.accept()
 
@@ -1181,38 +1150,38 @@ class MainWindow(QMainWindow):
         }
         self._log.append("Found a saved setup; it will be restored after load.")
 
-    def _apply_config_overrides(self, override: dict) -> None:
+    def _apply_config_overrides(self, o: dict) -> None:
         """Apply persisted pipeline params to the config-tab widgets."""
-        if "LAYER_THICKNESS" in override:
-            self._lt_edit.setText(str(override["LAYER_THICKNESS"]))
-        if "METHOD" in override:
-            self._method_combo.setCurrentText(str(override["METHOD"]))
-        if "MAX_DISTANCE_MM" in override:
-            md = override["MAX_DISTANCE_MM"]
+        if "LAYER_THICKNESS" in o:
+            self._lt_edit.setText(str(o["LAYER_THICKNESS"]))
+        if "METHOD" in o:
+            self._method_combo.setCurrentText(str(o["METHOD"]))
+        if "MAX_DISTANCE_MM" in o:
+            md = o["MAX_DISTANCE_MM"]
             self._max_dist_edit.setText("none" if md is None else str(md))
-        if "EPS_XY" in override:
-            self._eps_xy_edit.setText(str(override["EPS_XY"]))
-        if "EPS_Z" in override:
-            self._eps_z_edit.setText(str(override["EPS_Z"]))
-        if "MIN_SAMPLES" in override:
+        if "EPS_XY" in o:
+            self._eps_xy_edit.setText(str(o["EPS_XY"]))
+        if "EPS_Z" in o:
+            self._eps_z_edit.setText(str(o["EPS_Z"]))
+        if "MIN_SAMPLES" in o:
             try:
-                self._min_samples_spin.setValue(int(override["MIN_SAMPLES"]))
+                self._min_samples_spin.setValue(int(o["MIN_SAMPLES"]))
             except (TypeError, ValueError):
                 pass
-        if "LAYERS_PER_CHUNK" in override:
+        if "LAYERS_PER_CHUNK" in o:
             try:
-                self._chunk_spin.setValue(int(override["LAYERS_PER_CHUNK"]))
+                self._chunk_spin.setValue(int(o["LAYERS_PER_CHUNK"]))
             except (TypeError, ValueError):
                 pass
-        if "OVERLAP_LAYERS" in override:
-            ov = override["OVERLAP_LAYERS"]
+        if "OVERLAP_LAYERS" in o:
+            ov = o["OVERLAP_LAYERS"]
             self._overlap_edit.setText("auto" if ov is None else str(ov))
-        if "APPLY_MASK" in override:
-            self._mask_check.setChecked(bool(override["APPLY_MASK"]))
-        if "ASSIGN_PARTS" in override:
-            self._assign_check.setChecked(bool(override["ASSIGN_PARTS"]))
-        if "LAYER_RANGE" in override:
-            lr = override["LAYER_RANGE"]
+        if "APPLY_MASK" in o:
+            self._mask_check.setChecked(bool(o["APPLY_MASK"]))
+        if "ASSIGN_PARTS" in o:
+            self._assign_check.setChecked(bool(o["ASSIGN_PARTS"]))
+        if "LAYER_RANGE" in o:
+            lr = o["LAYER_RANGE"]
             if lr is None:
                 self._all_layers_check.setChecked(True)
             elif isinstance(lr, (list, tuple)) and len(lr) == 2:
@@ -1222,26 +1191,6 @@ class MainWindow(QMainWindow):
                     self._layer_to_spin.setValue(int(lr[1]))
                 except (TypeError, ValueError):
                     pass
-        if "LOAD_COLUMNS" in override:
-            lc = override["LOAD_COLUMNS"]
-            if lc is None:
-                self._columns_edit.setText("all")
-            elif isinstance(lc, (list, tuple)):
-                self._columns_edit.setText(", ".join(str(c) for c in lc))
-
-        def _restore_range(key, lo_edit, hi_edit):
-            rng = override.get(key)
-            if rng is None:
-                lo_edit.setText("")
-                hi_edit.setText("")
-            elif isinstance(rng, (list, tuple)) and len(rng) == 2:
-                lo_edit.setText("" if rng[0] is None else str(rng[0]))
-                hi_edit.setText("" if rng[1] is None else str(rng[1]))
-
-        if "X_RANGE" in override:
-            _restore_range("X_RANGE", self._x_min_edit, self._x_max_edit)
-        if "Y_RANGE" in override:
-            _restore_range("Y_RANGE", self._y_min_edit, self._y_max_edit)
 
     def _current_analysis_state(self) -> dict:
         """Snapshot the live analysis setup (recipes + view/axes/settings)."""
@@ -1375,30 +1324,6 @@ class MainWindow(QMainWindow):
             lo = self._layer_from_spin.value()
             hi = self._layer_to_spin.value()
             config["LAYER_RANGE"] = (min(lo, hi), max(lo, hi))
-
-        cols_text = self._columns_edit.text().strip()
-        if not cols_text or cols_text.lower() == "all":
-            config["LOAD_COLUMNS"] = None
-        else:
-            config["LOAD_COLUMNS"] = [
-                col.strip() for col in cols_text.split(",") if col.strip()
-            ]
-
-        def _gather_range(lo_edit, hi_edit, label):
-            lo_txt = lo_edit.text().strip()
-            hi_txt = hi_edit.text().strip()
-            if not lo_txt and not hi_txt:
-                return None
-            lo = float(lo_txt) if lo_txt else float("-inf")
-            hi = float(hi_txt) if hi_txt else float("inf")
-            if lo > hi:
-                raise ValueError(
-                    f"{label} range minimum ({lo}) exceeds maximum ({hi})."
-                )
-            return (lo, hi)
-
-        config["X_RANGE"] = _gather_range(self._x_min_edit, self._x_max_edit, "X")
-        config["Y_RANGE"] = _gather_range(self._y_min_edit, self._y_max_edit, "Y")
 
         source = config["SOURCE"]
         cache_dir = Path(source) / ".cache"
@@ -1573,11 +1498,7 @@ class MainWindow(QMainWindow):
         self._settings_group.setVisible(bool(settings))
 
     def _compute_derived(self, stat, signal, mode):
-        """Compute and register one derived column. Returns its name or None.
-
-        Used by the Add button and by resume-state restoration. Skips (with a
-        log note) if the signal isn't present in the loaded data.
-        """
+        """Compute and register one derived column. Returns its name or None."""
         if self._df is None:
             return None
         if not signal:
@@ -1675,17 +1596,27 @@ class MainWindow(QMainWindow):
 
         for col in needed_columns:
             if col in self._derived:
-                base = base.join(self._derived[col], on="part_id", how="left")
+                left = base.with_columns(pl.col("part_id").cast(pl.String))
+                right = self._derived[col].with_columns(
+                    pl.col("part_id").cast(pl.String)
+                )
+                base = left.join(right, on="part_id", how="left")
 
         return base
 
     def _prepare_row_df(self, needed_columns):
+        import polars as pl
+
         if self._df is None:
             raise ValueError("No data loaded.")
         df = self._df
         for col in needed_columns:
             if col in self._derived and col not in df.columns:
-                df = df.join(self._derived[col], on="part_id", how="left")
+                df = df.with_columns(pl.col("part_id").cast(pl.String)).join(
+                    self._derived[col].with_columns(pl.col("part_id").cast(pl.String)),
+                    on="part_id",
+                    how="left",
+                )
         return df
 
     def _run_plot(self):
@@ -1721,13 +1652,17 @@ class MainWindow(QMainWindow):
         self._plot_btn.setEnabled(False)
         self._plot_progress.setRange(0, 0)  # indeterminate / busy
         self._plot_progress.setVisible(True)
-        self._plot_worker = PlotWorker(module, df, merged_config, axes, settings)
+        plot_dir, plotlyjs_ref = self._ensure_plot_dir()
+        self._plot_worker = PlotWorker(
+            module, df, merged_config, axes, settings, plot_dir, plotlyjs_ref
+        )
         self._plot_worker.log.connect(self._on_log)
-        self._plot_worker.finished_ok.connect(self._on_plot_ok)
+        self._plot_worker.figure_ready.connect(self._on_figure_ready)
         self._plot_worker.finished_err.connect(self._on_plot_err)
         self._plot_worker.start()
 
-    def _on_plot_ok(self):
+    def _on_figure_ready(self, path):
+        self._plot_view.setUrl(QUrl.fromLocalFile(path))
         self._plot_progress.setVisible(False)
         self._log.append("Plot complete.")
         self._plot_btn.setEnabled(True)
@@ -1744,6 +1679,71 @@ class MainWindow(QMainWindow):
         if self._plot_worker is not None:
             self._plot_worker.wait()
         self._plot_worker = None
+
+    def _ensure_plot_dir(self):
+        """
+        Prepare a session working directory for rendered plots and return
+        ``(plot_dir, plotlyjs_ref)``.
+        """
+        if getattr(self, "_plot_dir", None) is not None:
+            return self._plot_dir, self._plotlyjs_ref
+
+        import tempfile
+        from pathlib import Path as _P
+
+        self._plot_dir = tempfile.mkdtemp(prefix="ampm_plot_")
+        try:
+            import shutil
+            import sys as _sys
+
+            import plotly
+
+            candidates = []
+            pkg_dir = _P(plotly.__file__).parent
+            candidates.append(pkg_dir / "package_data" / "plotly.min.js")
+            meipass = getattr(_sys, "_MEIPASS", None)
+            if meipass:
+                candidates.append(
+                    _P(meipass) / "plotly" / "package_data" / "plotly.min.js"
+                )
+                candidates.append(_P(meipass) / "plotly.min.js")
+
+            src = next((c for c in candidates if c.is_file()), None)
+            if src is None:
+                raise FileNotFoundError(
+                    "plotly.min.js not found in: "
+                    + ", ".join(str(c) for c in candidates)
+                )
+            shutil.copy(src, _P(self._plot_dir) / "plotly.min.js")
+            self._plotlyjs_ref = "plotly.min.js"
+        except Exception as e:
+            self._log.append(
+                f"Note: bundled plotly.js not found ({e}); plots will load it "
+                f"from the CDN and require online access."
+            )
+            self._plotlyjs_ref = "cdn"
+        return self._plot_dir, self._plotlyjs_ref
+
+    def _size_and_center(self):
+        """
+        Size the window to a fraction of the available screen and center it.
+        """
+        from PyQt6.QtGui import QCursor
+
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()  # excludes taskbar/docks
+
+        width = min(max(int(avail.width() * 0.8), self.minimumWidth()), avail.width())
+        height = min(
+            max(int(avail.height() * 0.8), self.minimumHeight()), avail.height()
+        )
+        self.resize(width, height)
+
+        frame = self.frameGeometry()
+        frame.moveCenter(avail.center())
+        self.move(frame.topLeft())
 
     def _on_log(self, msg):
         self._log.append(msg)
@@ -1808,7 +1808,7 @@ def main():
             os._exit(130)  # second Ctrl+C: force quit immediately
         sigint_fired = True
         print("\nInterrupt received \u2014 closing (Ctrl+C again to force quit)...")
-        window.close()  # saves UI state, waits for threads
+        window.close()  # triggers closeEvent: saves UI state, waits for threads
 
     signal.signal(signal.SIGINT, _handle_sigint)
 

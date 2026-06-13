@@ -40,7 +40,7 @@ def run(df, config, axes, settings):
         sort_by = None
 
     print(f"Plotting bar chart: {axes['y']} by {axes['x']}...")
-    bar(
+    fig = bar(
         df,
         x=axes["x"],
         y=axes["y"],
@@ -51,6 +51,7 @@ def run(df, config, axes, settings):
         title=f"{axes['y']} by {axes['x']}",
         xaxis_title=axes["x"],
         yaxis_title=axes["y"],
-    ).show()
+    )
 
     print("Done.")
+    return fig

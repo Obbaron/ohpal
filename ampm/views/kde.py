@@ -42,7 +42,7 @@ def run(df, config, axes, settings):
     groups = best + worst
 
     print(f"Plotting KDE for {len(groups)} groups on '{column}'...")
-    kde(
+    fig = kde(
         df,
         column=column,
         group_by=group_by,
@@ -50,6 +50,7 @@ def run(df, config, axes, settings):
         title=f"{column} distribution: best vs worst by mean",
         xaxis_title=column,
         colorscale="Turbo",
-    ).show()
+    )
 
     print("Done.")
+    return fig

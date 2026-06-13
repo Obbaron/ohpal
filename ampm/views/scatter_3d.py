@@ -41,7 +41,7 @@ def run(df, config, axes, settings):
     sample = prepare_for_plot(df, target_points=sample_size, method="random", seed=0)
 
     print("Rendering 3D scatter...")
-    scatter3d(
+    fig = scatter3d(
         sample,
         x=axes["x"],
         y=axes["y"],
@@ -55,6 +55,7 @@ def run(df, config, axes, settings):
         zaxis_title=axes["z"],
         colorbar_title=axes.get("color", ""),
         hover_columns=["part_id"],
-    ).show()
+    )
 
     print("Done.")
+    return fig
