@@ -239,7 +239,7 @@ class MeltPoolCorrection:
             numer,
             denom,
             out=np.full_like(denom, np.nan),
-            where=(denom != 0) & np.isfinite(denom),
+            where=(denom > 0) & np.isfinite(denom),
         )
         corrected = m.astype(np.float64) * ratio
 
@@ -247,4 +247,6 @@ class MeltPoolCorrection:
         if bad.any():
             corrected = corrected.copy()
             corrected[bad] = np.nan
-        return df.with_columns(pl.Series(output_col, corrected.astype(np.float32)))
+        return df.with_columns(
+            pl.Series(output_col, corrected.astype(np.float32)).fill_nan(None)
+        )

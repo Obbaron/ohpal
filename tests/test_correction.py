@@ -118,13 +118,14 @@ class TestApply:
         out = c.apply(df)["MeltVIEW melt pool (mean) corrected"].to_list()
         assert out == pytest.approx([100.0, 50.0])
 
-    def test_zero_denominator_becomes_nan(self):
-        # p(x,y,L) = x. At x=0 the denominator is 0 -> corrected is NaN.
-        c = MeltPoolCorrection(np.array([[1, 0, 0]]), np.array([1.0]))
-        df = signal_df([0.0, 5.0], [0.0, 0.0], [1.0, 1.0], [2.0, 2.0])
+    def test_nonpositive_denominator_becomes_null(self):
+        c = MeltPoolCorrection(np.array([[0, 0, 0], [1, 0, 0]]), np.array([10.0, 1.0]))
+        # denom = 10 + x: -20 -> -10 (neg), -10 -> 0 (zero), 0 -> 10, 10 -> 20
+        df = signal_df([-20.0, -10.0, 0.0, 10.0], [0.0] * 4, [1.0] * 4, [100.0] * 4)
         col = c.apply(df)["MeltVIEW melt pool (mean) corrected"]
-        assert col.is_nan().to_list() == [True, False]
-        assert col.to_list()[1] == pytest.approx(0.0)
+        assert col.is_null().to_list() == [True, True, False, False]
+        # numer = p(0,0,L) = 10; valid ratios are 10/10=1 and 10/20=0.5
+        assert col.drop_nulls().to_list() == pytest.approx([100.0, 50.0])
 
     def test_original_column_preserved(self):
         c = MeltPoolCorrection(np.array([[0, 0, 0]]), np.array([1.0]))
@@ -135,9 +136,8 @@ class TestApply:
 
 class TestDefaultCalibration:
     def test_apply_runs_and_is_finite_near_origin(self):
-        # The default polynomial is dominated by its large constant term, so
-        # corrected values near the plate centre should be finite and close to
-        # the measured value.
+        # Default polynomial dominated by large constant term: corrected
+        # values near the center should be finite and close to measured.
         c = MeltPoolCorrection()
         df = signal_df(
             [0.0, 1.0, -1.0],

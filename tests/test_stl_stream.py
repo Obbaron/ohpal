@@ -199,3 +199,44 @@ class TestSliceStreaming:
         trimesh_mask = ampm.masking._slice_trimesh(box_stl, [50], THICKNESS)
         stream_mask = slice_stl_streaming(box_stl, [50], THICKNESS, verbose=False)
         assert stream_mask[50].area == pytest.approx(trimesh_mask[50].area, abs=1.0)
+
+
+@pytest.fixture
+def two_box_stl(tmp_path):
+    """Two disjoint boxes: x,y in [0,10] and [20,30], both z in [0,3]."""
+    b1 = trimesh.creation.box(extents=[10.0, 10.0, 3.0])
+    b1.apply_translation([5.0, 5.0, 1.5])
+    b2 = trimesh.creation.box(extents=[10.0, 10.0, 3.0])
+    b2.apply_translation([25.0, 5.0, 1.5])
+    mesh = trimesh.util.concatenate([b1, b2])
+    path = tmp_path / "two_box.stl"
+    mesh.export(path)
+    return path
+
+
+def _offset_square(ox):
+    """square_segments() shifted +ox in x (the two x columns are 0 and 2)."""
+    seg = square_segments().copy()
+    seg[:, [0, 2]] += ox
+    return seg
+
+
+class TestMultiBody:
+    def test_stitch_two_disjoint_squares(self):
+        rings = _stitch_rings(np.vstack([square_segments(), _offset_square(20.0)]))
+        assert len(rings) == 2
+        assert all(r.shape == (4, 2) for r in rings)
+
+    def test_polygonize_two_bodies_is_multipolygon(self):
+        geom = _polygonize_layer(np.vstack([square_segments(), _offset_square(20.0)]))
+        assert isinstance(geom, MultiPolygon)
+        assert len(geom.geoms) == 2
+        assert geom.area == pytest.approx(200.0)
+
+    def test_two_body_stl_slice_is_multipolygon(self, two_box_stl):
+        geom = slice_stl_streaming(
+            two_box_stl, [50], layer_thickness=THICKNESS, verbose=False
+        )[50]
+        assert isinstance(geom, MultiPolygon)
+        assert len(geom.geoms) == 2
+        assert geom.area == pytest.approx(200.0, abs=1.0)

@@ -453,3 +453,48 @@ class TestAssignBoundingBoxPart:
         ptable = parts_box_table(["A"], [(0, 0, 0, 10, 10, 5)])
         with pytest.raises(KeyError):
             assign_bounding_box_part(masked, ptable, verbose=False)
+
+
+class TestParserRobustness:
+    def test_section_at_eof_without_trailing_blank(self, tmp_path):
+        # Real exports may not end with a blank line; the final section must
+        # still parse (EOF terminates it).
+        text = (
+            "#,Renishaw,Material,Development\n\n"
+            "#,Tab - -1,Parent Parts\n"
+            '#,"Sr. No.","Source Index","Layer Thickness",'
+            '"X Position","Y Position","Layers Count"\n'
+            'ID.,"[T0C1]","[T0C2]","[T0C3]","[T0C4]","[T0C5]","[T0C6]"\n'
+            ',"1","Part(1)","0.03","-26.787","10.0","100"'  # no trailing newline
+        )
+        q = QuantAMParts.from_path(write_csv(tmp_path, text))
+        assert "Parent Parts" in q
+        assert q.parent_parts()["Part ID"].to_list() == ["Part(1)"]
+
+    def test_volume_parameters_variant_selection(self, tmp_path):
+        # A part with two scan-volume instances (.1 and .2); each variant
+        # selects its own parameters.
+        csv_text = make_quantam_csv(
+            [
+                (
+                    -1,
+                    "Parent Parts",
+                    PARENT_HEADERS,
+                    [["1", "Part(1)", "0.03", "0", "0", "10"]],
+                ),
+                (
+                    10,
+                    "Scan Volume",
+                    VOLUME_HEADERS,
+                    [
+                        ["1.1", "Part(1)", "0.06", "60"],
+                        ["1.2", "Part(1)", "0.07", "70"],
+                    ],
+                ),
+            ]
+        )
+        q = QuantAMParts.from_path(write_csv(tmp_path, csv_text))
+        v1 = q.volume_parameters(variant="1")
+        v2 = q.volume_parameters(variant="2")
+        assert v1["Hatches Point Distance"].to_list() == pytest.approx([0.06])
+        assert v2["Hatches Point Distance"].to_list() == pytest.approx([0.07])

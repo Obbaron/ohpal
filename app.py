@@ -87,85 +87,110 @@ def build_widget(spec: dict) -> QWidget:
     """Create the appropriate widget for a setting spec."""
     wtype = spec["type"]
 
-    if wtype == "float":
-        widget = QDoubleSpinBox()
-        widget.setDecimals(4)
-        widget.setRange(spec.get("min", 0.0), spec.get("max", 999999.0))
-        widget.setValue(spec.get("default", 0.0))
-        return widget
+    match wtype:
+        case "float":
+            widget = QDoubleSpinBox()
+            widget.setDecimals(4)
+            widget.setRange(spec.get("min", 0.0), spec.get("max", 999999.0))
+            widget.setValue(spec.get("default", 0.0))
+            return widget
 
-    if wtype == "int":
-        widget = QSpinBox()
-        widget.setRange(spec.get("min", 0), spec.get("max", 999999))
-        widget.setValue(spec.get("default", 0))
-        return widget
+        case "int":
+            widget = QSpinBox()
+            widget.setRange(spec.get("min", 0), spec.get("max", 999999))
+            widget.setValue(spec.get("default", 0))
+            return widget
 
-    if wtype == "choice":
-        widget = NoScrollComboBox()
-        widget.addItems(spec.get("options", []))
-        default = spec.get("default")
-        if default is not None:
-            widget.setCurrentText(str(default))
-        return widget
+        case "choice":
+            widget = NoScrollComboBox()
+            widget.addItems(spec.get("options", []))
+            default = spec.get("default")
+            if default is not None:
+                widget.setCurrentText(str(default))
+            return widget
 
-    if wtype == "bool":
-        widget = QCheckBox()
-        widget.setChecked(spec.get("default", False))
-        return widget
+        case "bool":
+            widget = QCheckBox()
+            widget.setChecked(spec.get("default", False))
+            return widget
 
-    if wtype in ("float_or_none", "int_or_auto"):
-        widget = QLineEdit()
-        default = spec.get("default")
-        if wtype == "float_or_none":
+        case "float_or_none":
+            widget = QLineEdit()
+            default = spec.get("default")
             widget.setText("none" if default is None else str(default))
-        else:
-            widget.setText("auto" if default is None else str(default))
-        if spec.get("tooltip"):
-            widget.setToolTip(spec["tooltip"])
-        return widget
 
-    widget = QLineEdit()
-    widget.setText(str(spec.get("default", "")))
-    return widget
+            if spec.get("tooltip"):
+                widget.setToolTip(spec["tooltip"])
+
+            return widget
+
+        case "int_or_auto":
+            widget = QLineEdit()
+            default = spec.get("default")
+            widget.setText("auto" if default is None else str(default))
+
+            if spec.get("tooltip"):
+                widget.setToolTip(spec["tooltip"])
+
+            return widget
+
+        case _:
+            widget = QLineEdit()
+            widget.setText(str(spec.get("default", "")))
+            return widget
 
 
 def read_widget(widget, spec):
     """Read the current value from a widget."""
     wtype = spec["type"]
-    if wtype == "float":
-        return widget.value()
-    if wtype == "int":
-        return widget.value()
-    if wtype == "choice":
-        return widget.currentText()
-    if wtype == "bool":
-        return widget.isChecked()
-    if wtype == "float_or_none":
-        text = widget.text().strip().lower()
-        return None if text == "none" else float(text)
-    if wtype == "int_or_auto":
-        text = widget.text().strip().lower()
-        return None if text == "auto" else int(text)
-    return widget.text()
+
+    match wtype:
+        case "float" | "int":
+            return widget.value()
+
+        case "choice":
+            return widget.currentText()
+
+        case "bool":
+            return widget.isChecked()
+
+        case "float_or_none":
+            text = widget.text().strip().lower()
+            return None if text == "none" else float(text)
+
+        case "int_or_auto":
+            text = widget.text().strip().lower()
+            return None if text == "auto" else int(text)
+
+        case _:
+            return widget.text()
 
 
 def set_widget_value(widget, spec, value):
     """Set a widget's value from a config dict entry."""
     wtype = spec["type"]
-    if wtype == "float":
-        widget.setValue(float(value))
-    elif wtype == "int":
-        widget.setValue(int(value))
-    elif wtype == "choice":
-        widget.setCurrentText(str(value))
-    elif wtype == "bool":
-        widget.setChecked(bool(value))
-    elif wtype == "float_or_none":
-        widget.setText("none" if value is None else str(value))
-    elif wtype == "int_or_auto":
-        widget.setText("auto" if value is None else str(value))
-    else:
-        widget.setText(str(value))
+
+    match wtype:
+        case "float":
+            widget.setValue(float(value))
+
+        case "int":
+            widget.setValue(int(value))
+
+        case "choice":
+            widget.setCurrentText(str(value))
+
+        case "bool":
+            widget.setChecked(bool(value))
+
+        case "float_or_none":
+            widget.setText("none" if value is None else str(value))
+
+        case "int_or_auto":
+            widget.setText("auto" if value is None else str(value))
+
+        case _:
+            widget.setText(str(value))
 
 
 def _layer_range_tag(layer_range) -> str:
@@ -196,19 +221,25 @@ def _ui_state_path(project_root) -> Path:
 
 def load_ui_state(project_root) -> dict:
     """Load the sidecar UI state. Returns {} on any problem (tolerant)."""
+
     path = _ui_state_path(project_root)
     if not path.is_file():
         return {}
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+
     except (OSError, ValueError):
         return {}
+
     if not isinstance(data, dict):
         return {}
+
     # Future versions degrade to defaults rather than mis-loading
     if data.get("version") not in (None, UI_STATE_VERSION):
         return {}
+
     return data
 
 
@@ -216,11 +247,13 @@ def save_ui_state(project_root, state: dict) -> None:
     """Write the sidecar UI state atomically."""
     path = _ui_state_path(project_root)
     tmp = path.parent / (path.name + ".tmp")
+
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
         tmp.replace(path)
+
     except OSError:
         pass
 

@@ -35,6 +35,23 @@ def two_blobs_2d(n_per=80, sep=100.0, spread=0.3, seed=0):
     return pl.DataFrame({"Demand X": pts[:, 0], "Demand Y": pts[:, 1]})
 
 
+def two_columns_3d(layers, per_layer=6, thickness=THICKNESS, sep=50.0):
+    """Two dense columns far apart in XY, both spanning all layers."""
+    rows = []
+    for L in layers:
+        for _ in range(per_layer):
+            rows.append((0.0, 0.0, L, L * thickness))
+            rows.append((sep, sep, L, L * thickness))
+    return pl.DataFrame(
+        {
+            "Demand X": pl.Series([r[0] for r in rows], dtype=pl.Float64),
+            "Demand Y": pl.Series([r[1] for r in rows], dtype=pl.Float64),
+            "layer": pl.Series([r[2] for r in rows], dtype=pl.Int16),
+            "Z": pl.Series([r[3] for r in rows], dtype=pl.Float64),
+        }
+    )
+
+
 def vertical_line_3d(layers, per_layer=5, thickness=THICKNESS):
     """A single dense column at (0,0) repeated across layers; Z = layer*thickness."""
     rows = []
@@ -318,3 +335,38 @@ class TestClusterDbscanChunked:
         )
         assert out.height == df.height
         assert set(out["cluster"].to_list()) == {0}
+
+
+class TestClusterRegimes:
+    def test_all_noise_returns_all_minus_one(self):
+        # Isolated points with min_samples=3 -> no cluster can form.
+        df = pl.DataFrame(
+            {"Demand X": [0.0, 100.0, 200.0], "Demand Y": [0.0, 0.0, 0.0]}
+        )
+        out = cluster_dbscan(df, eps_xy=1.0, min_samples=3, mode="2d")
+        assert out["cluster"].to_list() == [-1, -1, -1]
+
+    def test_cluster_summary_includes_noise_group(self):
+        df = pl.DataFrame(
+            {
+                "Demand X": [0.0, 0.0, 9.0, 9.0],
+                "Demand Y": [0.0, 0.0, 9.0, 9.0],
+                "cluster": [-1, -1, 0, 0],
+            }
+        )
+        s = cluster_summary(df, columns=("Demand X", "Demand Y"))
+        assert -1 in s["cluster"].to_list()
+        assert s.filter(pl.col("cluster") == -1)["n_rows"].item() == 2
+
+    def test_chunked_does_not_over_merge_separated_columns(self):
+        df = two_columns_3d(range(1, 21), per_layer=6)
+        out = cluster_dbscan_chunked(
+            df,
+            eps_xy=1.0,
+            eps_z=0.06,
+            min_samples=5,
+            layers_per_chunk=8,
+            layer_thickness=THICKNESS,
+            verbose=False,
+        )
+        assert set(out["cluster"].to_list()) == {0, 1}

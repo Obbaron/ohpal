@@ -9,13 +9,14 @@ trimesh so the expected slice polygon at any layer inside the box is the
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pytest
 import trimesh
-from shapely.geometry import Polygon
+from shapely.geometry import MultiPolygon, Polygon
 
 import ampm.masking as masking
 from ampm.masking import (
@@ -246,3 +247,43 @@ class TestHashingAndCache:
 
     def test_load_cache_missing_returns_none(self, tmp_path):
         assert masking._load_cache(tmp_path / "missing.pkl") is None
+
+
+requires_rtree = pytest.mark.skipif(
+    importlib.util.find_spec("rtree") is None,
+    reason="trimesh multi-polygon slicing requires rtree",
+)
+
+
+@pytest.fixture
+def two_box_stl(tmp_path):
+    """Two disjoint boxes: x,y in [0,10] and [20,30], both z in [0,3]."""
+    b1 = trimesh.creation.box(extents=[10.0, 10.0, 3.0])
+    b1.apply_translation([5.0, 5.0, 1.5])
+    b2 = trimesh.creation.box(extents=[10.0, 10.0, 3.0])
+    b2.apply_translation([25.0, 5.0, 1.5])
+    mesh = trimesh.util.concatenate([b1, b2])
+    path = tmp_path / "two_box.stl"
+    mesh.export(path)
+    return path
+
+
+class TestMultiBodyMasking:
+    def test_apply_mask_with_multipolygon_layer(self):
+        # A layer masked to two disjoint squares: keep points inside either,
+        # and drop a point that falls in the gap between them.
+        mp = MultiPolygon(
+            [
+                Polygon([(0, 0), (10, 0), (10, 10), (0, 10)]),
+                Polygon([(20, 0), (30, 0), (30, 10), (20, 10)]),
+            ]
+        )
+        df = points_df([(5, 5, 10), (25, 5, 10), (15, 5, 10)])
+        out = apply_mask(df, {10: mp})
+        assert sorted(out["Demand X"].to_list()) == [5.0, 25.0]
+
+    @requires_rtree
+    def test_build_mask_multibody_is_multipolygon(self, two_box_stl):
+        geom = build_mask(two_box_stl, layers=[50], layer_thickness=THICKNESS)[50]
+        assert isinstance(geom, MultiPolygon)
+        assert geom.area == pytest.approx(200.0, abs=1.0)
