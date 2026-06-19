@@ -581,9 +581,6 @@ class LoadWorker(QThread):
             else:
                 print("No Parts CSV provided; skipping power/speed attachment.")
 
-            # Drop excluded parts after assignment (so exclusion can't pull
-            # rows onto a neighbour). String compare covers Enum and String
-            # part_id; "noise" rows are never dropped.
             if PART_EXCLUDE and "part_id" in df.columns:
                 exclude = [str(p) for p in PART_EXCLUDE]
                 before = df.height
