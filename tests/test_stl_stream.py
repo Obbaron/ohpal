@@ -265,7 +265,7 @@ class TestPolygonizeCoverage:
             ]
         )
         geom = _polygonize_layer(np.vstack([square_segments(), collinear]))
-        assert isinstance(geom, MultiPolygon)
+        assert isinstance(geom, Polygon)
         assert geom.area == pytest.approx(100.0)
 
     def test_intersect_chunk_no_intersections_returns_empty(self):
