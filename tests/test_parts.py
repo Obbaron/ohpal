@@ -15,7 +15,9 @@ import pytest
 from ampm.parts import (
     BuildStartedDHXML,
     QuantAMParts,
+    _iter_sections,
     _parse_bounding_box,
+    _section_to_dataframe,
     _suffix_duplicate_names,
     _try_numeric,
     apply_part_id_map,
@@ -498,3 +500,181 @@ class TestParserRobustness:
         v2 = q.volume_parameters(variant="2")
         assert v1["Hatches Point Distance"].to_list() == pytest.approx([0.06])
         assert v2["Hatches Point Distance"].to_list() == pytest.approx([0.07])
+
+
+class TestSectionParsing:
+    HDR = ["#", "A", "B", "C"]  # -> headers ["A", "B", "C"]
+
+    def test_trailing_empty_cells_trimmed(self):
+        df = _section_to_dataframe(self.HDR, [["", "x", "y", "z", "", ""]])
+        assert df.columns == ["A", "B", "C"] and df.height == 1
+
+    def test_short_row_padded(self):
+        df = _section_to_dataframe(self.HDR, [["", "x", "y"]])  # missing C
+        assert df.columns == ["A", "B", "C"] and df.height == 1
+
+    def test_long_row_truncated(self):
+        df = _section_to_dataframe(self.HDR, [["", "x", "y", "z", "extra"]])
+        assert df.columns == ["A", "B", "C"] and df.height == 1
+
+    def test_empty_section_returns_typed_empty_frame(self):
+        df = _section_to_dataframe(self.HDR, [])
+        assert df.columns == ["A", "B", "C"] and df.height == 0
+
+    def test_try_numeric_non_string_returns_none(self):
+        assert _try_numeric(pl.Series([1, 2, 3])) is None
+
+    def test_section_header_at_eof_is_skipped(self):
+        # A "Tab - N" line as the very last row has no header line after it.
+        text = "#,Renishaw,Material,Development\n\n#,Tab - 99,Orphan"
+        names = [n for n, _, _ in _iter_sections(text)]
+        assert "Orphan" not in names
+
+    def test_non_hash_header_row_raises(self):
+        text = (
+            "#,Renishaw,Material,Development\n\n"
+            "#,Tab - 5,Foo\n"
+            ",not,a,header\n"  # next row is not '#'-prefixed
+        )
+        with pytest.raises(ValueError, match="header row"):
+            list(_iter_sections(text))
+
+
+class TestQuantAMPartsErrors:
+    def test_repr(self):
+        q = QuantAMParts(
+            {"Parent Parts": pl.DataFrame({"Sr. No.": [1]})}, {"Parent Parts": -1}
+        )
+        assert "QuantAMParts(" in repr(q)
+
+    def test_parent_parts_missing_section(self):
+        with pytest.raises(ValueError, match="Parent Parts"):
+            QuantAMParts({}, {}).parent_parts()
+
+    def test_parent_parts_missing_columns(self):
+        q = QuantAMParts(
+            {"Parent Parts": pl.DataFrame({"Sr. No.": [1]})}, {"Parent Parts": -1}
+        )
+        with pytest.raises(ValueError, match="missing columns"):
+            q.parent_parts()
+
+    def test_volume_parameters_missing_section(self):
+        q = QuantAMParts(
+            {"Parent Parts": pl.DataFrame({"Sr. No.": [1]})}, {"Parent Parts": -1}
+        )
+        with pytest.raises(ValueError, match="Scan Volume"):
+            q.volume_parameters()
+
+    def test_volume_parameters_missing_key_columns(self, tmp_path):
+        csv_text = make_quantam_csv(
+            [
+                (
+                    -1,
+                    "Parent Parts",
+                    PARENT_HEADERS,
+                    [["1", "Part(1)", "0.03", "0", "0", "10"]],
+                ),
+                (10, "Scan Volume", ["Foo", "Bar"], [["x", "y"]]),  # no Sr. No.
+            ]
+        )
+        q = QuantAMParts.from_path(write_csv(tmp_path, csv_text))
+        with pytest.raises(ValueError, match="Sr. No."):
+            q.volume_parameters()
+
+
+class TestBuildStartedDHXMLRepr:
+    def test_repr(self, tmp_path):
+        p = tmp_path / "b.dhxml"
+        p.write_text(
+            json.dumps(
+                dhxml_payload([{"name": "Part(1)", "boundingBox": "0,0,0,10,10,5"}])
+            ),
+            encoding="utf-8",
+        )
+        build = BuildStartedDHXML.from_path(p)
+        assert "BuildStartedDHXML(" in repr(build)
+
+
+class TestComputePartIdMapCoverage:
+    def test_missing_parts_table_column_raises(self):
+        clustered = pl.DataFrame({"cluster": [0], "Demand X": [1.0], "Demand Y": [1.0]})
+        ptable = pl.DataFrame({"Part ID": ["A"], "X Position": [0.0]})  # no Y Position
+        with pytest.raises(KeyError, match="parts_table"):
+            compute_part_id_map(clustered, ptable, verbose=False)
+
+    def test_no_clusters_verbose(self, capsys):
+        clustered = pl.DataFrame(
+            {"cluster": [-1, -1], "Demand X": [1.0, 2.0], "Demand Y": [1.0, 2.0]}
+        )
+        ptable = parts_positions(["A"], [0.0], [0.0])
+        assert compute_part_id_map(clustered, ptable, verbose=True) == {}
+        assert "No non-noise clusters" in capsys.readouterr().out
+
+    def test_far_and_unmatched_warnings_verbose(self, capsys):
+        # cluster 0 is 100 mm from its nearest part (far warning); part B is
+        # never the nearest (unmatched note).
+        clustered = pl.DataFrame({"cluster": [0], "Demand X": [0.0], "Demand Y": [0.0]})
+        ptable = parts_positions(["A", "B"], [100.0, 200.0], [0.0, 0.0])
+        compute_part_id_map(clustered, ptable, max_distance_mm=5.0, verbose=True)
+        out = capsys.readouterr().out
+        assert "mm from nearest part" in out
+        assert "had no matching cluster" in out
+
+
+class TestJoinPartsWithStatsCoverage:
+    def test_verbose_warns_both_directions(self, capsys):
+        # stats has C (no parts row); parts has D (no stats row).
+        stats = pl.DataFrame({"part_id": ["A", "C"], "cov": [0.1, 0.3]})
+        ptable = pl.DataFrame({"Part ID": ["A", "D"], "power": [200.0, 300.0]})
+        join_parts_with_stats(stats, ptable, verbose=True)
+        out = capsys.readouterr().out
+        assert "no matching row" in out and "Note" in out
+
+    def test_same_join_column_no_rename(self):
+        stats = pl.DataFrame({"part_id": ["A"], "cov": [0.1]})
+        ptable = pl.DataFrame({"part_id": ["A"], "power": [200.0]})
+        out = join_parts_with_stats(
+            stats,
+            ptable,
+            stats_part_col="part_id",
+            parts_part_col="part_id",
+            verbose=False,
+        )
+        assert out["power"].to_list() == [200.0]
+
+
+class TestAssignNearestPartCoverage:
+    def test_missing_parts_table_column_raises(self):
+        masked = pl.DataFrame({"Demand X": [1.0], "Demand Y": [0.0]})
+        ptable = pl.DataFrame({"Part ID": ["A"], "X Position": [0.0]})  # no Y Position
+        with pytest.raises(KeyError, match="parts_table"):
+            assign_nearest_part(masked, ptable, verbose=False)
+
+    def test_verbose_summary_far_and_zero_count(self, capsys):
+        # One row near A, one far from both (noise); B receives 0 rows.
+        masked = pl.DataFrame({"Demand X": [0.0, 1000.0], "Demand Y": [0.0, 0.0]})
+        ptable = parts_positions(["A", "B"], [0.0, 100.0], [0.0, 0.0])
+        assign_nearest_part(
+            masked, ptable, max_distance_mm=5.0, noise_label="noise", verbose=True
+        )
+        out = capsys.readouterr().out
+        assert "farther than" in out
+        assert "0 rows assigned" in out
+
+
+class TestAssignBoundingBoxPartCoverage:
+    def test_missing_parts_table_column_raises(self):
+        masked = pl.DataFrame({"Demand X": [1.0], "Demand Y": [0.0]})
+        ptable = pl.DataFrame({"Part ID": ["A"], "X min": [0.0]})  # missing the rest
+        with pytest.raises(KeyError, match="parts_table"):
+            assign_bounding_box_part(masked, ptable, verbose=False)
+
+    def test_verbose_summary_and_unassigned(self, capsys):
+        masked = pl.DataFrame(
+            {"Demand X": [5.0, 50.0], "Demand Y": [5.0, 5.0], "Z": [1.0, 1.0]}
+        )
+        ptable = parts_box_table(["A"], [(0, 0, 0, 10, 10, 5)])
+        assign_bounding_box_part(masked, ptable, verbose=True)
+        out = capsys.readouterr().out
+        assert "fell outside every part bounding box" in out
+        assert "Assigned" in out
