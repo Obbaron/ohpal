@@ -239,3 +239,65 @@ class TestParamDiff:
     def test_no_difference_message(self):
         text = _format_param_diff({"a": 1}, {"a": 1})
         assert "no field-level differences" in text
+
+
+class TestVerboseLogging:
+    def test_save_verbose_prints_summary(self, keyed_df, tmp_path, capsys):
+        clustered = keyed_df([(1, 100), (1, 200), (2, 100)], cluster=[0, 0, 1])
+        save_cluster_labels(clustered, tmp_path / "c.pq", verbose=True)
+        out = capsys.readouterr().out
+        assert "Saved 3 cluster labels" in out and "2 clusters" in out
+
+    def test_load_verbose_prints_summary(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "c.pq"
+        save_cluster_labels(keyed_df([(1, 100), (1, 200)], cluster=[0, 1]), path, verbose=False)
+        load_cluster_labels(keyed_df([(1, 100), (1, 200)]), path, verbose=True)
+        assert "Loaded cluster labels" in capsys.readouterr().out
+
+    def test_nonstrict_missing_file_verbose(self, keyed_df, tmp_path, capsys):
+        with pytest.raises(FileNotFoundError):
+            load_cluster_labels(
+                keyed_df([(1, 100)]), tmp_path / "nope.pq", strict=False, verbose=True
+            )
+        assert "[cache]" in capsys.readouterr().out
+
+    def test_nonstrict_no_version_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "plain.pq"
+        keyed_df([(1, 100)], cluster=[0]).write_parquet(path)
+        with pytest.raises(FileNotFoundError):
+            load_cluster_labels(keyed_df([(1, 100)]), path, strict=False, verbose=True)
+        assert "no version metadata" in capsys.readouterr().out
+
+    def test_nonstrict_version_mismatch_verbose(self, keyed_df, tmp_path, capsys, monkeypatch):
+        path = tmp_path / "c.pq"
+        save_cluster_labels(keyed_df([(1, 100)], cluster=[0]), path, verbose=False)
+        monkeypatch.setattr(
+            "ampm.cluster_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+        )
+        with pytest.raises(FileNotFoundError):
+            load_cluster_labels(keyed_df([(1, 100)]), path, strict=False, verbose=True)
+        assert "rebuild required" in capsys.readouterr().out
+
+    def test_nonstrict_params_mismatch_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "c.pq"
+        save_cluster_labels(
+            keyed_df([(1, 100)], cluster=[0]), path, params=PARAMS, verbose=False
+        )
+        with pytest.raises(FileNotFoundError):
+            load_cluster_labels(
+                keyed_df([(1, 100)]),
+                path,
+                expect_params={**PARAMS, "eps_xy": 0.99},
+                strict=False,
+                verbose=True,
+            )
+        assert "don't match" in capsys.readouterr().out
+
+    def test_cluster_or_load_miss_verbose(self, keyed_df, tmp_path, capsys):
+        df = keyed_df([(1, 100), (1, 200)])
+
+        def fn(d):
+            return d.with_columns(pl.lit(0).cast(pl.Int32).alias("cluster"))
+
+        cluster_or_load(df, tmp_path / "c.pq", fn, params=PARAMS, verbose=True)
+        assert "computing fresh clusters" in capsys.readouterr().out

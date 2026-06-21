@@ -33,6 +33,13 @@ from ampm.plotting import (
 
 
 def traces(fig: Figure) -> tuple[Any, ...]:
+    """Return the figure's traces as a tuple.
+
+    plotly 6.x types ``Figure.data`` loosely (``Unknown | Figure``), so
+    indexing/iterating it and reading trace attributes trips the type
+    checker though it is correct at runtime. Routing trace access through
+    this helper keeps the tests type-clean.
+    """
     return tuple(fig.data)
 
 
@@ -324,3 +331,181 @@ class TestColorscaleHelper:
     def test_sample_colorscale_returns_rgb(self):
         out = plotting._sample_colorscale("Viridis", 0.5)
         assert out.startswith("rgb")
+
+
+class TestColorPaths:
+    def test_scatter2d_numeric_color_and_range(self):
+        df = xyz_df(3, color=[1.0, 2.0, 3.0])
+        fig = scatter2d(df, "X", "Y", color="c", color_range=(0.0, 5.0))
+        m = traces(fig)[0].marker
+        assert m.showscale is True
+        assert m.cmin == 0.0 and m.cmax == 5.0
+        assert m.colorbar.title.text == "c"
+
+    def test_scatter2d_categorical_color_labels(self):
+        df = xyz_df(3, color=["b", "a", "b"])
+        fig = scatter2d(df, "X", "Y", color="c")
+        assert list(traces(fig)[0].marker.colorbar.ticktext) == ["a", "b"]
+
+    def test_bar_numeric_color_and_range(self):
+        df = pl.DataFrame({"k": ["a", "b"], "v": [1.0, 2.0], "c": [10.0, 20.0]})
+        fig = bar(df, "k", "v", color="c", color_range=(0.0, 30.0))
+        m = traces(fig)[0].marker
+        assert m.showscale is True and m.cmin == 0.0 and m.cmax == 30.0
+
+    def test_bar_sort_by_x_descending(self):
+        df = pl.DataFrame({"k": ["b", "a", "c"], "v": [1.0, 2.0, 3.0]})
+        fig = bar(df, "k", "v", sort_by="x", sort_descending=True)
+        assert list(traces(fig)[0].x) == ["c", "b", "a"]
+
+    def test_bar_categorical_color_uses_labels(self):
+        df = pl.DataFrame(
+            {"k": ["a", "b", "c"], "v": [1.0, 2.0, 3.0], "c": ["y", "x", "y"]}
+        )
+        fig = bar(df, "k", "v", color="c")
+        assert list(traces(fig)[0].marker.colorbar.ticktext) == ["x", "y"]
+
+    def test_contour_color_range(self):
+        df = pl.DataFrame(
+            {
+                "x": [0.0, 1.0, 0.0, 1.0],
+                "y": [0.0, 0.0, 1.0, 1.0],
+                "z": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+        fig = contour(df, "x", "y", "z", color_range=(0.0, 10.0))
+        c = [t for t in traces(fig) if t.type == "contour"][0]
+        assert c.zmin == 0.0 and c.zmax == 10.0
+
+
+class TestHoverCustomdata:
+    def test_build_hover_appends_valid_extra(self):
+        df = xyz_df(2)  # has X, Y, Z
+        _, template = _build_hover(df, ["X"], ["Y"])  # Y is a valid extra column
+        assert "customdata[1]" in template  # X -> [0], appended Y -> [1]
+
+    def test_stack_customdata_with_hover(self):
+        out = _stack_customdata(
+            np.array([1.0, 2.0]), {"H": np.array([9.0, 8.0])}, ["H"]
+        )
+        assert out.shape == (2, 2)
+
+    def _layered_df(self):
+        rows = []
+        for layer in (1, 2):
+            for i in range(4):
+                rows.append((float(i), float(i), layer, float(i), float(2 * i)))
+        return pl.DataFrame(
+            {
+                "X": [r[0] for r in rows],
+                "Y": [r[1] for r in rows],
+                "layer": [r[2] for r in rows],
+                "s1": [r[3] for r in rows],
+                "h": [r[4] for r in rows],
+            }
+        )
+
+    def test_layered_with_hover_columns(self):
+        fig = scatter2d_layered(self._layered_df(), "X", "Y", "s1", hover_columns=["h"])
+        assert len(traces(fig)) == 2
+        assert np.asarray(traces(fig)[0].customdata).shape[1] == 2  # signal + hover
+
+    def test_layered_missing_hover_column_warns(self, capsys):
+        scatter2d_layered(self._layered_df(), "X", "Y", "s1", hover_columns=["nope"])
+        assert "not in the data" in capsys.readouterr().out
+
+
+class TestKdeCoverage:
+    def _two_groups(self, seed=0):
+        rng = np.random.default_rng(seed)
+        return pl.DataFrame(
+            {
+                "part_id": ["A"] * 50 + ["B"] * 50,
+                "value": np.concatenate([rng.normal(0, 1, 50), rng.normal(5, 1, 50)]),
+            }
+        )
+
+    def test_drop_noise_null_group(self):
+        df = pl.DataFrame(
+            {
+                "part_id": ["A"] * 4 + [None] * 4,
+                "value": [0.0, 1.0, 2.0, 3.0, 9, 9, 9, 9],
+            }
+        )
+        fig = kde(df, "value", drop_noise=True, noise_label=None, verbose=False)
+        assert [t.name for t in traces(fig)] == ["A"]
+
+    def test_too_few_points_raises(self):
+        df = pl.DataFrame({"part_id": ["A"], "value": [1.0]})
+        with pytest.raises(ValueError, match="Not enough data"):
+            kde(df, "value", verbose=False)
+
+    def test_range_clip_applied(self):
+        fig = kde(
+            self._two_groups(),
+            "value",
+            range_clip=(0.0, 4.0),
+            groups=["A"],
+            verbose=False,
+        )
+        x = np.asarray(traces(fig)[0].x)
+        assert x.min() >= 0.0 and x.max() <= 4.0
+
+    def test_range_clip_empty_range_raises(self):
+        with pytest.raises(ValueError, match="Empty x-range"):
+            kde(
+                self._two_groups(),
+                "value",
+                range_clip=(1000.0, 2000.0),
+                groups=["A"],
+                verbose=False,
+            )
+
+    def test_skips_small_group(self, capsys):
+        df = pl.DataFrame(
+            {"part_id": ["A"] * 5 + ["B"], "value": [0.0, 1.0, 2.0, 3.0, 4.0, 9.0]}
+        )
+        fig = kde(df, "value", verbose=False)
+        assert [t.name for t in traces(fig)] == ["A"]
+        assert "Skipping B" in capsys.readouterr().out
+
+    def test_subsample_large_group_verbose(self, capsys):
+        kde(
+            self._two_groups(),
+            "value",
+            groups=["A"],
+            max_points_per_group=10,
+            verbose=True,
+        )
+        assert "sampled" in capsys.readouterr().out
+
+    def test_singular_group_skipped(self, capsys):
+        # All-identical values -> singular covariance -> gaussian_kde raises.
+        df = pl.DataFrame(
+            {
+                "part_id": ["A"] * 5 + ["B"] * 5,
+                "value": [1.0] * 5 + [0.0, 1.0, 2.0, 3.0, 4.0],
+            }
+        )
+        fig = kde(df, "value", verbose=False)
+        assert "A" not in [t.name for t in traces(fig)]
+        assert "KDE failed" in capsys.readouterr().out
+
+    def test_all_groups_skipped_raises(self):
+        df = pl.DataFrame({"part_id": ["A", "B"], "value": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="No KDE curves"):
+            kde(df, "value", verbose=False)
+
+    def test_many_groups_warns(self, capsys):
+        rng = np.random.default_rng(0)
+        ids, vals = [], []
+        for g in range(13):
+            ids += [f"g{g}"] * 3
+            vals += list(rng.normal(g * 10, 1, 3))
+        kde(pl.DataFrame({"part_id": ids, "value": vals}), "value", verbose=False)
+        assert "groups will be plotted" in capsys.readouterr().out
+
+
+class TestOpacityHelper:
+    def test_with_opacity_rgba_four_component(self):
+        assert _with_opacity("rgba(10,20,30,0.8)", 0.5) == "rgba(10,20,30,0.5)"

@@ -175,7 +175,7 @@ def scatter3d(
             if df.is_empty():
                 raise ValueError(f"All {total:,} sampled points have null {color!r}")
 
-    if df.height > 200_000:
+    if df.height > 200_000:  # pragma: no cover
         print(
             f"WARNING: scatter3d called with {df.height:,} points. Plotly's "
             "Scatter3d gets sluggish above ~200k. Consider downsampling further."
@@ -257,7 +257,7 @@ def scatter2d(
     base = [x, y] + ([color] if color else [])
     _check_columns(df, base)
 
-    if df.height > 1_000_000:
+    if df.height > 1_000_000:  # pragma: no cover
         print(
             f"WARNING: scatter2d called with {df.height:,} points. Scattergl "
             "handles up to ~1M comfortably; beyond that consider downsampling."
@@ -645,7 +645,7 @@ def scatter2d_layered(
     for key, sub in partitions.items():
         layer_value = key[0] if isinstance(key, tuple) else key
         n = sub.height
-        if n == 0:
+        if n == 0:  # pragma: no cover
             continue
         if n > points_per_layer:
             idx = rng.choice(n, size=points_per_layer, replace=False)

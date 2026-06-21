@@ -459,36 +459,49 @@ def _stitch_rings(segs: np.ndarray) -> list[np.ndarray]:
         start point of each chained segment). Open chains and rings with
         fewer than three segments are discarded.
     """
+    M = segs.shape[0]
+    if M == 0:
+        return []
+
     quant = np.round(segs / _QUANT).astype(np.int64)  # (M, 4) quantized
-    start_keys = list(map(tuple, quant[:, :2]))
-    end_keys = list(map(tuple, quant[:, 2:]))
+    pts = np.concatenate((quant[:, :2], quant[:, 2:]), axis=0)  # (2M, 2)
 
-    by_start: dict[tuple, list[int]] = {}
+    _, inv = np.unique(pts, axis=0, return_inverse=True)
+    inv = np.asarray(inv).reshape(-1)
 
-    for i, k in enumerate(start_keys):
-        by_start.setdefault(k, []).append(i)
+    start_codes = inv[:M].tolist()
+    end_codes = inv[M:].tolist()
 
-    used = np.zeros(segs.shape[0], dtype=bool)
+    order = np.argsort(inv[:M], kind="stable").tolist()
+    counts = np.bincount(inv[:M], minlength=int(inv.max()) + 1)
+    offsets = np.concatenate(([0], np.cumsum(counts))).tolist()
+
+    used = np.zeros(M, dtype=bool)
     rings: list[np.ndarray] = []
 
-    for i0 in range(segs.shape[0]):
+    for i0 in range(M):
         if used[i0]:
             continue
         chain = [i0]
         used[i0] = True
-        cur_end = end_keys[i0]
-        ring_start = start_keys[i0]
+        cur_end = end_codes[i0]
+        ring_start = start_codes[i0]
+
         while cur_end != ring_start:
-            nxt = None
-            for j in by_start.get(cur_end, ()):
+            nxt = -1
+
+            for j in order[offsets[cur_end] : offsets[cur_end + 1]]:
                 if not used[j]:
                     nxt = j
                     break
-            if nxt is None:
+
+            if nxt == -1:
                 break
+
             used[nxt] = True
             chain.append(nxt)
-            cur_end = end_keys[nxt]
+            cur_end = end_codes[nxt]
+
         if cur_end == ring_start and len(chain) >= 3:
             rings.append(segs[chain][:, :2])  # start point of each segment
 

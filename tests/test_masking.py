@@ -249,6 +249,10 @@ class TestHashingAndCache:
         assert masking._load_cache(tmp_path / "missing.pkl") is None
 
 
+# --------------------------------------------------------------------------- #
+# Multi-body geometry (real masks are MultiPolygons -- many parts per layer)
+# --------------------------------------------------------------------------- #
+
 requires_rtree = pytest.mark.skipif(
     importlib.util.find_spec("rtree") is None,
     reason="trimesh multi-polygon slicing requires rtree",
@@ -285,5 +289,33 @@ class TestMultiBodyMasking:
     @requires_rtree
     def test_build_mask_multibody_is_multipolygon(self, two_box_stl):
         geom = build_mask(two_box_stl, layers=[50], layer_thickness=THICKNESS)[50]
-        assert isinstance(geom, MultiPolygon)
+        assert geom.geom_type == "MultiPolygon"
         assert geom.area == pytest.approx(200.0, abs=1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: streaming slice route, non-polygon filter, sampled hash
+# --------------------------------------------------------------------------- #
+
+class TestSlicingRoutes:
+    def test_large_stl_routes_to_streaming(self, box_stl, monkeypatch):
+        # Drop the size threshold below the file so build_mask takes the
+        # constant-memory streaming slicer instead of trimesh.
+        monkeypatch.setattr(masking, "LARGE_STL_BYTES", 1)
+        mask = build_mask(box_stl, layers=[50], layer_thickness=THICKNESS)
+        assert 50 in mask
+        assert mask[50].area == pytest.approx(100.0, abs=1.0)
+
+    def test_non_polygon_geometry_is_skipped(self, box_stl, monkeypatch):
+        from shapely.geometry import Point
+
+        monkeypatch.setattr(masking, "_slice_trimesh", lambda *a, **k: {5: Point(0, 0)})
+        mask = build_mask(box_stl, layers=[5], layer_thickness=THICKNESS)
+        assert mask == {}
+
+    def test_stl_hash_sampled_branch(self, box_stl, monkeypatch):
+        full = stl_hash(box_stl)
+        monkeypatch.setattr(masking, "LARGE_STL_BYTES", 1)  # force sampled path
+        sampled = stl_hash(box_stl)
+        assert len(sampled) == 64
+        assert sampled != full  # different algorithm than the full-file digest

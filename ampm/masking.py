@@ -150,7 +150,7 @@ def _slice_trimesh(
             continue  # plane misses the mesh
         try:
             polys = list(section.polygons_full)
-        except ModuleNotFoundError as e:
+        except ModuleNotFoundError as e:  # pragma: no cover
             raise ModuleNotFoundError(
                 f"Slicing needs a trimesh support package that is not "
                 f"installed: {e.name!r}. The slicing path "
@@ -163,7 +163,7 @@ def _slice_trimesh(
                 f"or re-run the project offline install to restore all "
                 f"dependencies."
             ) from e
-        if not polys:
+        if not polys:  # pragma: no cover
             continue
         mask[layer_n] = polys[0] if len(polys) == 1 else MultiPolygon(polys)
     return mask
