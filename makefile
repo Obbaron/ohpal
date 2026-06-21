@@ -13,7 +13,7 @@ endif
 PYCHECK := $(SYSTEM_PYTHON) -c "import sys,struct; sys.exit(0 if (sys.version_info[:2]==(3,11) and struct.calcsize('P')*8==64) else 'Need Python 3.11.x 64-bit to match the bundled cp311 wheels; found '+sys.version.split()[0])"
 
 .DEFAULT_GOAL := help
-.PHONY: help setup offline wheels test run build clean
+.PHONY: help setup offline wheels test run build clean profile profile-cpu profile-cluster profile-direct profile-view
 
 help:
 	@echo "  setup    - create the venv and install the project (editable, online)"
@@ -21,6 +21,12 @@ help:
 	@echo "  wheels   - (re)build the offline wheel set in $(WHEEL_DIR)"
 	@echo "  test     - run the test suite"
 	@echo "  run      - run the app"
+	@echo ""
+	@echo "  profile         - profile a driver with scalene (override DRIVER=, OUT=)"
+	@echo "  profile-cpu     - same, CPU-only (faster, skips memory)"
+	@echo "  profile-cluster - profile + view the clustering assignment path"
+	@echo "  profile-direct  - profile + view the direct assignment path"
+	@echo "  profile-view    - open the last profile (override OUT= to choose)"
 	@echo "  build    - compile a standalone binary from app.spec"
 	@echo "  clean    - remove caches and build artifacts"
 
@@ -49,15 +55,38 @@ test:
 run:
 	$(VENV_PYTHON) app.py
 
+
+SCALENE       := $(VENV_PYTHON) -m scalene
+PROFILE_SCOPE ?= ampm
+DRIVER        ?= profile.py
+OUT           ?= scalene-profile.json
+
+profile:
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile $(OUT) $(DRIVER)
+
+profile-cpu:
+	$(SCALENE) run --cpu-only --profile-only $(PROFILE_SCOPE) --outfile $(OUT) $(DRIVER)
+
+profile-cluster:
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-cluster.json profile_cluster.py
+	$(SCALENE) view profile-cluster.json
+
+profile-direct:
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-direct.json profile_direct.py
+	$(SCALENE) view profile-direct.json
+
+profile-view:
+	$(SCALENE) view $(OUT)
+
 build:
 	$(VENV_PYTHON) -m PyInstaller app.spec
 
 ifeq ($(OS),Windows_NT)
 clean:
-	-Remove-Item -Recurse -Force .pytest_cache, build, dist, *.egg-info -ErrorAction SilentlyContinue
+	-Remove-Item -Recurse -Force .pytest_cache, build, dist, *.egg-info, scalene-profile.json, scalene-profile.html, profile-*.json -ErrorAction SilentlyContinue
 	-Get-ChildItem -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
 else
 clean:
-	rm -rf .pytest_cache build dist *.egg-info
+	rm -rf .pytest_cache build dist *.egg-info scalene-profile.json scalene-profile.html profile-*.json
 	find . -type d -name __pycache__ -exec rm -rf {} +
 endif

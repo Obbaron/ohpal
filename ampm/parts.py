@@ -51,6 +51,7 @@ from typing import Iterator
 import numpy as np
 import polars as pl
 import pyarrow as pa
+from scipy.spatial import KDTree
 
 SECTION_PARENT = "Parent Parts"
 SECTION_GENERAL = "General"
@@ -772,15 +773,6 @@ def assign_nearest_part(
     Each row gets the Part ID of the closest part by 2D Euclidean distance
     in the (x_col, y_col) plane. Z is ignored.
 
-    Memory note
-    -----------
-    Computes nearest-part assignments in row-chunks so peak memory is bounded
-    by the chunk size (~128 MB per intermediate array) rather than scaling
-    with the total row count. The full (n_rows, n_parts) distance matrix is
-    never materialized, so this is safe for tens of millions of rows. For
-    builds with very many parts a KDTree approach would still be faster, but
-    this stays intentionally simple and is no longer memory-bound.
-
     Parameters
     ----------
     masked
@@ -855,39 +847,34 @@ def assign_nearest_part(
     dist_maxs = np.zeros(n_parts, dtype=np.float32)
     n_too_far = 0
 
-    target_bytes = 128 * 1024 * 1024  # 128 MB
-    chunk = max(1, int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 4)))))
+    tree = KDTree(np.column_stack((px, py)))
+    _, nearest = tree.query(np.column_stack((x, y)), k=1, workers=1)
+    nearest = np.asarray(nearest, dtype=np.int64).reshape(-1)
 
-    for start in range(0, n_rows, chunk):
-        stop = min(start + chunk, n_rows)
-        dx = x[start:stop, None] - px[None, :]
-        dy = y[start:stop, None] - py[None, :]
-        dist2 = dx * dx + dy * dy
-        del dx, dy
-        idx = dist2.argmin(axis=1)
-        d = np.sqrt(np.take_along_axis(dist2, idx[:, None], axis=1).ravel())
-        del dist2
+    dxp = x - px[nearest]
+    dyp = y - py[nearest]
+    d = np.sqrt(dxp * dxp + dyp * dyp)
+    del dxp, dyp
 
-        chunk_codes = idx.astype(np.uint32)
-        if max_distance_mm is not None:
-            far = d > max_distance_mm
-            n_far = int(far.sum())
-            if n_far:
-                n_too_far += n_far
-                if noise_code is not None:
-                    chunk_codes[far] = noise_code
-                else:
-                    null_far[start:stop] = far
-                keep = ~far
-                idx = idx[keep]
-                d = d[keep]
-        codes[start:stop] = chunk_codes
+    codes[:] = nearest.astype(np.uint32)
+    keep_idx = nearest
+    keep_d = d
+    if max_distance_mm is not None:
+        far = d > max_distance_mm
+        n_too_far = int(far.sum())
+        if n_too_far:
+            if noise_code is not None:
+                codes[far] = noise_code
+            else:
+                null_far[:] = far
+            keep = ~far
+            keep_idx = nearest[keep]
+            keep_d = d[keep]
 
-        if idx.size:
-            counts += np.bincount(idx, minlength=n_parts)
-            dist_sums += np.bincount(idx, weights=d, minlength=n_parts)
-            np.maximum.at(dist_maxs, idx, d.astype(np.float32))
-        del idx, d, chunk_codes
+    if keep_idx.size:
+        counts += np.bincount(keep_idx, minlength=n_parts)
+        dist_sums += np.bincount(keep_idx, weights=keep_d, minlength=n_parts)
+        np.maximum.at(dist_maxs, keep_idx, keep_d.astype(np.float32))
 
     if n_too_far > 0 and verbose:
         pct = n_too_far / n_rows
