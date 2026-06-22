@@ -42,10 +42,18 @@ class TestLoadConfigErrors:
         with pytest.raises(SystemExit):
             config.load_config(tmp_path)
 
-    def test_missing_required_key_exits(self, tmp_path):
-        write_toml(tmp_path, "[paths]\nsource = 'data'\n")  # no stl/parts_csv/build
+    def test_missing_source_exits(self, tmp_path):
+        write_toml(tmp_path, "[paths]\nstl = 'plate.stl'\n")  # no source
         with pytest.raises(SystemExit):
             config.load_config(tmp_path)
+
+    def test_optional_keys_default_when_absent(self, tmp_path):
+        write_toml(tmp_path, "[paths]\nsource = 'data'\n")
+        cfg = config.load_config(tmp_path)
+        assert Path(cfg["SOURCE"]).name == "data"
+        assert cfg["STL"] == ""
+        assert cfg["PARTS_CSV"] == ""
+        assert cfg["LAYER_THICKNESS"] == 0.0
 
 
 class TestLoadConfigSuccess:

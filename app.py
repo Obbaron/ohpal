@@ -871,7 +871,7 @@ class MainWindow(QMainWindow):
         self._dhxml_hint = QLabel(
             "Uses the part bounding boxes in the BuildStarted DHXML "
             "(set 'BuildStarted DHXML' above). Points outside every box are "
-            "labelled 'noise' \u2014 switch to 'direct' or 'dbscan' to catch them."
+            "labelled 'noise'."
         )
         self._dhxml_hint.setWordWrap(True)
         self._dhxml_hint.setVisible(False)
@@ -880,14 +880,6 @@ class MainWindow(QMainWindow):
         # Parts filter
         self._part_filter_section = CollapsibleSection("Part filter", expanded=False)
         pf_layout = self._part_filter_section.content_layout()
-
-        pf_hint = QLabel(
-            "Untick parts to drop them from the analysis (e.g. parts a "
-            "colleague placed on the same plate). Unassigned 'noise' rows are "
-            "kept regardless."
-        )
-        pf_hint.setWordWrap(True)
-        pf_layout.addWidget(pf_hint)
 
         pf_btn_row = QHBoxLayout()
         self._pf_all_btn = QPushButton("Select all")
@@ -974,14 +966,6 @@ class MainWindow(QMainWindow):
         # Columns to load (populated by probing the source's first packet file)
         self._columns_section = CollapsibleSection("Columns", expanded=False)
         col_layout = self._columns_section.content_layout()
-
-        col_hint = QLabel(
-            "Untick signal columns to skip loading them. Demand X/Y, Start "
-            "time, layer, and Z are always loaded. Loading fewer columns cuts "
-            "memory roughly in proportion on dense builds."
-        )
-        col_hint.setWordWrap(True)
-        col_layout.addWidget(col_hint)
 
         col_btn_row = QHBoxLayout()
         self._cols_all_btn = QPushButton("Select all")
@@ -1223,10 +1207,12 @@ class MainWindow(QMainWindow):
         """Save UI state and wait for any running threads before closing."""
         self._save_window_state()
         self._save_ui_state()
+
         for worker in (self._load_worker, self._plot_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait()
+
         if a0 is not None:
             a0.accept()
 
@@ -1255,6 +1241,7 @@ class MainWindow(QMainWindow):
         row.addWidget(edit, stretch=1)
         row.addWidget(browse)
         parent_layout.addLayout(row)
+
         return edit
 
     def _find_dhxml(self, source_dir: str) -> str:
@@ -1271,10 +1258,12 @@ class MainWindow(QMainWindow):
         try:
             if method == "dhxml":
                 path = self._dhxml_edit.text().strip()
+
                 if not path:
                     return [], "Select a BuildStarted DHXML above to list parts."
                 if not Path(path).is_file():
                     return [], "BuildStarted DHXML not found."
+
                 from ampm.parts import BuildStartedDHXML
 
                 pt = BuildStartedDHXML.from_path(path).parts_table()
@@ -1348,12 +1337,14 @@ class MainWindow(QMainWindow):
         """Tick/untick items to match a saved exclude list."""
         wanted = {str(p) for p in (excluded or [])}
         self._part_list.blockSignals(True)
+
         for i in range(self._part_list.count()):
             item = cast(QListWidgetItem, self._part_list.item(i))
             pid = str(item.data(Qt.ItemDataRole.UserRole))
             item.setCheckState(
                 Qt.CheckState.Unchecked if pid in wanted else Qt.CheckState.Checked
             )
+
         self._part_list.blockSignals(False)
         self._update_part_filter_status()
 
@@ -1362,14 +1353,17 @@ class MainWindow(QMainWindow):
 
     def _update_part_filter_status(self) -> None:
         n = self._part_list.count()
+
         if n == 0:
             self._pf_status.setText(
                 getattr(self, "_pf_error", None) or "No parts loaded."
             )
             self._part_filter_section.set_title("Part filter")
             return
+
         excluded = len(self._current_excluded_parts())
         kept = n - excluded
+
         if excluded == 0:
             self._pf_status.setText(f"All {n} parts included.")
             self._part_filter_section.set_title("Part filter")
@@ -1393,11 +1387,13 @@ class MainWindow(QMainWindow):
             return list(DataStore(src).columns), None
         except Exception:
             pass
+
         try:
             path = _first_packet_file(src)
             if path is None:
                 return [], "No packet data files found in the source directory."
             return _read_header_columns(path), None
+
         except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
             return [], f"Could not read columns: {e}"
 
@@ -1411,14 +1407,17 @@ class MainWindow(QMainWindow):
 
         previously_unchecked = self._current_unchecked_columns()
         src = self._source_edit.text().strip()
+
         if not src:
             cols, err = [], "Set a source directory to list columns."
         else:
             cols, err = self._read_columns_from_source(src)
+
         signal_cols = [c for c in cols if c not in ALWAYS_LOADED_COLUMNS]
 
         self._columns_list.blockSignals(True)
         self._columns_list.clear()
+
         for col in signal_cols:
             item = QListWidgetItem(col)
             item.setData(Qt.ItemDataRole.UserRole, col)
@@ -1447,10 +1446,12 @@ class MainWindow(QMainWindow):
         out: set[str] = set()
         if not hasattr(self, "_columns_list"):
             return out
+
         for i in range(self._columns_list.count()):
             item = cast(QListWidgetItem, self._columns_list.item(i))
             if item.checkState() != Qt.CheckState.Checked:
                 out.add(str(item.data(Qt.ItemDataRole.UserRole)))
+
         return out
 
     def _set_all_columns_checked(self, checked: bool) -> None:
@@ -1462,8 +1463,6 @@ class MainWindow(QMainWindow):
         self._update_columns_status()
 
     def _selected_load_columns(self):
-        """LOAD_COLUMNS value: None when all are ticked (or none are listed),
-        else the list of ticked signal columns."""
         if not hasattr(self, "_columns_list") or self._columns_list.count() == 0:
             return None
         unchecked = self._current_unchecked_columns()
@@ -1508,12 +1507,12 @@ class MainWindow(QMainWindow):
             )
             self._columns_section.set_title("Columns")
             return
+
         checked = n - len(self._current_unchecked_columns())
 
         if checked == n:
             self._cols_status.setText(f"All {n} signal columns loaded.")
             self._columns_section.set_title("Columns \u2014 all")
-
         else:
             self._cols_status.setText(f"{checked} of {n} signal columns loaded.")
             self._columns_section.set_title(f"Columns \u2014 {checked}/{n}")
@@ -1524,6 +1523,7 @@ class MainWindow(QMainWindow):
         edit = QLineEdit(default)
         row.addWidget(edit, stretch=1)
         parent_layout.addLayout(row)
+
         return edit
 
     def _make_int_row(self, parent_layout, label, default, min_val, max_val):
@@ -1534,6 +1534,7 @@ class MainWindow(QMainWindow):
         spin.setValue(default)
         row.addWidget(spin, stretch=1)
         parent_layout.addLayout(row)
+
         return spin
 
     def _sync_method_widgets(self, method: str) -> None:
@@ -1551,6 +1552,7 @@ class MainWindow(QMainWindow):
         self._correction_column_combo.clear()
         columns = _correction_columns(machine)
         self._correction_column_combo.addItems(columns)
+
         if current in columns:
             self._correction_column_combo.setCurrentText(current)
 
@@ -1578,12 +1580,15 @@ class MainWindow(QMainWindow):
             layers = store.layers
         except Exception:
             self._set_layers_unavailable()
+
             return
 
         lo, hi = min(layers), max(layers)
         self._available_layers = (lo, hi)
+
         for spin in (self._layer_from_spin, self._layer_to_spin):
             spin.setRange(lo, hi)
+
         self._layer_from_spin.setValue(lo)
         self._layer_to_spin.setValue(hi)
         self._layer_avail_label.setText(
@@ -1666,7 +1671,6 @@ class MainWindow(QMainWindow):
                 else "No Parts CSV or BuildStarted DHXML set \u2014 nothing "
                 "to assign from"
             )
-
         finally:
             self._in_refresh_options = False
 
@@ -1685,7 +1689,6 @@ class MainWindow(QMainWindow):
 
         if not source:
             problems.append("Source directory is not set.")
-
         elif not Path(source).is_dir():
             problems.append(f"Source directory does not exist: {source}")
 
@@ -1694,7 +1697,6 @@ class MainWindow(QMainWindow):
         try:
             if float(lt) <= 0:
                 problems.append("Layer thickness must be greater than 0.")
-
         except ValueError:
             problems.append(f"Layer thickness is not a number: {lt or '(empty)'}")
 

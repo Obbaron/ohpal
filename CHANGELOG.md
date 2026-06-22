@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-22
+
+A part-assignment method driven by the machine's own part bounding boxes, two
+new ways to scope what gets loaded and analyzed (a part filter and a column
+picker), and looser path requirements so builds without an STL or parts CSV
+can still be loaded. The Load button and input validation were reworked so
+nothing is silently gated, and the window now restores its layout on launch. Under
+the hood, STL slicing and direct part assignment were reworked to cut peak
+memory sharply and run faster.
+
+### Added
+
+- **DHXML part assignment.** A new `dhxml` assignment method reads the per-part
+  3D bounding boxes from the Renishaw *BuildStarted* `.dhxml` file the 500S
+  writes alongside the data, and assigns each point to the box that contains
+  it. Selectable from the *Method* dropdown, with a *BuildStarted DHXML* path
+  on the Config tab (auto-discovered from the source/project folder). Parts
+  that share a name are made unique with a `name#n` suffix, and points falling
+  outside every box are labelled `noise` so the direct/DBSCAN methods can still
+  catch them. Aimed at tightly-packed builds where nearest-part assignment
+  bleeds across part boundaries.
+- **Part filter.** A collapsible *Part filter* on the Config tab lists the
+  build's parts (from the parts CSV, or the DHXML for the dhxml method) with
+  tick boxes; unticking a part drops its rows. Applied *after* assignment,
+  so excluding a part can't pull its rows onto a neighbor, and `noise`
+  rows are always kept. Remembered per build in `.ampm-ui.json`.
+- **Window state.** Window size, position, maximized/fullscreen state, and the
+  config/log splitter position are saved on close and restored on next launch.
+
+### Changed
+
+- **Columns picker.** The *Columns* field is now a collapsible checklist
+  populated from the dataset schema (probed when the source is set) instead of
+  a comma-separated text box. Untick signals to skip loading them; `Demand X`/
+  `Demand Y`, `Start time`, and `layer`/`Z` remain always-loaded. Still
+  remembered per build.
+- **STL and parts CSV are now optional.** Config generation and loading no
+  longer require an STL or a QuantAM parts CSV. A build with neither — e.g. one
+  using the dhxml method with masking off — now loads, with those paths left
+  empty and the layer thickness entered in the GUI rather than read from the
+  CSV. An *ambiguous* parts-CSV match still errors; only "none found" became
+  non-fatal.
+- **Load button and validation.** *Load Data* is no longer disabled based on
+  inputs (reversing the 1.0.0 behavior). It stays available, runs validation
+  when pressed, and reports any problems in the log — including a missing or
+  failed config. Options that can't be completed are greyed out with a tooltip
+  naming the file to add: masking needs an STL, `direct`/`dbscan` need a parts
+  CSV, `dhxml` needs a BuildStarted DHXML, and *Assign parts* is disabled when
+  no assignment file is present.
+- **Constant-memory direct assignment.** `assign_nearest_part` (the direct
+  method) now finds each point's nearest part with a `scipy.spatial.cKDTree`
+  (`query(..., distance_upper_bound=...)`) instead of materializing a
+  `(chunk x n_parts)` distance matrix. Peak memory drops from multiple GB to
+  roughly constant — the per-build profile line fell from ~1.8 GB to a few
+  hundred MB — and it runs faster, while preserving the per-part count and
+  distance statistics and the noise / max-distance behavior. Points are
+  queried in 2M-row blocks (a tunable memory/speed constant that doesn't
+  affect results); `workers=1` keeps profiling deterministic.
+- **Vectorized STL slicing.** The in-house `stl_stream.py` slicer is now the
+  preferred slicing path (fastest), with its shapely geometry constructions
+  vectorized.
+- **Linear-time ring stitching.** The slice-contour stitcher replaced its
+  per-segment Python tuple-to-dict with a packed-`int64` key (`(a << 32) | b`)
+  plus `np.unique(..., return_inverse=True)` — the same trick the clustering
+  code already used — turning the hot loop into a pure-NumPy operation and
+  cutting a ~3.7 GB allocation spike by roughly an order of magnitude. A stable
+  sort reproduces the old dict's per-group segment ordering, so the greedy walk
+  picks exactly the same rings as before (equivalent output).
+- **Cheaper cross-section union.** Building the per-layer mask polygon no longer
+  calls `shapely.union_all` on every slice. Distinct part cross-sections are
+  disjoint islands, yet `union_all` runs a full planar overlay regardless
+  (~841 ms on a 2000-part slice just to confirm no overlaps). The mask now does
+  an `STRtree` self-query for touching/overlapping parts and, in the common
+  disjoint case, returns a plain `MultiPolygon` — geometrically identical and
+  ~20-24x cheaper — falling back to `union_all` only for genuinely touching or
+  overlapping slices.
+
 ## [1.2.0] - 2026-06-18
 
 Build and dependency hardening, plus one user-facing addition: the MeltVIEW
@@ -204,7 +281,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.1...v1.1.2
