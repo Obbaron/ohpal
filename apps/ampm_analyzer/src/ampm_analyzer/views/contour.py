@@ -21,7 +21,7 @@ SETTINGS = {
 
 
 def run(df, config, axes, settings):
-    from ampm.plotting import contour
+    from ohpal.ampm.plotting import contour
 
     show_points = settings.get("SHOW_POINTS", True)
 

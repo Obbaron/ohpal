@@ -36,8 +36,8 @@ SETTINGS = {
 
 
 def run(df, config, axes, settings):
-    from ampm.clustering import k_distance_curve
-    from ampm.plotting import scatter2d
+    from ohpal.ampm.clustering import k_distance_curve
+    from ohpal.ampm.plotting import scatter2d
 
     eps_xy = settings.get("EPS_XY", 0.3)
     eps_z = settings.get("EPS_Z", 0.06)

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ampm-analyzer"
+version = "1.3.0"
+description = "AMPM plotting application within the OHPAL ecosystem"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Oliver H. Page", email = "oliverhpage@gmail.com"},
+]
+license = {text = "All rights reserved"}
+dependencies = [
+    "ohpal-ampm",
+    "PyQt6>=6.5,<7",
+]
+
+[dependency-groups]
+dev = ["pyinstaller>=6.21,<7"]
+
+[project.gui-scripts]
+ampm-analyzer = "ampm_analyzer.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ampm_analyzer = ["assets/*"]
+
+[tool.uv.sources]
+ohpal-ampm = { workspace = true }

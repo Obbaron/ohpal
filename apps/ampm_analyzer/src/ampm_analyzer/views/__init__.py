@@ -1,5 +1,5 @@
 """
-ampm.views
+ampm_analyzer.views
 
 Each .py file in this package that defines NAME, AXES, SETTINGS, and run()
 is automatically discovered and made available to the app.
@@ -97,10 +97,11 @@ def _discover_builtin(views: dict[str, object], emit: Callable[[str], None]) -> 
 
     for stem in stems:
         try:
-            module = importlib.import_module(f"ampm.views.{stem}")
+            module = importlib.import_module(f"{__package__}.{stem}")
         except Exception as e:
             emit(f"[views] failed to import built-in '{stem}': {e}")
             continue
+
         if _is_valid_view(module):
             views[getattr(module, "NAME")] = module
 

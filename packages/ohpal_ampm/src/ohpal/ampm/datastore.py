@@ -38,7 +38,7 @@ EXPECTED_COLUMNS: list[str] = [
 ]
 
 
-_CSV_SCHEMA: dict[str, type[pl.DataType]] = {
+_CSV_SCHEMA_2: dict[str, type[pl.DataType]] = {
     "Start time": pl.Int32,
     "Duration": pl.Int16,
     "Demand X": pl.Float32,
@@ -162,7 +162,7 @@ class DataStore:
             has_header=True,
             truncate_ragged_lines=True,
             glob=False,  # path may contain '[3]' etc. that look like glob patterns
-            schema_overrides=_CSV_SCHEMA,
+            schema_overrides=_CSV_SCHEMA_2,
         )
 
         drop_cols = [c for c in df.columns if c.strip() == ""]

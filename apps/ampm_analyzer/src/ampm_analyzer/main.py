@@ -11,11 +11,12 @@ import json
 import re
 import sys
 import traceback
+from importlib.resources import files
 from pathlib import Path
 from typing import cast
 
 from PyQt6.QtCore import QByteArray, QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtGui import QDoubleValidator, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -40,8 +41,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-sys.path.insert(0, str(Path(__file__).parent))
 
 UI_STATE_VERSION = 2
 UI_STATE_FILENAME = ".ampm-ui.json"
@@ -75,12 +74,16 @@ _OVERLAY_KEYS = (
     "CORRECTION_COLUMN",
 )
 
-# Always loaded by the pipeline regardless of selection (the worker prepends
-# Demand X/Y + Start time, and DataStore.query always re-adds layer + Z), so
-# these are excluded from the user-selectable signal-column list.
 ALWAYS_LOADED_COLUMNS = ("Demand X", "Demand Y", "Start time", "layer", "Z")
 
 _PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNORECASE)
+
+
+def _app_icon() -> QIcon:
+    data = files("ampm_analyzer").joinpath("assets", "ampm.ico").read_bytes()
+    pixmap = QPixmap()
+    pixmap.loadFromData(data)  # bytes, not a path
+    return QIcon(pixmap)
 
 
 def _first_packet_file(src: str) -> Path | None:
@@ -110,11 +113,9 @@ def _read_header_columns(path: Path) -> list[str]:
 
 
 class NoScrollComboBox(QComboBox):
-    """A combo box that ignores wheel events."""
-
-    def wheelEvent(self, e):  # noqa: N802 (Qt naming)
-        if e is not None:
-            e.ignore()
+    def wheelEvent(self, event):  # noqa: N802 (Qt naming)
+        if event is not None:
+            event.ignore()
 
 
 def build_widget(spec: dict) -> QWidget:
@@ -152,20 +153,16 @@ def build_widget(spec: dict) -> QWidget:
             widget = QLineEdit()
             default = spec.get("default")
             widget.setText("none" if default is None else str(default))
-
             if spec.get("tooltip"):
                 widget.setToolTip(spec["tooltip"])
-
             return widget
 
         case "int_or_auto":
             widget = QLineEdit()
             default = spec.get("default")
             widget.setText("auto" if default is None else str(default))
-
             if spec.get("tooltip"):
                 widget.setToolTip(spec["tooltip"])
-
             return widget
 
         case _:
@@ -255,7 +252,6 @@ def _ui_state_path(project_root) -> Path:
 
 def load_ui_state(project_root) -> dict:
     """Load the sidecar UI state. Returns {} on any problem (tolerant)."""
-
     path = _ui_state_path(project_root)
     if not path.is_file():
         return {}
@@ -263,7 +259,6 @@ def load_ui_state(project_root) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-
     except (OSError, ValueError):
         return {}
 
@@ -348,14 +343,14 @@ class LoadWorker(QThread):
         super().__init__()
         self.config = config
         self._phase = None
-        self._load_band = (2, 55)  # (start%, end%) of the cache-build sub-phase
+        self._load_band = (2, 55)  # (start%, end%) of the cache-build phase
 
-    def _print(self, msg):
+    def _print(self, msg):  # TODO: replace with __repl__
         self.log.emit(msg)
         if self._phase == "load":
-            m = self._CACHE_LINE.search(msg)
-            if m:
-                done, total = int(m.group(1)), int(m.group(2))
+            msg = self._CACHE_LINE.search(msg)
+            if msg:
+                done, total = int(msg.group(1)), int(msg.group(2))
                 if total > 0:
                     lo, hi = self._load_band
                     pct = lo + (hi - lo) * done / total
@@ -379,13 +374,12 @@ class LoadWorker(QThread):
     def _load_mask_assign(self):
         import polars as pl
 
-        from ampm import DataStore
-        from ampm.cluster_cache import cluster_or_load
-        from ampm.clustering import cluster_dbscan_chunked
-        from ampm.mask_cache import mask_or_load
-        from ampm.masking import apply_mask_keep, build_mask, stl_hash
-        from ampm.memprof import phase
-        from ampm.parts import (
+        from ohpal.ampm import DataStore
+        from ohpal.ampm.cluster_cache import cluster_or_load
+        from ohpal.ampm.clustering import cluster_dbscan_chunked
+        from ohpal.ampm.mask_cache import mask_or_load
+        from ohpal.ampm.masking import apply_mask_keep, build_mask, stl_hash
+        from ohpal.ampm.parts import (
             BuildStartedDHXML,
             QuantAMParts,
             apply_part_id_map,
@@ -448,13 +442,13 @@ class LoadWorker(QThread):
             if Y_RANGE is not None:
                 bounds.append(f"Y\u2208[{Y_RANGE[0]}, {Y_RANGE[1]}]")
             print("Spatial filter active: " + ", ".join(bounds) + ".")
-        with phase("load: store.query"):
-            df = store.query(
-                layers=layers_arg,
-                columns=columns_arg,
-                x_range=X_RANGE,
-                y_range=Y_RANGE,
-            )
+
+        df = store.query(
+            layers=layers_arg,
+            columns=columns_arg,
+            x_range=X_RANGE,
+            y_range=Y_RANGE,
+        )
 
         if LAYER_RANGE is None:
             queried_layers = list(store.layers)
@@ -499,17 +493,18 @@ class LoadWorker(QThread):
                 return apply_mask_keep(d, mask)
 
             print("Applying mask...")
-            with phase("mask: mask_or_load total"):
-                df = mask_or_load(
-                    df,
-                    cache_path=MASK_KEEP_CACHE,
-                    keep_fn=keep_wrapper,
-                    params=mask_params,
-                    strict=False,
-                )
+            df = mask_or_load(
+                df,
+                cache_path=MASK_KEEP_CACHE,
+                keep_fn=keep_wrapper,
+                params=mask_params,
+                strict=False,
+            )
+
             print(f"After mask: {df.height:,} rows.")
             if mask_band is not None:
                 self._emit_progress(mask_band[1], "Masked")
+
         else:
             print("Skipping mask.")
 
@@ -529,25 +524,23 @@ class LoadWorker(QThread):
                 build_file = BuildStartedDHXML.from_path(DHXML)
                 parts_table = build_file.parts_table()
                 print(f"Loaded {parts_table.height} parts from BuildStarted DHXML.\n")
-                with phase("assign: assign_bounding_box_part"):
-                    df = assign_bounding_box_part(
-                        df,
-                        parts_table,
-                        noise_label="noise",
-                    )
+                df = assign_bounding_box_part(
+                    df,
+                    parts_table,
+                    noise_label="noise",
+                )
             elif METHOD == "direct":
                 if quantam is None:
                     raise ValueError("Method 'direct' requires a Parts CSV.")
                 parts_table = quantam.parent_parts()
                 print(f"Loaded {parts_table.height} parts.\n")
                 print("Assigning parts (direct)...")
-                with phase("assign: assign_nearest_part"):
-                    df = assign_nearest_part(
-                        df,
-                        parts_table,
-                        max_distance_mm=MAX_DISTANCE_MM,
-                        noise_label="noise",
-                    )
+                df = assign_nearest_part(
+                    df,
+                    parts_table,
+                    max_distance_mm=MAX_DISTANCE_MM,
+                    noise_label="noise",
+                )
             else:
                 if quantam is None:
                     raise ValueError("Method 'dbscan' requires a Parts CSV.")
@@ -600,51 +593,51 @@ class LoadWorker(QThread):
                 try:
                     parts_with_speed = quantam.volume_parameters_with_speed()
                 except Exception as e:
-                    print(f"Skipping power/speed attachment: {e}")
                     parts_with_speed = None
-                if parts_with_speed is not None:
-                    with phase("assign: attach power/speed (lookup)"):
-                        _ids = parts_with_speed["Part ID"].to_list()
-                        _power = dict(
-                            zip(_ids, parts_with_speed["Hatches Power"].to_list())
-                        )
-                        _speed = dict(
-                            zip(_ids, parts_with_speed["Hatch Speed"].to_list())
-                        )
-                        _pid_dtype = df["part_id"].dtype
-                        if (
-                            isinstance(_pid_dtype, pl.Enum)
-                            and df["part_id"].null_count() == 0
-                        ):
-                            import numpy as np
+                    print(f"Skipping power/speed attachment: {e}")
 
-                            _cats = _pid_dtype.categories.to_list()
-                            _phys = df["part_id"].to_physical().to_numpy()
-                            _pw = np.array(
-                                [_power.get(c, np.nan) for c in _cats],
-                                dtype=np.float32,
+                if parts_with_speed is not None:
+                    _ids = parts_with_speed["Part ID"].to_list()
+                    _power = dict(
+                        zip(_ids, parts_with_speed["Hatches Power"].to_list())
+                    )
+                    _speed = dict(zip(_ids, parts_with_speed["Hatch Speed"].to_list()))
+                    _pid_dtype = df["part_id"].dtype
+
+                    if (
+                        isinstance(_pid_dtype, pl.Enum)
+                        and df["part_id"].null_count() == 0
+                    ):
+                        import numpy as np
+
+                        _cats = _pid_dtype.categories.to_list()
+                        _phys = df["part_id"].to_physical().to_numpy()
+                        _pw = np.array(
+                            [_power.get(c, np.nan) for c in _cats],
+                            dtype=np.float32,
+                        )
+                        _sp = np.array(
+                            [_speed.get(c, np.nan) for c in _cats],
+                            dtype=np.float32,
+                        )
+                        df = df.with_columns(
+                            pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
+                            pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
+                        )
+
+                    else:  # String part_id (e.g. DBSCAN path)
+                        df = df.with_columns(
+                            pl.col("part_id")
+                            .replace_strict(
+                                _power, default=None, return_dtype=pl.Float64
                             )
-                            _sp = np.array(
-                                [_speed.get(c, np.nan) for c in _cats],
-                                dtype=np.float32,
+                            .alias("Hatches Power"),
+                            pl.col("part_id")
+                            .replace_strict(
+                                _speed, default=None, return_dtype=pl.Float64
                             )
-                            df = df.with_columns(
-                                pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
-                                pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
-                            )
-                        else:  # String part_id (e.g. DBSCAN path)
-                            df = df.with_columns(
-                                pl.col("part_id")
-                                .replace_strict(
-                                    _power, default=None, return_dtype=pl.Float64
-                                )
-                                .alias("Hatches Power"),
-                                pl.col("part_id")
-                                .replace_strict(
-                                    _speed, default=None, return_dtype=pl.Float64
-                                )
-                                .alias("Hatch Speed"),
-                            )
+                            .alias("Hatch Speed"),
+                        )
             else:
                 print("No Parts CSV provided; skipping power/speed attachment.")
 
@@ -653,18 +646,18 @@ class LoadWorker(QThread):
                 before = df.height
                 df = df.filter(~pl.col("part_id").cast(pl.String).is_in(exclude))
                 dropped = before - df.height
-                print(
-                    f"Part filter: excluded {len(exclude)} part(s); "
-                    f"{dropped:,} row(s) dropped, {df.height:,} remain."
-                )
+
+                print(f"Part filter:" f"{dropped:,} / {df.height:,}")
+
                 if df.is_empty():
                     print(
-                        "Warning: the part filter removed every row. Check "
+                        "WARNING: the part filter removed every row. Check "
                         "which parts are ticked in the Part filter section."
                     )
 
             if assign_band is not None:
                 self._emit_progress(assign_band[1], "Assigned")
+
         else:
             print("Skipping part assignment.")
 
@@ -680,7 +673,7 @@ class LoadWorker(QThread):
                     f"skipping correction."
                 )
             else:
-                from ampm.correction import MeltPoolCorrection
+                from ohpal.ampm.correction import MeltPoolCorrection
 
                 print(
                     f"Applying correction: {CORRECTION_MACHINE} / "
@@ -737,15 +730,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AMPM Analyzer")
         self.setMinimumSize(1000, 700)
-
-        from PyQt6.QtGui import QIcon
-
-        base = (
-            Path(sys._MEIPASS)  # type: ignore[attr-defined]
-            if getattr(sys, "frozen", False)
-            else Path(__file__).parent
-        )
-        self.setWindowIcon(QIcon(str(base / "assets" / "ampm.ico")))
+        self.setWindowIcon(_app_icon())
 
         self._load_worker = None
         self._plot_worker = None
@@ -1184,6 +1169,8 @@ class MainWindow(QMainWindow):
 
         self._restore_window_state()
 
+    _LABEL_WIDTH = 100
+
     def _restore_window_state(self) -> None:
         """Restore window size/position, maximized/fullscreen, and the splitter
         divider from the previous session (QSettings). No-op on first launch."""
@@ -1215,8 +1202,6 @@ class MainWindow(QMainWindow):
 
         if a0 is not None:
             a0.accept()
-
-    _LABEL_WIDTH = 100
 
     def _make_path_row(self, parent_layout, label, is_dir=False, file_filter=""):
         row = QHBoxLayout()
@@ -1264,7 +1249,7 @@ class MainWindow(QMainWindow):
                 if not Path(path).is_file():
                     return [], "BuildStarted DHXML not found."
 
-                from ampm.parts import BuildStartedDHXML
+                from ohpal.ampm.parts import BuildStartedDHXML
 
                 pt = BuildStartedDHXML.from_path(path).parts_table()
             else:
@@ -1273,7 +1258,7 @@ class MainWindow(QMainWindow):
                     return [], "Select a Parts CSV above to list parts."
                 if not Path(path).is_file():
                     return [], "Parts CSV not found."
-                from ampm.parts import QuantAMParts
+                from ohpal.ampm.parts import QuantAMParts
 
                 pt = QuantAMParts.from_path(path).parent_parts()
         except Exception as e:  # noqa: BLE001 - surface any parse failure in the UI
@@ -1382,7 +1367,7 @@ class MainWindow(QMainWindow):
         falls back to reading the first packet file's header directly.
         """
         try:
-            from ampm import DataStore
+            from ohpal.ampm import DataStore
 
             return list(DataStore(src).columns), None
         except Exception:
@@ -1574,7 +1559,7 @@ class MainWindow(QMainWindow):
             self._set_layers_unavailable()
             return
         try:
-            from ampm import DataStore
+            from ohpal.ampm import DataStore
 
             store = DataStore(src)  # layer_thickness irrelevant for layer discovery
             layers = store.layers
@@ -1817,7 +1802,7 @@ class MainWindow(QMainWindow):
         self._log.append(f"Selected: {path}")
 
         try:
-            from ampm.config import create_or_load_config
+            from ohpal.ampm.config import create_or_load_config
 
             config = create_or_load_config(path)
         except Exception as e:
@@ -2305,7 +2290,7 @@ class MainWindow(QMainWindow):
 
         self._log.append(f"Computing {col_name}...")
         try:
-            from ampm.stats import CovMode, compute_cov
+            from ohpal.ampm.stats import CovMode, compute_cov
 
             cov = compute_cov(
                 self._df,
@@ -2461,7 +2446,7 @@ class MainWindow(QMainWindow):
         """Lazily discover views and populate the combo box."""
         if self._views_loaded:
             return
-        from ampm.views import ensure_user_views_dir
+        from .views import ensure_user_views_dir
 
         ensure_user_views_dir()
         self._refresh_views(None)
@@ -2483,7 +2468,7 @@ class MainWindow(QMainWindow):
     def _refresh_views(self, project_root=None):
         """(Re)discover views, including any external/per-build folders, and
         repopulate the combo while preserving the current selection."""
-        from ampm.views import discover
+        from .views import discover
 
         current = self._view_combo.currentText()
         self._views = discover(project_root=project_root, log=self._on_log)

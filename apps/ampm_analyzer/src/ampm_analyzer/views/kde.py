@@ -22,7 +22,7 @@ SETTINGS = {
 
 
 def run(df, config, axes, settings):
-    from ampm.plotting import kde
+    from ohpal.ampm.plotting import kde
 
     column = axes["column"]
     group_by = axes["group_by"]

@@ -143,7 +143,7 @@ def create_or_load_config(
     parts_csv: str | Path | None = None,
 ) -> dict:
     """
-    Load config.toml from the project root, creating it first if absent.
+    Load config.toml from the project root creating it first if absent.
 
     Parameters
     ----------

@@ -32,7 +32,7 @@ SETTINGS = {
 def run(df, config, axes, settings):
     import polars as pl
 
-    from ampm.plotting import scatter2d
+    from ohpal.ampm.plotting import scatter2d
 
     x = axes.get("x")
     y = axes.get("y")

@@ -36,7 +36,7 @@ def run(df, config, axes, settings):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    from ampm.stats import compute_cov
+    from ohpal.ampm.stats import compute_cov
 
     signal_1 = axes["signal_1"]
     signal_2 = axes["signal_2"]

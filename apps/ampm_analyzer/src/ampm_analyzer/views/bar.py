@@ -33,7 +33,7 @@ SETTINGS = {
 
 
 def run(df, config, axes, settings):
-    from ampm.plotting import bar
+    from ohpal.ampm.plotting import bar
 
     sort_by = settings.get("SORT_BY", "y")
     if sort_by == "none":

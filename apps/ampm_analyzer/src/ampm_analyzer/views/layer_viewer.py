@@ -23,7 +23,7 @@ SETTINGS = {
 
 
 def run(df, config, axes, settings):
-    from ampm.plotting import scatter2d_layered
+    from ohpal.ampm.plotting import scatter2d_layered
 
     points_per_layer = settings.get("POINTS_PER_LAYER", 5_000)
 

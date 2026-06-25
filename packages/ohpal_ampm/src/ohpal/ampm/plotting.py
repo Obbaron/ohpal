@@ -13,8 +13,6 @@ Plotly's Scatter3d uses Three.js, not WebGL. Practical guidance:
   - ~200k pts:   noticeable lag when rotating
   - ~500k pts:   browser may freeze
 Stay <= 100k unless you really need more.
-
-scatter2d uses Scattergl (WebGL), which handles ~1M points without trouble.
 """
 
 from __future__ import annotations
