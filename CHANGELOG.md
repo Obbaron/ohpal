@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A structural release with no change to how the application behaves. AMPM Analyzer was
+extracted from a single-package project into the **OHPAL** (OHP Analytics Library)
+workspace: the analysis pipeline is now a standalone library (`ohpal.ampm`) that the GUI
+*depends on* rather than *contains*, packaging moved to a uv workspace with a src-layout
+namespace, the import system was cleaned up (no more `sys.path`), and the build, asset
+loading, and developer tooling were reworked to match. The QtWebEngine dependency was
+dropped.
+
+### Added
+
+- **OHPAL monorepo (uv workspace).** AMPM Analyzer is now one member of the OHPAL
+  workspace, alongside the pipeline and shared libraries under `apps/`, `packages/`, and
+  `plugins/`. A single `uv.lock` covers the whole workspace, members install editable, and
+  they resolve each other locally via `[tool.uv.sources]`. First-time setup is a single
+  `uv sync --all-packages`.
+- **`ohpal-ampm` as a standalone pipeline library.** The end-to-end pipeline — load, mask,
+  part assignment, clustering, correction, and statistics — is split into its own
+  distribution, importable as `ohpal.ampm`, with no dependency on PyQt or any GUI. It can
+  now be driven headless from scripts, notebooks, and CI; the GUI is just one consumer.
+- **Task runner over uv.** A `justfile` (and an updated `makefile`) expose `setup`,
+  `verify`, `run`, `test`, `build`, `rebuild`, and `clean`, each wrapping the corresponding
+  uv command. `verify` smoke-tests the interpreter version, the cross-package imports, and
+  that the `ohpal` namespace hasn't been collapsed by a stray `__init__.py`.
+- **Pinned interpreter.** A `.python-version` pins the workspace to Python 3.11, keeping
+  every environment on the `cp311` wheel ABI the offline build targets.
+- **READMEs** for the workspace root, the application, and the pipeline package.
+
+### Changed
+
+- **src-layout namespace packaging.** `ohpal` is now a PEP 420 native namespace package;
+  each distribution ships its own subtree under `src/ohpal/` with no `__init__.py` at the
+  namespace level, so libraries can share the `ohpal.*` namespace. The application moved to
+  `src/ampm_analyzer/`.
+- **Import system.** All `sys.path` manipulation was removed. Modules resolve through the
+  installed packages instead. Pipeline imports moved from `ampm.*` to `ohpal.ampm.*`, and
+  the app's view imports were corrected to package-relative form.
+- **Unified entry point.** Launch funnels through a single `main()` shared by
+  `python -m ampm_analyzer`, the `ampm-analyzer` script, and a thin top-level `run.py` used
+  as the PyInstaller entry point. `run.py` lives outside the package so the package's
+  relative imports resolve when frozen.
+- **Bundled-asset loading.** The window icon now loads via `importlib.resources` from
+  package data, resolving identically in an editable install, a wheel, and the frozen
+  executable, replacing the previous `__file__` / `sys._MEIPASS` path logic.
+- **View discovery.** Built-in views are imported relative to their package
+  (`{__package__}.<name>`) rather than via a hardcoded module path so discovery survives
+  both the package rename and the frozen build.
+- **PyInstaller spec.** The entry script is `run.py`; built-in views and the
+  lazily-imported pipeline are gathered with `collect_submodules`; assets are bundled at
+  their package-relative location to match the `importlib.resources` lookup; and the dead
+  bytecode-cipher lines were dropped.
+- **Developer tooling moved to dependency groups.** `pytest` and `pyinstaller` moved from
+  `[project.optional-dependencies]` to PEP 735 `[dependency-groups]`, keeping them out of
+  the app's published metadata while `uv sync --all-packages` still installs them for
+  development and builds.
+
+### Removed
+
+- **QtWebEngine.** The `PyQt6.QtWebEngineWidgets` / `QtWebEngineCore` / `QtWebChannel`
+  stack is no longer used; dropping bundled Chromium runtime to shrink the binary.
+
 ## [1.3.0] - 2026-06-22
 
 A part-assignment method driven by the machine's own part bounding boxes, two
