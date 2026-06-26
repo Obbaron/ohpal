@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -76,7 +77,36 @@ _OVERLAY_KEYS = (
 
 ALWAYS_LOADED_COLUMNS = ("Demand X", "Demand Y", "Start time", "layer", "Z")
 
-_PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNORECASE)
+# Packet (.txt) files share this fixed header schema, in this order. It serves
+# as a zero-I/O fast path for the column list: when a project's saved setup was
+# written by the current app version (UI_STATE_VERSION) we trust this list
+# directly; otherwise we read the header of a real packet file to be safe.
+# Keep in sync with the packet header, and bump UI_STATE_VERSION if it changes.
+ALL_COLUMNS = (
+    "Start time",
+    "Duration",
+    "Demand X",
+    "Demand Y",
+    "Demand focus",
+    "Demand laser power (mean)",
+    "MeltVIEW plasma (mean)",
+    "MeltVIEW melt pool (mean)",
+    "LaserVIEW (mean)",
+    "Laser back reflection (mean)",
+    "Laser output power (mean)",
+    "Demand laser power (median)",
+    "MeltVIEW plasma (median)",
+    "MeltVIEW melt pool (median)",
+    "LaserVIEW (median)",
+    "Laser back reflection (median)",
+    "Laser output power (median)",
+)
+
+# Captures (layer, laser). The capture groups don't affect existing boolean
+# `.match(...)` uses; _discover_layers reads the layer number from group(1).
+_PACKET_RE = re.compile(
+    r"^Packet data for layer (\d+), laser (\d+)\.txt$", re.IGNORECASE
+)
 
 
 def _app_icon() -> QIcon:
@@ -112,10 +142,110 @@ def _read_header_columns(path: Path) -> list[str]:
     ]
 
 
+def _discover_layers(src: str) -> tuple[int, int, int] | None:
+    """``(lo, hi, count)`` of the distinct layers present, read straight from
+    the packet filenames (``Packet data for layer N, laser M.txt``).
+
+    No DataStore / parquet — just a directory listing — so it is cheap and safe
+    to call from a worker thread. ``count`` is distinct layers, not file count
+    (each layer typically has several laser files). Returns ``None`` when the
+    directory has no recognisable packet files.
+    """
+    base = Path(src)
+    if not src or not base.is_dir():
+        return None
+
+    def layers_in(paths) -> set[int]:
+        found: set[int] = set()
+        for p in paths:
+            m = _PACKET_RE.match(p.name)
+            if m:
+                found.add(int(m.group(1)))
+        return found
+
+    # Fast path: packets directly in the source dir. Fall back to a recursive
+    # walk only if none are found there (mirrors _first_packet_file).
+    layers = layers_in(base.iterdir())
+    if not layers:
+        layers = layers_in(base.rglob("*.txt"))
+    if not layers:
+        return None
+
+    return min(layers), max(layers), len(layers)
+
+
+def _first_dhxml(source_dir: str, project_root: str | None) -> str:
+    """Most-recently-modified ``*.dhxml`` in the source dir or project root,
+    else ``""``. BuildStarted filenames are date-stamped but not zero-padded
+    (e.g. ``2026.5.3`` vs ``2026.5.22``), so newest-by-mtime is more reliable
+    than sorting by name.
+
+    Pure I/O with no Qt access, so it is safe to call from a worker thread.
+    """
+    candidates: list[Path] = []
+    for d in (source_dir, project_root):
+        if d and Path(d).is_dir():
+            candidates.extend(Path(d).glob("*.dhxml"))
+    if not candidates:
+        return ""
+
+    def sort_key(p: Path):
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            mtime = float("-inf")
+        return (mtime, p.name)  # name breaks ties deterministically
+
+    return str(max(candidates, key=sort_key))
+
+
+def _columns_for_source(src: str, project_root: str | None):
+    """``(columns, error)`` for the packet data at ``src``.
+
+    Zero file I/O when the project's saved setup matches the current app
+    version (the schema is then the one ALL_COLUMNS describes); otherwise reads
+    the header of one real packet file. Never builds a DataStore / parses the
+    derived parquet. Pure I/O with no Qt access, so worker-thread safe.
+    """
+    known = bool(project_root) and (
+        load_ui_state(project_root).get("version") == UI_STATE_VERSION
+    )
+    if known:
+        return list(ALL_COLUMNS), None
+
+    try:
+        path = _first_packet_file(src)
+        if path is None:
+            return [], "No packet data files found in the source directory."
+        return _read_header_columns(path), None
+    except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
+        return [], f"Could not read columns: {e}"
+
+
 class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event):  # noqa: N802 (Qt naming)
         if event is not None:
             event.ignore()
+
+
+def make_form_layout(
+    parent: QWidget | None = None,
+    margins: tuple[int, int, int, int] | None = None,
+) -> QFormLayout:
+    """A QFormLayout configured for aligned label/field columns.
+
+    Labels right-align against a single field column so every input lines up,
+    regardless of label length. Pass ``margins`` to override the style default;
+    use ``(0, 0, 0, 0)`` for forms nested inside another laid-out container.
+    """
+    form = QFormLayout(parent)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    form.setHorizontalSpacing(12)
+    form.setVerticalSpacing(8)
+    if margins is not None:
+        form.setContentsMargins(*margins)
+    return form
 
 
 def build_widget(spec: dict) -> QWidget:
@@ -725,15 +855,82 @@ class PlotWorker(QThread):
             builtins.print = original_print
 
 
+class ConfigScanWorker(QThread):
+    """Discovers a project's config, layers, columns and views off the GUI
+    thread, streaming step-by-step progress so the window stays responsive."""
+
+    log = pyqtSignal(str)
+    progress = pyqtSignal(int, str)
+    finished_ok = pyqtSignal(object)  # payload dict, applied on the main thread
+    finished_err = pyqtSignal(str)
+
+    def __init__(self, project_root: str):
+        super().__init__()
+        self._root = project_root
+
+    def run(self):
+        root = self._root
+        try:
+            self.progress.emit(5, "Loading config")
+            self.log.emit("Loading project config\u2026")
+            from ohpal.ampm.config import create_or_load_config
+
+            config = create_or_load_config(root)
+            src = config.get("SOURCE", "")
+
+            self.progress.emit(35, "Scanning layers")
+            self.log.emit("Scanning layers\u2026")
+            layers = _discover_layers(src)
+            if layers is not None:
+                self.log.emit(
+                    f"  Layers {layers[0]}\u2013{layers[1]} ({layers[2]} found)."
+                )
+
+            self.progress.emit(60, "Reading columns")
+            self.log.emit("Reading columns\u2026")
+            columns, columns_error = _columns_for_source(src, root)
+            if columns:
+                self.log.emit(f"  {len(columns)} columns found.")
+
+            self.progress.emit(75, "Locating parts file")
+            # Prefer a configured DHXML only if it still exists; otherwise
+            # re-discover. BuildStarted files are date-stamped, so a path saved
+            # in the config can point at a file that has since been renamed.
+            dhxml = config.get("DHXML") or ""
+            if not (dhxml and Path(dhxml).is_file()):
+                dhxml = _first_dhxml(src, root) or dhxml
+
+            self.progress.emit(85, "Discovering views")
+            self.log.emit("Discovering views\u2026")
+            from .views import discover
+
+            views = discover(project_root=root, log=self.log.emit)
+
+            self.progress.emit(100, "Ready")
+            self.finished_ok.emit(
+                {
+                    "config": config,
+                    "layers": layers,
+                    "columns": columns,
+                    "columns_error": columns_error,
+                    "dhxml": dhxml or "",
+                    "views": views,
+                }
+            )
+        except Exception as e:  # noqa: BLE001 - reported to the log
+            self.finished_err.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AMPM Analyzer")
+        self.setWindowTitle("OHPAL AMPM Analyzer")
         self.setMinimumSize(1000, 700)
         self.setWindowIcon(_app_icon())
 
         self._load_worker = None
         self._plot_worker = None
+        self._scan_worker = None
         self._config = None
         self._df = None
         self._derived = {}
@@ -768,34 +965,35 @@ class MainWindow(QMainWindow):
 
         # Data Sources
         sources_group = QGroupBox("Data Sources")
-        sources_layout = QVBoxLayout(sources_group)
+        sources_layout = make_form_layout(sources_group)
 
-        dir_row = QHBoxLayout()
-        dir_lbl = QLabel("Project root:")
-        dir_lbl.setFixedWidth(self._LABEL_WIDTH)
-        dir_row.addWidget(dir_lbl)
         self._dir_edit = QLineEdit()
         self._dir_edit.setPlaceholderText("Select project root directory...")
         self._dir_edit.setReadOnly(True)
         dir_browse = QPushButton("Browse...")
         dir_browse.clicked.connect(self._browse_build_dir)
-        dir_row.addWidget(self._dir_edit, stretch=1)
-        dir_row.addWidget(dir_browse)
-        sources_layout.addLayout(dir_row)
+        self._dir_browse = dir_browse
+        dir_field = QWidget()
+        dir_field_row = QHBoxLayout(dir_field)
+        dir_field_row.setContentsMargins(0, 0, 0, 0)
+        dir_field_row.addWidget(self._dir_edit, stretch=1)
+        dir_field_row.addWidget(dir_browse)
+        sources_layout.addRow("Project root:", dir_field)
 
         self._paths_section = CollapsibleSection("Data source paths", expanded=False)
-        sources_layout.addWidget(self._paths_section)
-        paths_layout = self._paths_section.content_layout()
+        sources_layout.addRow(self._paths_section)
+        paths_form = make_form_layout(margins=(0, 0, 0, 0))
+        self._paths_section.content_layout().addLayout(paths_form)
 
-        self._source_edit = self._make_path_row(paths_layout, "Source:", is_dir=True)
+        self._source_edit = self._make_path_row(paths_form, "Source:", is_dir=True)
         self._stl_edit = self._make_path_row(
-            paths_layout, "STL:", file_filter="STL files (*.stl)"
+            paths_form, "STL:", file_filter="STL files (*.stl)"
         )
         self._csv_edit = self._make_path_row(
-            paths_layout, "Parts CSV:", file_filter="CSV files (*.csv)"
+            paths_form, "Parts CSV:", file_filter="CSV files (*.csv)"
         )
         self._dhxml_edit = self._make_path_row(
-            paths_layout,
+            paths_form,
             "BuildStarted DHXML:",
             file_filter="BuildStarted DHXML (*.dhxml)",
         )
@@ -805,54 +1003,43 @@ class MainWindow(QMainWindow):
 
         config_layout.addWidget(sources_group)
 
-        # Settings
+        # Part-assignment sub-options (shown when "Assign parts" is on)
         self._assign_group = QWidget()
-        assign_layout = QVBoxLayout(self._assign_group)
-        assign_layout.setContentsMargins(0, 0, 0, 0)
+        assign_layout = make_form_layout(self._assign_group, margins=(0, 0, 0, 0))
 
-        method_row = QHBoxLayout()
-        method_row.addWidget(QLabel("Method:"))
         self._method_combo = NoScrollComboBox()
         self._method_combo.addItems(["direct", "dbscan", "dhxml"])
         self._method_combo.currentTextChanged.connect(self._on_method_changed)
-        method_row.addWidget(self._method_combo, stretch=1)
-        assign_layout.addLayout(method_row)
+        assign_layout.addRow("Method:", self._method_combo)
 
+        # direct: max-distance option
         self._dist_widget = QWidget()
-        dist_row = QHBoxLayout(self._dist_widget)
-        dist_row.setContentsMargins(0, 0, 0, 0)
-        dist_row.addWidget(QLabel("Max distance (mm):"))
+        dist_form = make_form_layout(self._dist_widget, margins=(0, 0, 0, 0))
         self._max_dist_edit = QLineEdit("none")
         self._max_dist_edit.setToolTip(
             "'none' assigns every row regardless of distance"
         )
-        dist_row.addWidget(self._max_dist_edit, stretch=1)
-        assign_layout.addWidget(self._dist_widget)
+        dist_form.addRow("Max distance (mm):", self._max_dist_edit)
+        assign_layout.addRow(self._dist_widget)
 
-        # DBSCAN params
+        # dbscan: clustering params
         self._cluster_widget = QWidget()
-        cluster_layout = QVBoxLayout(self._cluster_widget)
-        cluster_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._eps_xy_edit = self._make_float_row(cluster_layout, "EPS_XY (mm):", "0.3")
-        self._eps_z_edit = self._make_float_row(cluster_layout, "EPS_Z (mm):", "0.06")
+        cluster_form = make_form_layout(self._cluster_widget, margins=(0, 0, 0, 0))
+        self._eps_xy_edit = self._make_float_row(cluster_form, "EPS_XY (mm):", "0.3")
+        self._eps_z_edit = self._make_float_row(cluster_form, "EPS_Z (mm):", "0.06")
         self._min_samples_spin = self._make_int_row(
-            cluster_layout, "Min samples:", 10, 1, 1000
+            cluster_form, "Min samples:", 10, 1, 1000
         )
         self._chunk_spin = self._make_int_row(
-            cluster_layout, "Layers per chunk:", 11, 1, 500
+            cluster_form, "Layers per chunk:", 11, 1, 500
         )
-
-        overlap_row = QHBoxLayout()
-        overlap_row.addWidget(QLabel("Overlap layers:"))
         self._overlap_edit = QLineEdit("auto")
         self._overlap_edit.setToolTip("'auto' or an integer")
-        overlap_row.addWidget(self._overlap_edit, stretch=1)
-        cluster_layout.addLayout(overlap_row)
-
+        cluster_form.addRow("Overlap layers:", self._overlap_edit)
         self._cluster_widget.setVisible(False)
-        assign_layout.addWidget(self._cluster_widget)
+        assign_layout.addRow(self._cluster_widget)
 
+        # dhxml: explanatory hint
         self._dhxml_hint = QLabel(
             "Uses the part bounding boxes in the BuildStarted DHXML "
             "(set 'BuildStarted DHXML' above). Points outside every box are "
@@ -860,7 +1047,7 @@ class MainWindow(QMainWindow):
         )
         self._dhxml_hint.setWordWrap(True)
         self._dhxml_hint.setVisible(False)
-        assign_layout.addWidget(self._dhxml_hint)
+        assign_layout.addRow(self._dhxml_hint)
 
         # Parts filter
         self._part_filter_section = CollapsibleSection("Part filter", expanded=False)
@@ -886,41 +1073,32 @@ class MainWindow(QMainWindow):
         self._pf_status.setStyleSheet("color: gray;")
         pf_layout.addWidget(self._pf_status)
 
-        assign_layout.addWidget(self._part_filter_section)
+        assign_layout.addRow(self._part_filter_section)
 
-        # Correction
+        # Correction sub-options (shown when "Correction" is on)
         self._correction_group = QWidget()
-        correction_layout = QVBoxLayout(self._correction_group)
-        correction_layout.setContentsMargins(0, 0, 0, 0)
+        correction_form = make_form_layout(self._correction_group, margins=(0, 0, 0, 0))
 
-        machine_row = QHBoxLayout()
-        machine_row.addWidget(QLabel("Machine:"))
         self._correction_machine_combo = NoScrollComboBox()
         self._correction_machine_combo.addItems(_correction_machines())
         self._correction_machine_combo.currentTextChanged.connect(
             self._on_correction_machine_changed
         )
-        machine_row.addWidget(self._correction_machine_combo, stretch=1)
-        correction_layout.addLayout(machine_row)
+        correction_form.addRow("Machine:", self._correction_machine_combo)
 
-        column_row = QHBoxLayout()
-        column_row.addWidget(QLabel("Column:"))
         self._correction_column_combo = NoScrollComboBox()
-        column_row.addWidget(self._correction_column_combo, stretch=1)
-        correction_layout.addLayout(column_row)
+        correction_form.addRow("Column:", self._correction_column_combo)
         self._on_correction_machine_changed(
             self._correction_machine_combo.currentText()
         )
 
+        # Settings
         settings_group = QGroupBox("Settings")
-        settings_layout = QVBoxLayout(settings_group)
+        settings_layout = make_form_layout(settings_group)
 
-        lt_row = QHBoxLayout()
-        lt_row.addWidget(QLabel("Layer thickness (mm):"))
         self._lt_edit = QLineEdit()
         self._lt_edit.setPlaceholderText("e.g. 0.03")
-        lt_row.addWidget(self._lt_edit, stretch=1)
-        settings_layout.addLayout(lt_row)
+        settings_layout.addRow("Layer thickness (mm):", self._lt_edit)
 
         # Layer range
         self._all_layers_check = QCheckBox("All layers")
@@ -929,7 +1107,7 @@ class MainWindow(QMainWindow):
             "Load every layer in the source. Uncheck to load a sub-range."
         )
         self._all_layers_check.toggled.connect(self._on_all_layers_toggled)
-        settings_layout.addWidget(self._all_layers_check)
+        settings_layout.addRow(self._all_layers_check)
 
         self._layer_range_widget = QWidget()
         layer_range_layout = QHBoxLayout(self._layer_range_widget)
@@ -946,7 +1124,7 @@ class MainWindow(QMainWindow):
         self._layer_avail_label.setStyleSheet("color: gray;")
         layer_range_layout.addWidget(self._layer_avail_label, stretch=1)
         self._layer_range_widget.setEnabled(False)  # follows "All layers" checkbox
-        settings_layout.addWidget(self._layer_range_widget)
+        settings_layout.addRow(self._layer_range_widget)
 
         # Columns to load (populated by probing the source's first packet file)
         self._columns_section = CollapsibleSection("Columns", expanded=False)
@@ -974,34 +1152,42 @@ class MainWindow(QMainWindow):
         self._cols_status.setStyleSheet("color: gray;")
         col_layout.addWidget(self._cols_status)
 
-        settings_layout.addWidget(self._columns_section)
+        settings_layout.addRow(self._columns_section)
 
         # X / Y spatial range (optional). Blank = no bound on that side.
-        xr_row = QHBoxLayout()
-        xr_row.addWidget(QLabel("X range:"))
-        self._x_min_edit = QLineEdit()
-        self._x_min_edit.setPlaceholderText("min")
-        self._x_min_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._x_min_edit)
-        xr_row.addWidget(QLabel("to"))
-        self._x_max_edit = QLineEdit()
-        self._x_max_edit.setPlaceholderText("max")
-        self._x_max_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._x_max_edit)
-        xr_row.addWidget(QLabel("Y range:"))
-        self._y_min_edit = QLineEdit()
-        self._y_min_edit.setPlaceholderText("min")
-        self._y_min_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._y_min_edit)
-        xr_row.addWidget(QLabel("to"))
-        self._y_max_edit = QLineEdit()
-        self._y_max_edit.setPlaceholderText("max")
-        self._y_max_edit.setValidator(QDoubleValidator())
-        xr_row.addWidget(self._y_max_edit)
         _xy_tip = (
             "Optional inclusive bounds on Demand X / Demand Y (mm), applied "
             "at load time. Leave a box blank for no bounds."
         )
+
+        self._x_min_edit = QLineEdit()
+        self._x_min_edit.setPlaceholderText("min")
+        self._x_min_edit.setValidator(QDoubleValidator())
+        self._x_max_edit = QLineEdit()
+        self._x_max_edit.setPlaceholderText("max")
+        self._x_max_edit.setValidator(QDoubleValidator())
+        x_field = QWidget()
+        x_row = QHBoxLayout(x_field)
+        x_row.setContentsMargins(0, 0, 0, 0)
+        x_row.addWidget(self._x_min_edit)
+        x_row.addWidget(QLabel("to"))
+        x_row.addWidget(self._x_max_edit)
+        settings_layout.addRow("X range:", x_field)
+
+        self._y_min_edit = QLineEdit()
+        self._y_min_edit.setPlaceholderText("min")
+        self._y_min_edit.setValidator(QDoubleValidator())
+        self._y_max_edit = QLineEdit()
+        self._y_max_edit.setPlaceholderText("max")
+        self._y_max_edit.setValidator(QDoubleValidator())
+        y_field = QWidget()
+        y_row = QHBoxLayout(y_field)
+        y_row.setContentsMargins(0, 0, 0, 0)
+        y_row.addWidget(self._y_min_edit)
+        y_row.addWidget(QLabel("to"))
+        y_row.addWidget(self._y_max_edit)
+        settings_layout.addRow("Y range:", y_field)
+
         for _w in (
             self._x_min_edit,
             self._x_max_edit,
@@ -1009,22 +1195,20 @@ class MainWindow(QMainWindow):
             self._y_max_edit,
         ):
             _w.setToolTip(_xy_tip)
-        settings_layout.addLayout(xr_row)
 
         self._mask_check = QCheckBox("Apply STL mask")
         self._mask_check.setChecked(True)
         self._mask_check.setToolTip(
             "Filter rows to the part region using the STL geometry"
         )
-        settings_layout.addWidget(self._mask_check)
+        settings_layout.addRow(self._mask_check)
 
         self._assign_check = QCheckBox("Assign parts")
         self._assign_check.setChecked(True)
         self._assign_check.setToolTip("Assign each row to its nearest part ID")
         self._assign_check.toggled.connect(self._assign_group.setVisible)
-        settings_layout.addWidget(self._assign_check)
-
-        settings_layout.addWidget(self._assign_group)
+        settings_layout.addRow(self._assign_check)
+        settings_layout.addRow(self._assign_group)
 
         self._correction_check = QCheckBox("Correction")
         self._correction_check.setChecked(False)
@@ -1033,10 +1217,10 @@ class MainWindow(QMainWindow):
             "a corrected column alongside the original."
         )
         self._correction_check.toggled.connect(self._correction_group.setVisible)
-        settings_layout.addWidget(self._correction_check)
+        settings_layout.addRow(self._correction_check)
 
         self._correction_group.setVisible(False)
-        settings_layout.addWidget(self._correction_group)
+        settings_layout.addRow(self._correction_group)
 
         config_layout.addWidget(settings_group)
 
@@ -1125,12 +1309,12 @@ class MainWindow(QMainWindow):
 
         # Axes
         self._axes_group = QGroupBox("Axes")
-        self._axes_layout = QVBoxLayout(self._axes_group)
+        self._axes_layout = make_form_layout(self._axes_group)
         view_layout.addWidget(self._axes_group)
 
         # Settings
         self._settings_group = QGroupBox("Settings")
-        self._settings_layout = QVBoxLayout(self._settings_group)
+        self._settings_layout = make_form_layout(self._settings_group)
         view_layout.addWidget(self._settings_group)
 
         # Plot button
@@ -1169,8 +1353,6 @@ class MainWindow(QMainWindow):
 
         self._restore_window_state()
 
-    _LABEL_WIDTH = 100
-
     def _restore_window_state(self) -> None:
         """Restore window size/position, maximized/fullscreen, and the splitter
         divider from the previous session (QSettings). No-op on first launch."""
@@ -1195,7 +1377,7 @@ class MainWindow(QMainWindow):
         self._save_window_state()
         self._save_ui_state()
 
-        for worker in (self._load_worker, self._plot_worker):
+        for worker in (self._load_worker, self._plot_worker, self._scan_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait()
@@ -1203,11 +1385,7 @@ class MainWindow(QMainWindow):
         if a0 is not None:
             a0.accept()
 
-    def _make_path_row(self, parent_layout, label, is_dir=False, file_filter=""):
-        row = QHBoxLayout()
-        lbl = QLabel(label)
-        lbl.setFixedWidth(self._LABEL_WIDTH)
-        row.addWidget(lbl)
+    def _make_path_row(self, form, label, is_dir=False, file_filter=""):
         edit = QLineEdit()
         edit.setReadOnly(True)
         browse = QPushButton("Browse...")
@@ -1223,19 +1401,18 @@ class MainWindow(QMainWindow):
                 edit.setText(path)
 
         browse.clicked.connect(on_browse)
+        field = QWidget()
+        row = QHBoxLayout(field)
+        row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(edit, stretch=1)
         row.addWidget(browse)
-        parent_layout.addLayout(row)
+        form.addRow(label, field)
 
         return edit
 
     def _find_dhxml(self, source_dir: str) -> str:
         """First ``*.dhxml`` in the source dir or project root, else ""."""
-        candidates: list[Path] = []
-        for d in (source_dir, self._project_root):
-            if d and Path(d).is_dir():
-                candidates.extend(sorted(Path(d).glob("*.dhxml")))
-        return str(candidates[0]) if candidates else ""
+        return _first_dhxml(source_dir, self._project_root)
 
     def _read_parts_for_filter(self, method: str):
         """``(rows, error)`` with ``rows = [(part_id, x, y), ...]``, parsed from
@@ -1361,43 +1538,33 @@ class MainWindow(QMainWindow):
             )
 
     def _read_columns_from_source(self, src: str):
-        """``(columns, error)`` for the packet data at ``src``.
-
-        Prefers ``DataStore.columns`` (which parses these files correctly);
-        falls back to reading the first packet file's header directly.
-        """
-        try:
-            from ohpal.ampm import DataStore
-
-            return list(DataStore(src).columns), None
-        except Exception:
-            pass
-
-        try:
-            path = _first_packet_file(src)
-            if path is None:
-                return [], "No packet data files found in the source directory."
-            return _read_header_columns(path), None
-
-        except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
-            return [], f"Could not read columns: {e}"
+        """``(columns, error)`` for the packet data at ``src`` (see module helper)."""
+        return _columns_for_source(src, self._project_root)
 
     def _probe_columns(self) -> None:
-        """List selectable signal columns from the source's first packet file.
+        """Synchronous column probe for a manual source change.
 
-        Cheap (header only). Preserves prior unticks where the column remains.
+        Cheap (hardcoded set, or one header read). The project-root path applies
+        a precomputed result from the scan worker via _apply_columns instead.
         """
         if not hasattr(self, "_columns_list"):
             return
 
-        previously_unchecked = self._current_unchecked_columns()
         src = self._source_edit.text().strip()
-
         if not src:
             cols, err = [], "Set a source directory to list columns."
         else:
             cols, err = self._read_columns_from_source(src)
 
+        self._apply_columns(cols, err)
+
+    def _apply_columns(self, cols, err) -> None:
+        """Populate the columns list from a ``(cols, err)`` result, preserving
+        any prior unticks for columns that still exist."""
+        if not hasattr(self, "_columns_list"):
+            return
+
+        previously_unchecked = self._current_unchecked_columns()
         signal_cols = [c for c in cols if c not in ALWAYS_LOADED_COLUMNS]
 
         self._columns_list.blockSignals(True)
@@ -1502,23 +1669,17 @@ class MainWindow(QMainWindow):
             self._cols_status.setText(f"{checked} of {n} signal columns loaded.")
             self._columns_section.set_title(f"Columns \u2014 {checked}/{n}")
 
-    def _make_float_row(self, parent_layout, label, default):
-        row = QHBoxLayout()
-        row.addWidget(QLabel(label))
+    def _make_float_row(self, form, label, default):
         edit = QLineEdit(default)
-        row.addWidget(edit, stretch=1)
-        parent_layout.addLayout(row)
+        form.addRow(label, edit)
 
         return edit
 
-    def _make_int_row(self, parent_layout, label, default, min_val, max_val):
-        row = QHBoxLayout()
-        row.addWidget(QLabel(label))
+    def _make_int_row(self, form, label, default, min_val, max_val):
         spin = QSpinBox()
         spin.setRange(min_val, max_val)
         spin.setValue(default)
-        row.addWidget(spin, stretch=1)
-        parent_layout.addLayout(row)
+        form.addRow(label, spin)
 
         return spin
 
@@ -1548,27 +1709,13 @@ class MainWindow(QMainWindow):
         self._available_layers = None
         self._layer_avail_label.setText("Available: \u2014")
 
-    def _probe_layers(self) -> None:
-        """Cheaply read the available layer numbers from the source directory.
-
-        DataStore construction only scans filenames (no Parquet build), so this
-        is safe to run synchronously whenever the source path changes.
-        """
-        src = self._source_edit.text().strip()
-        if not src:
+    def _apply_layers(self, result) -> None:
+        """Apply a ``(lo, hi, count)`` discovery result (or ``None``) to the UI."""
+        if result is None:
             self._set_layers_unavailable()
             return
-        try:
-            from ohpal.ampm import DataStore
 
-            store = DataStore(src)  # layer_thickness irrelevant for layer discovery
-            layers = store.layers
-        except Exception:
-            self._set_layers_unavailable()
-
-            return
-
-        lo, hi = min(layers), max(layers)
+        lo, hi, count = result
         self._available_layers = (lo, hi)
 
         for spin in (self._layer_from_spin, self._layer_to_spin):
@@ -1576,9 +1723,12 @@ class MainWindow(QMainWindow):
 
         self._layer_from_spin.setValue(lo)
         self._layer_to_spin.setValue(hi)
-        self._layer_avail_label.setText(
-            f"Available: {lo}\u2013{hi} ({len(layers)} layers)"
-        )
+        self._layer_avail_label.setText(f"Available: {lo}\u2013{hi} ({count} layers)")
+
+    def _probe_layers(self) -> None:
+        """Synchronous layer probe for a manual source change (project-root
+        selection scans on a worker thread instead)."""
+        self._apply_layers(_discover_layers(self._source_edit.text().strip()))
 
     def _on_progress(self, pct: int, label: str) -> None:
         self._load_progress.setValue(pct)
@@ -1782,6 +1932,9 @@ class MainWindow(QMainWindow):
         return problems
 
     def _browse_build_dir(self):
+        if self._scan_worker is not None and self._scan_worker.isRunning():
+            return  # a scan is already in flight
+
         start_dir = ""
         last = self._settings.value("last_project_root", "", type=str)
         if last:
@@ -1801,31 +1954,66 @@ class MainWindow(QMainWindow):
         self._log.clear()
         self._log.append(f"Selected: {path}")
 
-        try:
-            from ohpal.ampm.config import create_or_load_config
+        # Discover everything on a worker thread so the window stays responsive;
+        # results are applied to the widgets in _on_scan_ok (main thread).
+        self._dir_browse.setEnabled(False)
+        self._load_progress.setValue(0)
+        self._load_progress.setVisible(True)
 
-            config = create_or_load_config(path)
-        except Exception as e:
-            self._config = None
-            self._project_root = None
-            self._log.append(f"ERROR loading config: {e}")
-            self._refresh_options()
-            return
+        self._scan_worker = ConfigScanWorker(path)
+        self._scan_worker.log.connect(self._on_log)
+        self._scan_worker.progress.connect(self._on_progress)
+        self._scan_worker.finished_ok.connect(self._on_scan_ok)
+        self._scan_worker.finished_err.connect(self._on_scan_err)
+        self._scan_worker.start()
 
+    def _on_scan_ok(self, payload):
+        self._dir_browse.setEnabled(True)
+        self._load_progress.setVisible(False)
+
+        config = payload["config"]
         self._config = config
-        self._populate_config(config)
-        self._refresh_views(path)
-        self._load_resume_state(path)
+
+        # Apply config to the widgets without re-triggering the synchronous
+        # probes (the worker already discovered layers and columns).
+        self._source_edit.blockSignals(True)
+        try:
+            self._populate_config(config, dhxml=payload["dhxml"])
+        finally:
+            self._source_edit.blockSignals(False)
+
+        self._apply_layers(payload["layers"])
+        self._apply_columns(payload["columns"], payload["columns_error"])
+        self._apply_views(payload["views"])
+
+        self._load_resume_state(self._project_root)
         self._refresh_options()
         self._log.append(
             "Config loaded. Review paths and click 'Load Data' when ready."
         )
 
-    def _populate_config(self, config):
+        if self._scan_worker is not None:
+            self._scan_worker.wait()
+        self._scan_worker = None
+
+    def _on_scan_err(self, msg):
+        self._dir_browse.setEnabled(True)
+        self._load_progress.setVisible(False)
+        self._config = None
+        self._project_root = None
+        self._log.append(f"ERROR loading config: {msg}")
+        self._refresh_options()
+
+        if self._scan_worker is not None:
+            self._scan_worker.wait()
+        self._scan_worker = None
+
+    def _populate_config(self, config, dhxml=None):
         self._source_edit.setText(config["SOURCE"])
         self._stl_edit.setText(config["STL"])
         self._csv_edit.setText(config["PARTS_CSV"])
-        dhxml = config.get("DHXML") or self._find_dhxml(config.get("SOURCE", ""))
+        if dhxml is None:
+            dhxml = config.get("DHXML") or self._find_dhxml(config.get("SOURCE", ""))
         self._dhxml_edit.setText(dhxml or "")
         self._lt_edit.setText(str(config["LAYER_THICKNESS"]))
 
@@ -1896,7 +2084,13 @@ class MainWindow(QMainWindow):
         if "ASSIGN_PARTS" in override:
             self._assign_check.setChecked(bool(override["ASSIGN_PARTS"]))
         if "DHXML" in override and override["DHXML"]:
-            self._dhxml_edit.setText(str(override["DHXML"]))
+            saved_dhxml = str(override["DHXML"])
+            # Only honour a saved DHXML if it still exists; otherwise keep the
+            # path auto-discovered for this project. BuildStarted files are
+            # date-stamped, so a sidecar from an earlier export can point at a
+            # file that has since been renamed or removed.
+            if Path(saved_dhxml).is_file():
+                self._dhxml_edit.setText(saved_dhxml)
         if "PART_EXCLUDE" in override:
             self._apply_part_exclude(override["PART_EXCLUDE"])
         if "CORRECTION_MACHINE" in override:
@@ -2234,16 +2428,13 @@ class MainWindow(QMainWindow):
         cols = self._all_columns()
 
         for key, spec in axes.items():
-            row = QHBoxLayout()
-            row.addWidget(QLabel(spec.get("label", key) + ":"))
             combo = NoScrollComboBox()
             combo.addItem("")
             combo.addItems(cols)
             default = spec.get("default")
             if default and default in cols:
                 combo.setCurrentText(default)
-            row.addWidget(combo, stretch=1)
-            self._axes_layout.addLayout(row)
+            self._axes_layout.addRow(spec.get("label", key) + ":", combo)
             self._axis_combos[key] = combo
 
         self._axes_group.setVisible(bool(axes))
@@ -2253,15 +2444,12 @@ class MainWindow(QMainWindow):
         settings = getattr(module, "SETTINGS", {})
 
         for key, spec in settings.items():
-            row = QHBoxLayout()
-            row.addWidget(QLabel(spec.get("label", key) + ":"))
             widget = build_widget(spec)
 
             if self._config and key in self._config:
                 set_widget_value(widget, spec, self._config[key])
 
-            row.addWidget(widget, stretch=1)
-            self._settings_layout.addLayout(row)
+            self._settings_layout.addRow(spec.get("label", key) + ":", widget)
             self._setting_widgets[key] = (widget, spec)
 
         self._settings_group.setVisible(bool(settings))
@@ -2465,13 +2653,10 @@ class MainWindow(QMainWindow):
         else:
             self._log.append(f"Views reloaded ({len(after)} available).")
 
-    def _refresh_views(self, project_root=None):
-        """(Re)discover views, including any external/per-build folders, and
-        repopulate the combo while preserving the current selection."""
-        from .views import discover
-
+    def _apply_views(self, views) -> None:
+        """Repopulate the view combo from a discovery dict, keeping selection."""
         current = self._view_combo.currentText()
-        self._views = discover(project_root=project_root, log=self._on_log)
+        self._views = views
         self._view_combo.blockSignals(True)
         self._view_combo.clear()
         self._view_combo.addItems(list(self._views.keys()))
@@ -2479,6 +2664,12 @@ class MainWindow(QMainWindow):
             self._view_combo.setCurrentText(current)
         self._view_combo.blockSignals(False)
         self._views_loaded = True
+
+    def _refresh_views(self, project_root=None):
+        """(Re)discover views (built-in + external/per-build) and repopulate."""
+        from .views import discover
+
+        self._apply_views(discover(project_root=project_root, log=self._on_log))
 
 
 def main():
