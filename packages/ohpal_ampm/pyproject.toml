@@ -13,6 +13,8 @@ authors = [
 ]
 license = {text = "All rights reserved"}
 dependencies = [
+    "ohpal-core",
+    "ohpal-samples",
     "polars>=1.0,<2",
     "pyarrow>=14,<25",
     "plotly>=5.0,<7",
@@ -26,6 +28,10 @@ dependencies = [
     "PyQt6>=6.5,<7",
     "matplotlib>=3.8,<4",
 ]
+
+[tool.uv.sources]
+ohpal-core = { workspace = true }
+ohpal-samples = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -152,3 +152,23 @@ def test_missing_build_id_raises(tmp_path):
     # _build has no mtt filename and no name -> nothing to derive from
     with pytest.raises(ValueError, match="build_id"):
         create_template(_build(tmp_path), tmp_path / "t.xlsx")
+
+
+def test_bounds_grouped_into_outline(tmp_path):
+    import zipfile, re
+    build = _build(tmp_path)
+    out = create_template(build, tmp_path / "g.xlsx", build_id="b1")
+    with zipfile.ZipFile(out) as z:
+        xml = z.read("xl/worksheets/sheet1.xml").decode()
+    # the six bound columns (D..I) carry an outline level
+    cols = re.findall(r'<col[^>]*outlineLevel="1"[^>]*>', xml)
+    assert cols, "no grouped columns found"
+    assert 'min="4"' in cols[0] and 'max="9"' in cols[0]  # x_min..z_max
+
+
+def test_non_contiguous_group_rejected(tmp_path):
+    import pytest
+    from ohpal.samples.writer import write_xlsx, WriteError
+    df = pl.DataFrame({"part_id": ["1"], "a": [1.0], "b": [2.0], "c": [3.0]})
+    with pytest.raises(WriteError, match="contiguous"):
+        write_xlsx(df, tmp_path / "x.xlsx", column_groups=[["a", "c"]])  # b is between

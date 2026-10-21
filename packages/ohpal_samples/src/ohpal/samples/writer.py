@@ -44,13 +44,18 @@ def write_xlsx(
     freeze_header: bool = True,
     column_fills: dict[str, str] | None = None,
     column_notes: dict[str, str] | None = None,
+    column_groups: list[list[str]] | None = None,
+    collapse_groups: bool = False,
 ) -> Path:
     """Write ``frame`` to a new .xlsx with a bold header and optional per-column
     fills/notes (used to mark generated vs fill-in columns).
 
     ``column_fills`` maps column name -> hex colour (e.g. ``"D9D9D9"``) applied
     to that column's header and cells; ``column_notes`` maps column name -> a
-    header cell comment (the legend).
+    header cell comment (the legend). ``column_groups`` is a list of column-name
+    groups, each of which becomes a collapsible Excel outline; the columns in a
+    group must be contiguous in ``frame``. ``collapse_groups`` starts them
+    collapsed rather than expanded.
     """
     path = Path(path)
     fills = {c: PatternFill("solid", fgColor=hexc) for c, hexc in (column_fills or {}).items()}
@@ -80,6 +85,25 @@ def write_xlsx(
 
     for ci, col in enumerate(headers, start=1):
         ws.column_dimensions[get_column_letter(ci)].width = max(10, min(30, len(str(col)) + 4))
+
+    # Collapsible column outlines (e.g. group the positional columns together).
+    index = {c: i for i, c in enumerate(headers, start=1)}
+    for group in column_groups or []:
+        present = [c for c in group if c in index]
+        if len(present) < 2:
+            continue
+        positions = sorted(index[c] for c in present)
+        if positions != list(range(positions[0], positions[-1] + 1)):
+            raise WriteError(
+                f"column group {group} is not contiguous in the sheet; "
+                f"grouping requires adjacent columns"
+            )
+        ws.column_dimensions.group(
+            get_column_letter(positions[0]),
+            get_column_letter(positions[-1]),
+            outline_level=1,
+            hidden=collapse_groups,
+        )
 
     if freeze_header:
         ws.freeze_panes = "A2"
