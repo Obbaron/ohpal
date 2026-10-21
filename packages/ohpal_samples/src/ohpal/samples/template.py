@@ -128,12 +128,15 @@ def create_template(
         include_alias=include_alias,
         extra=extra,
     )
+    # Group the six bound columns into one collapsible outline.
+    groups = [list(_BOUNDS)] if include_bounds else None
     return write_table(
         frame,
         path,
         sheet_name=sheet_name or str(build_id),
         column_fills=fills,
         column_notes=notes,
+        column_groups=groups,
     )
 
 

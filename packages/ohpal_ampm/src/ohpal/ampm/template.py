@@ -14,12 +14,24 @@ The ``ohpal.samples`` import is deferred to call time so that importing
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
+
+import polars as pl
 
 from ohpal.core.build import BuildParts
 from ohpal.ampm.parameters import DEFAULT_PARAMETER_COLUMNS, part_parameters
+from ohpal.ampm.parts import QuantAMParts
 
-__all__ = ["make_template"]
+__all__ = ["make_template", "make_template_from_quant"]
+
+log = logging.getLogger("ohpal.ampm.template")
+
+# Shared with the dhxml template path.
+_GENERATED_FILL = "D9D9D9"  # grey: generated, do not edit
+_INPUT_FILL = "FFF2CC"      # yellow: fill in
+_PART_WRAPPER = re.compile(r"^Part\((\d+)\)")
 
 
 def make_template(
@@ -73,3 +85,77 @@ def make_template(
     from ohpal.samples.template import create_template
 
     return create_template(build, out, extra=extra, build_id=build_id, **template_kwargs)
+
+
+def make_template_from_quant(
+    quant: str | Path | QuantAMParts,
+    out: str | Path,
+    *,
+    build_id: str,
+    columns: tuple[str, ...] = DEFAULT_PARAMETER_COLUMNS,
+    variant: str = "1",
+    rename: dict[str, str] | None = None,
+    include_params: bool = True,
+    include_alias: bool = True,
+) -> Path:
+    """Reduced template for a build that has **no dhxml**, from QuantAM alone.
+
+    Without a build file there are no bounding boxes, so this carries the part's
+    **point** position (``x``/``y`` from QuantAM's ``X/Y Position``) instead of
+    the six bounds, and ``part_id`` comes straight from QuantAM's ``Part ID``
+    (``Part(N)`` unwrapped to ``N``; duplicates keep their ``#`` suffix). That
+    id is **QuantAM-derived, not dhxml-authoritative** — if a dhxml turns up
+    later, regenerate with :func:`make_template` for canonical ids and bounds.
+
+    ``build_id`` must be supplied (a QuantAM CSV carries no mtt filename to
+    derive it from). Optional process parameters are joined directly on
+    ``Part ID`` (same source — no position matching needed).
+    """
+    qp = QuantAMParts.from_path(quant) if isinstance(quant, (str, Path)) else quant
+
+    parent = qp.parent_parts()
+    for c in ("Part ID", "X Position", "Y Position"):
+        if c not in parent.columns:
+            raise ValueError(f"QuantAM parent_parts missing {c!r} (have {parent.columns})")
+
+    frame = parent.select(
+        pl.lit(str(build_id)).alias("build_id"),
+        pl.col("Part ID").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
+        *([pl.lit(None, dtype=pl.String).alias("alias")] if include_alias else []),
+        pl.col("X Position").cast(pl.Float64, strict=False).alias("x"),
+        pl.col("Y Position").cast(pl.Float64, strict=False).alias("y"),
+    )
+
+    generated = {"build_id", "part_id", "x", "y"}
+
+    if include_params:
+        params = qp.volume_parameters_with_speed(variant=variant)
+        missing = [c for c in columns if c not in params.columns]
+        if missing:
+            raise ValueError(
+                f"requested columns {missing} not in QuantAM output; available: "
+                f"{[c for c in params.columns if c not in ('X Position', 'Y Position')]}"
+            )
+        pcols = params.select(
+            pl.col("Part ID").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
+            *columns,
+        )
+        if rename:
+            pcols = pcols.rename({k: v for k, v in rename.items() if k in pcols.columns})
+        frame = frame.join(pcols, on="part_id", how="left")
+        generated |= set(frame.columns) - {"alias"} - {"build_id", "part_id", "x", "y"}
+
+    fills = {c: _GENERATED_FILL for c in generated}
+    notes = {c: "Generated from QuantAM — do not edit." for c in generated}
+    if include_alias:
+        fills["alias"] = _INPUT_FILL
+        notes["alias"] = "Fill in: your own name for this part."
+
+    from ohpal.samples.writer import write_table
+
+    # Group the positional columns into one collapsible outline.
+    groups = [["x", "y"]] if {"x", "y"} <= set(frame.columns) else None
+    return write_table(
+        frame, out, sheet_name=str(build_id), column_fills=fills,
+        column_notes=notes, column_groups=groups,
+    )

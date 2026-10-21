@@ -6,6 +6,9 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 app_dir  := "apps/ampm_analyzer"
 pkg_ampm := "packages/ohpal_ampm"
 
+data_dir := "data"
+tmpl_dir := "data/templates"
+
 # show available recipes
 default:
     @just --list
@@ -13,6 +16,12 @@ default:
 # sync venv and install all packages (editable)
 setup:
     uv sync --all-packages
+
+# generate a samples-template workbook per build found under the data dir
+# usage:  just templates                 (data -> data/templates)
+#         just templates mydata out/dir   (override either path)
+templates data=data_dir out=tmpl_dir:
+    uv run --no-sync python -m ohpal.ampm.batch {{data}} {{out}}
 
 # check Python version, imports, and namespace resolution
 verify:
