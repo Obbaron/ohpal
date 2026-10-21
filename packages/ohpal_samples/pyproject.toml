@@ -1,0 +1,28 @@
+[project]
+name = "ohpal-samples"
+version = "0.1.0"
+description = "Characterisation workbooks (density, EDX, roughness, ...) into tidy frames."
+authors = [{ name = "Oliver H. Page" }]
+requires-python = ">=3.11"
+dependencies = [
+    "polars>=1.0",
+    "fastexcel>=0.10",  # calamine engine for pl.read_excel
+    "openpyxl>=3.1",    # writing formatted template workbooks
+    "ohpal-core",       # BuildParts for the template generator (Tier-2 boundary)
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+ohpal-core = { workspace = true }
+
+# PEP 420 namespace: ohpal/ has no __init__.py; ship ohpal.samples* only.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ohpal.samples*"]
+namespaces = true
+
+[dependency-groups]
+dev = ["pytest>=8"]
