@@ -1,0 +1,25 @@
+[project]
+name = "ohpal-core"
+version = "0.1.0"
+description = "Shared contracts and build-file identity for the ohpal workspace."
+authors = [{ name = "Oliver H. Page" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "polars>=1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# PEP 420 namespace package: ohpal/ has no __init__.py; each dist ships its own
+# ohpal.<subpackage>. Discover ohpal.core* only, and do NOT treat the shared
+# ohpal/ directory as a regular package.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ohpal.core*"]
+namespaces = true
+
+[dependency-groups]
+dev = ["pytest>=8"]
