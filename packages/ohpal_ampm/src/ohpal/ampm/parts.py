@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 from collections import Counter
 from pathlib import Path
 from typing import Iterator
@@ -53,9 +52,32 @@ import polars as pl
 import pyarrow as pa
 from scipy.spatial import KDTree
 
+from ohpal.core.build import BuildParts
+
 SECTION_PARENT = "Parent Parts"
 SECTION_GENERAL = "General"
 SECTION_SCAN_VOLUME = "Scan Volume"
+
+
+class BuildStartedDHXML(BuildParts):
+    """Back-compat adapter: core :class:`BuildParts` with QuantAM column names.
+
+    ``ohpal.core`` exposes neutral canonical columns (``part_id``, ``x_min`` …);
+    the ampm spatial functions were written against QuantAM's spelling
+    (``Part ID``, ``X min`` …, ``X Position``/``Y Position``), so this adapter
+    renames the core table back to that vocabulary. New ampm code should prefer
+    ``BuildParts`` and the canonical names directly.
+    """
+
+    _QUANTAM = {
+        "part_id": "Part ID",
+        "x_min": "X min", "y_min": "Y min", "z_min": "Z min",
+        "x_max": "X max", "y_max": "Y max", "z_max": "Z max",
+        "x_center": "X Position", "y_center": "Y Position",
+    }
+
+    def parts_table(self):  # type: ignore[override]
+        return super().parts_table().drop("name").rename(self._QUANTAM)
 
 
 def _iter_sections(text: str) -> Iterator[tuple[str, int, list[list[str]]]]:
@@ -392,150 +414,6 @@ class QuantAMParts:
         )
 
 
-_DHXML_PARTS_PATH = ("version1", "build", "parts")
-
-
-def _parse_bounding_box(value: str | list) -> tuple[float, ...]:
-    """Parse a ``"xmin,ymin,zmin,xmax,ymax,zmax"`` box, normalised min<=max."""
-    fields = value.split(",") if isinstance(value, str) else list(value)
-
-    if len(fields) != 6:
-        raise ValueError(f"expected 6 comma-separated numbers, got {value!r}")
-
-    xmin, ymin, zmin, xmax, ymax, zmax = (float(v) for v in fields)
-
-    return (
-        min(xmin, xmax),
-        min(ymin, ymax),
-        min(zmin, zmax),
-        max(xmin, xmax),
-        max(ymin, ymax),
-        max(zmin, zmax),
-    )
-
-
-def _suffix_duplicate_names(parts: list[dict]) -> list[dict]:
-    """Add a unique ``part_id`` per part, suffixing repeated names ``name#n``."""
-    counts = Counter(p["name"] for p in parts)
-    seen: Counter = Counter()
-    out: list[dict] = []
-
-    for p in parts:
-        name = p["name"]
-        if counts[name] > 1:
-            seen[name] += 1
-            part_id = f"{name}#{seen[name]}"
-        else:
-            part_id = name
-        out.append({**p, "part_id": part_id})
-
-    return out
-
-
-class BuildStartedDHXML:
-    """A Renishaw "BuildStarted" ``.dhxml`` file (JSON despite the extension).
-
-    Exposes the per-part names and 3D bounding boxes the RenAM 500S records
-    alongside the build, via :meth:`parts_table`. Repeated part names are made
-    unique by suffixing ``name#n`` in file order (see ``_suffix_duplicate_names``).
-    """
-
-    def __init__(
-        self,
-        parts: list[dict],
-        raw: dict | None = None,
-        path: Path | None = None,
-    ) -> None:
-        self._parts = parts
-        self._raw = raw
-        self.path = path
-
-    @classmethod
-    def from_path(cls, path: str | Path) -> "BuildStartedDHXML":
-        """Load and parse a BuildStarted ``.dhxml`` file."""
-        path = Path(path)
-        if not path.is_file():
-            raise FileNotFoundError(f"BuildStarted DHXML not found:\n{path}")
-
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8-sig"))
-
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"{path} is not valid JSON; is this a BuildStarted DHXML? ({e})"
-            ) from e
-
-        node = raw
-
-        for key in _DHXML_PARTS_PATH:
-            if not isinstance(node, dict) or key not in node:
-                raise ValueError(
-                    f"{path} is not a recognized BuildStarted DHXML: "
-                    f"missing {'/'.join(_DHXML_PARTS_PATH)!r}."
-                )
-            node = node[key]
-
-        if not isinstance(node, list) or not node:
-            raise ValueError(f"No parts listed in {path}.")
-
-        parsed: list[dict] = []
-
-        for i, entry in enumerate(node):
-            try:
-                name = str(entry["name"])
-                bbox = _parse_bounding_box(entry["boundingBox"])
-
-            except (KeyError, TypeError, ValueError) as e:
-                raise ValueError(
-                    f"Malformed part entry #{i} in {path}: {entry!r} ({e})"
-                ) from e
-
-            parsed.append({"name": name, "bbox": bbox})
-
-        return cls(_suffix_duplicate_names(parsed), raw=raw, path=path)
-
-    @property
-    def part_names(self) -> list[str]:
-        """Original (pre-suffix) part names, in file order."""
-        return [p["name"] for p in self._parts]
-
-    def __len__(self) -> int:
-        return len(self._parts)
-
-    def __repr__(self) -> str:
-        path = f", path={self.path!s}" if self.path else ""
-        return f"BuildStartedDHXML(parts={len(self._parts)}{path})"
-
-    def parts_table(self) -> pl.DataFrame:
-        """One row per part: ``Part ID``, box corners ``{X,Y,Z} {min,max}``,
-        and XY-centre ``X Position`` / ``Y Position`` (named to match
-        ``QuantAMParts.parent_parts``)."""
-        pid, xmin, ymin, zmin, xmax, ymax, zmax = ([] for _ in range(7))
-
-        for p in self._parts:
-            a, b, c, d, e, f = p["bbox"]
-            pid.append(p["part_id"])
-            xmin.append(a)
-            ymin.append(b)
-            zmin.append(c)
-            xmax.append(d)
-            ymax.append(e)
-            zmax.append(f)
-
-        return pl.DataFrame(
-            {
-                "Part ID": pl.Series(pid, dtype=pl.String),
-                "X min": pl.Series(xmin, dtype=pl.Float64),
-                "Y min": pl.Series(ymin, dtype=pl.Float64),
-                "Z min": pl.Series(zmin, dtype=pl.Float64),
-                "X max": pl.Series(xmax, dtype=pl.Float64),
-                "Y max": pl.Series(ymax, dtype=pl.Float64),
-                "Z max": pl.Series(zmax, dtype=pl.Float64),
-            }
-        ).with_columns(
-            ((pl.col("X min") + pl.col("X max")) / 2.0).alias("X Position"),
-            ((pl.col("Y min") + pl.col("Y max")) / 2.0).alias("Y Position"),
-        )
 
 
 def compute_part_id_map(
