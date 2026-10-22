@@ -105,7 +105,7 @@ def main() -> None:
     parts_with_speed = quantam.volume_parameters_with_speed()
     sample = sample.join(
         parts_with_speed.select(
-            [pl.col("Part ID").alias("part_id"), "Hatches Power", "Hatch Speed"]
+            ["part_id", "Hatches Power", "Hatch Speed"]
         ),
         on="part_id",
         how="left",

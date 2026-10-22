@@ -57,9 +57,9 @@ def test_maps_by_position_not_string(tmp_path):
     build = _build(tmp_path, GRID)
     # QuantAM "Part(2)" sits at (15,5) -> inside box "2"; "Part(1)" at (5,5) -> "1"
     q = _params({
-        "Part ID": ["Part(1)", "Part(2)"],
-        "X Position": [5.0, 15.0],
-        "Y Position": [5.0, 5.0],
+        "part_id": ["Part(1)", "Part(2)"],
+        "x_center": [5.0, 15.0],
+        "y_center": [5.0, 5.0],
         "Hatch Speed": [800.0, 1200.0],
         "Hatches Power": [150, 200],
     })
@@ -77,7 +77,7 @@ def test_rename_columns():
 def test_rename_for_friendly_headers(tmp_path):
     build = _build(tmp_path, GRID)
     q = _params({
-        "Part ID": ["Part(1)"], "X Position": [5.0], "Y Position": [5.0],
+        "part_id": ["Part(1)"], "x_center": [5.0], "y_center": [5.0],
         "Hatch Speed": [800.0], "Hatches Power": [150],
     })
     out = part_parameters(q, build, rename={"Hatch Speed": "speed", "Hatches Power": "power"})
@@ -87,7 +87,7 @@ def test_rename_for_friendly_headers(tmp_path):
 def test_custom_columns(tmp_path):
     build = _build(tmp_path, GRID)
     q = _params({
-        "Part ID": ["Part(1)"], "X Position": [5.0], "Y Position": [5.0],
+        "part_id": ["Part(1)"], "x_center": [5.0], "y_center": [5.0],
         "Hatch Speed": [800.0], "Hatches Power": [150],
     })
     out = part_parameters(q, build, columns=("Hatches Power",))
@@ -100,9 +100,9 @@ def test_custom_columns(tmp_path):
 def test_unmatched_quant_row_dropped_with_warning(tmp_path, caplog):
     build = _build(tmp_path, GRID)
     q = _params({
-        "Part ID": ["Part(1)", "Part(9)"],
-        "X Position": [5.0, 999.0],       # second is off the plate
-        "Y Position": [5.0, 999.0],
+        "part_id": ["Part(1)", "Part(9)"],
+        "x_center": [5.0, 999.0],       # second is off the plate
+        "y_center": [5.0, 999.0],
         "Hatch Speed": [800.0, 900.0],
         "Hatches Power": [150, 150],
     })
@@ -115,7 +115,7 @@ def test_unmatched_quant_row_dropped_with_warning(tmp_path, caplog):
 def test_build_part_without_quant_is_simply_absent(tmp_path):
     build = _build(tmp_path, GRID)   # parts 1 and 2 exist
     q = _params({
-        "Part ID": ["Part(1)"], "X Position": [5.0], "Y Position": [5.0],
+        "part_id": ["Part(1)"], "x_center": [5.0], "y_center": [5.0],
         "Hatch Speed": [800.0], "Hatches Power": [150],
     })
     out = part_parameters(q, build)
@@ -128,7 +128,7 @@ def test_build_part_without_quant_is_simply_absent(tmp_path):
 def test_missing_requested_column_raises(tmp_path):
     build = _build(tmp_path, GRID)
     q = _params({
-        "Part ID": ["Part(1)"], "X Position": [5.0], "Y Position": [5.0],
+        "part_id": ["Part(1)"], "x_center": [5.0], "y_center": [5.0],
         "Hatch Speed": [800.0], "Hatches Power": [150],
     })
     with pytest.raises(ParameterMappingError, match="not in QuantAM output"):
@@ -137,7 +137,7 @@ def test_missing_requested_column_raises(tmp_path):
 
 def test_missing_position_columns_raises(tmp_path):
     build = _build(tmp_path, GRID)
-    q = _params({"Part ID": ["Part(1)"], "Hatch Speed": [800.0], "Hatches Power": [150]})
+    q = _params({"part_id": ["Part(1)"], "Hatch Speed": [800.0], "Hatches Power": [150]})
     with pytest.raises(ParameterMappingError, match="position-match"):
         part_parameters(q, build)
 
@@ -148,9 +148,9 @@ def test_overlapping_boxes_surface_as_duplicate(tmp_path):
     # to the same part.
     build = _build(tmp_path, GRID)
     q = _params({
-        "Part ID": ["Part(1)a", "Part(1)b"],
-        "X Position": [5.0, 6.0],        # both inside box "1"
-        "Y Position": [5.0, 6.0],
+        "part_id": ["Part(1)a", "Part(1)b"],
+        "x_center": [5.0, 6.0],        # both inside box "1"
+        "y_center": [5.0, 6.0],
         "Hatch Speed": [800.0, 810.0],
         "Hatches Power": [150, 150],
     })

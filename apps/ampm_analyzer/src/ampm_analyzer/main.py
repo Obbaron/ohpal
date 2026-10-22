@@ -728,7 +728,7 @@ class LoadWorker(QThread):
                     print(f"Skipping power/speed attachment: {e}")
 
                 if parts_with_speed is not None:
-                    _ids = parts_with_speed["Part ID"].to_list()
+                    _ids = parts_with_speed["part_id"].to_list()
                     _power = dict(
                         zip(_ids, parts_with_speed["Hatches Power"].to_list())
                     )
@@ -1442,10 +1442,10 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 - surface any parse failure in the UI
             return [], f"Could not read parts: {e}"
 
-        ids = [str(p) for p in pt["Part ID"].to_list()]
-        has_xy = "X Position" in pt.columns and "Y Position" in pt.columns
-        xs = pt["X Position"].to_list() if has_xy else [None] * len(ids)
-        ys = pt["Y Position"].to_list() if has_xy else [None] * len(ids)
+        ids = [str(p) for p in pt["part_id"].to_list()]
+        has_xy = "x_center" in pt.columns and "y_center" in pt.columns
+        xs = pt["x_center"].to_list() if has_xy else [None] * len(ids)
+        ys = pt["y_center"].to_list() if has_xy else [None] * len(ids)
         return list(zip(ids, xs, ys)), None
 
     def _repopulate_part_filter(self) -> None:
