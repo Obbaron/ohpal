@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -108,12 +109,21 @@ class SidePanel(QWidget):
 
         points = QGroupBox("Points")
         pf = QFormLayout(points)
+        marker = QComboBox()
+        marker.addItems(["disc", "square", "ring", "cross"])
+        pf.addRow("Marker", marker)
         pf.addRow("Size", _slider(1, 20, 5))
         pf.addRow("Opacity", _slider(0, 100, 90))
         lay.addWidget(points)
 
-        colour = QGroupBox("Colour range")
+        colour = QGroupBox("Colour")
         cf = QFormLayout(colour)
+        cmap = QComboBox()
+        cmap.addItems(["viridis", "plasma", "magma", "turbo"])
+        cf.addRow("Map", cmap)
+        scale = QComboBox()
+        scale.addItems(["Linear", "Log"])
+        cf.addRow("Scale", scale)
         cf.addRow("Min", _slider(0, 100, 0))
         cf.addRow("Max", _slider(0, 100, 100))
         lay.addWidget(colour)

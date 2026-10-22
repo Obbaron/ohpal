@@ -105,19 +105,14 @@ def populate_plot(toolbar: QToolBar) -> None:
     _combo(toolbar, "View", ["Iso", "Top", "Front", "Side"], width=80)
     _combo(toolbar, "Proj", ["Perspective", "Ortho"], width=110)
     toolbar.addSeparator()
-    # Scene toggles
+    # Scene toggles (display on/off). Legend joins the scene toggles; colour-by,
+    # colormap, scale and marker now live in the side panel. "Colour by" is a
+    # plot input (a data column) and belongs to plot generation, not here.
     axes = _action(toolbar, "Axes", checkable=True)
     axes.setChecked(True)
     _action(toolbar, "Grid", checkable=True)
     _action(toolbar, "BBox", checkable=True)
-    toolbar.addSeparator()
-    # Colour
-    _combo(toolbar, "Colour by", ["—", "speed", "power", "layer", "part_id"])
-    _combo(toolbar, "Map", ["viridis", "plasma", "magma", "turbo"])
-    _combo(toolbar, "Scale", ["Linear", "Log"], width=80)
-    toolbar.addSeparator()
-    # Points (marker on toolbar; size/opacity are in the dock)
-    _combo(toolbar, "Marker", ["disc", "square", "ring", "cross"], width=80)
+    _action(toolbar, "Legend", checkable=True)
     toolbar.addSeparator()
     # Select
     _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)
