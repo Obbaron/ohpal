@@ -223,3 +223,5 @@ profile_dhxml.py
 profile_direct.py
 y.py
 z.py
+# Windows alternate-data-stream artifacts
+*:Zone.Identifier
