@@ -125,11 +125,13 @@ QHeaderView::section {{
     font-weight: 600;
 }}
 
-/* --- Dock --- */
-QDockWidget {{ titlebar-close-icon: none; }}
-QDockWidget::title {{
+/* --- Side panel --- */
+#SidePanel {{
+    background: {SURFACE};
+    border-left: 1px solid {BORDER};
+}}
+#PanelHeader {{
     background: {FILE_TINT};
-    padding: 6px 10px;
     border-bottom: 1px solid {BORDER};
 }}
 #DockBody {{ background: {SURFACE}; }}

@@ -1,25 +1,32 @@
-"""Docked side panel.
+"""Side panel.
 
-Repopulates per active view (QStackedWidget). Holds the live sliders (point
-size, opacity, colour range) and info panels — per the locked decision that
-sliders live in the dock while discrete controls live on the toolbar.
+A plain widget (not a QMainWindow dock) so it can sit *inside* the central
+layout, beside the content and under the tab strip and toolbar — rather than
+spanning the full height up to the title bar.
 
-Inert: sliders carry no connections yet.
+Hidden by default; the window shows it only when the active surface has
+relevant content (currently the Plot tab). It carries a close button and
+repopulates per view. Holds the live sliders and info panels — per the locked
+decision that sliders live in the panel while discrete controls live on the
+toolbar. Inert: no control is connected yet.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDockWidget,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QSlider,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+_TITLES = {"plot": "Plot", "data": "Data"}
 
 
 def _slider(lo: int, hi: int, val: int) -> QSlider:
@@ -29,27 +36,43 @@ def _slider(lo: int, hi: int, val: int) -> QSlider:
     return s
 
 
-class Dock(QDockWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Panel", parent)
-        self.setObjectName("SidePanel")
-        self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea
-            | Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        self.setMinimumWidth(250)
+class SidePanel(QWidget):
+    closed = pyqtSignal()
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("SidePanel")
+        self.setMinimumWidth(240)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Header: title + close button.
+        header = QWidget()
+        header.setObjectName("PanelHeader")
+        h = QHBoxLayout(header)
+        h.setContentsMargins(10, 6, 6, 6)
+        self.title = QLabel("Panel")
+        self.title.setProperty("class", "PanelHeading")
+        close = QToolButton()
+        close.setText("✕")
+        close.setAutoRaise(True)
+        close.setToolTip("Close panel")
+        close.clicked.connect(self.closed)
+        h.addWidget(self.title)
+        h.addStretch(1)
+        h.addWidget(close)
+        root.addWidget(header)
+
+        # Body: one page per view.
         body = QWidget()
         body.setObjectName("DockBody")
-        outer = QVBoxLayout(body)
-        outer.setContentsMargins(0, 0, 0, 0)
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
         self.stack = QStackedWidget()
-        outer.addWidget(self.stack)
-        self.setWidget(body)
+        bl.addWidget(self.stack)
+        root.addWidget(body, 1)
 
         self._pages = {"data": self._data_page(), "plot": self._plot_page()}
         for page in self._pages.values():
@@ -59,6 +82,11 @@ class Dock(QDockWidget):
         page = self._pages.get(kind)
         if page is not None:
             self.stack.setCurrentWidget(page)
+            self.title.setText(_TITLES.get(kind, "Panel"))
+
+    def has_content_for(self, kind: str) -> bool:
+        """Whether this surface has panel content worth auto-opening for."""
+        return kind == "plot"
 
     # -- pages ---------------------------------------------------------
     def _data_page(self) -> QWidget:

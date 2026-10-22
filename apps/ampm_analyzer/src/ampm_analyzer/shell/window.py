@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QProgressBar,
+    QSplitter,
     QStackedWidget,
     QStatusBar,
     QTabBar,
@@ -31,7 +32,7 @@ from PyQt6.QtWidgets import (
 from . import toolbars
 from .backstage import Backstage
 from .data_tab import DataTab
-from .dock import Dock
+from .dock import SidePanel
 from .plot_tab import PlotTab
 
 APP_TITLE = "AMPM Analyzer"
@@ -84,13 +85,23 @@ class MainWindow(QMainWindow):
         self.toolbar.setFloatable(False)
         root.addWidget(self.toolbar)
 
-        # Content pages, one per tab, kept in lockstep with the tab bar.
+        # Content row: the tab pages, with the side panel beside them (so the
+        # panel sits under the tabs/toolbar, not up at the title bar). A
+        # splitter lets the user resize it.
         self.stack = QStackedWidget()
-        root.addWidget(self.stack, 1)
+        self.panel = SidePanel()
+        self.panel.closed.connect(self._close_panel)
+        self.panel.setVisible(False)  # hidden by default; opens when relevant
 
-        # Side dock (repopulates per view).
-        self.dock = Dock(self)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
+        content = QSplitter(Qt.Orientation.Horizontal)
+        content.addWidget(self.stack)
+        content.addWidget(self.panel)
+        content.setStretchFactor(0, 1)
+        content.setStretchFactor(1, 0)
+        content.setCollapsible(0, False)
+        content.setCollapsible(1, True)
+        content.setSizes([1040, 260])
+        root.addWidget(content, 1)
 
         self._init_statusbar()
 
@@ -232,6 +243,10 @@ class MainWindow(QMainWindow):
             self._progress.setRange(0, 100)
         self._progress.setVisible(on)
 
+    def _close_panel(self) -> None:
+        """User dismissed the panel; it reopens when they revisit a plot tab."""
+        self.panel.setVisible(False)
+
     # -- toolbar swap --------------------------------------------------
     def _sync_toolbar(self, index: int) -> None:
         widget: QWidget | None = self.stack.widget(index)
@@ -239,16 +254,22 @@ class MainWindow(QMainWindow):
 
         self._plus.setVisible(kind != "file")  # no "+" on the backstage
 
+        # Panel: hidden by default, auto-opens only where there's relevant
+        # content (currently the Plot tab). Switching tabs re-evaluates it, so
+        # a panel the user closed reopens when they return to a plot.
+        if self.panel.has_content_for(kind):
+            self.panel.show_for(kind)
+            self.panel.setVisible(True)
+        else:
+            self.panel.setVisible(False)
+
         self.toolbar.clear()
         if kind == "file":
             self.toolbar.hide()
-            self.dock.hide()
             return
 
         self.toolbar.show()
-        self.dock.show()
         if kind == "data":
             toolbars.populate_data(self.toolbar)
         else:
             toolbars.populate_plot(self.toolbar)
-        self.dock.show_for(kind)
