@@ -223,6 +223,29 @@ def _columns_for_source(src: str, project_root: str | None):
         return [], f"Could not read columns: {e}"
 
 
+_SAMPLES_KEYS = {
+    "part_id", "build_id", "alias", "x", "y",
+    "x_min", "x_max", "y_min", "y_max", "z_min", "z_max",
+}
+
+
+def _samples_part_columns(df):
+    """Per-part derived frames ``{col: [part_id, col]}`` for each numeric
+    measurement column of a samples sheet (keys/positions excluded).
+
+    ``part_id`` is cast to String so the frames join cleanly against the AMPM
+    per-part columns regardless of the assignment dtype (Enum vs Utf8).
+    """
+    import polars as pl
+
+    out = {}
+    for c in df.columns:
+        if c in _SAMPLES_KEYS or not df[c].dtype.is_numeric():
+            continue
+        out[c] = df.select(pl.col("part_id").cast(pl.String), pl.col(c))
+    return out
+
+
 class NoScrollComboBox(QComboBox):
     def wheelEvent(self, e):  # noqa: N802 (Qt naming)
         if e is not None:
@@ -1280,6 +1303,10 @@ class MainWindow(QMainWindow):
         self._remove_derived_btn = QPushButton("Remove")
         self._remove_derived_btn.clicked.connect(self._remove_derived)
         btn_row.addWidget(self._remove_derived_btn)
+
+        self._samples_btn = QPushButton("Load samples sheet...")
+        self._samples_btn.clicked.connect(self._add_samples_sheet)
+        btn_row.addWidget(self._samples_btn)
         btn_row.addStretch()
 
         derived_layout.addLayout(btn_row)
@@ -2204,6 +2231,9 @@ class MainWindow(QMainWindow):
         for rec in resume.get("derived", []):
             if not isinstance(rec, dict):
                 continue
+            if rec.get("source") == "samples":
+                self._load_samples_columns(rec.get("path"), rec.get("sheet"))
+                continue
             signal = rec.get("signal")
             if signal:
                 self._compute_derived(
@@ -2527,6 +2557,50 @@ class MainWindow(QMainWindow):
         self._log.append(f"Removed '{name}'.")
         self._save_ui_state()
 
+    def _add_samples_sheet(self):
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load samples workbook", "", "Workbooks (*.xlsx *.xlsm *.csv)"
+        )
+        if path:
+            self._load_samples_columns(path)
+            self._save_ui_state()
+
+    def _load_samples_columns(self, path, sheet=None):
+        """Read a samples sheet and register its numeric measurement columns as
+        per-part derived columns (joined on ``part_id`` like any other)."""
+        from ohpal.samples.io import read_table
+
+        try:
+            df = read_table(path, sheet=sheet, anchor="part_id")
+        except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
+            self._log.append(f"Could not read samples sheet: {e}")
+            return
+
+        cols = _samples_part_columns(df)
+        if not cols:
+            self._log.append("No numeric measurement columns in samples sheet.")
+            return
+
+        existing = {
+            self._derived_list.item(i).text()
+            for i in range(self._derived_list.count())
+        }
+        for name, frame in cols.items():
+            self._derived[name] = frame
+            self._derived_recipes[name] = {
+                "source": "samples", "path": path, "sheet": sheet, "column": name,
+            }
+            if name not in existing:
+                self._derived_list.addItem(name)
+
+        self._refresh_column_combos()
+        self._log.append(
+            f"Loaded {len(cols)} samples column(s) from {Path(path).name}: "
+            f"{', '.join(cols)}"
+        )
+
     def _all_axes_group_level(self, axes):
         if self._df is None:
             return False
@@ -2554,22 +2628,27 @@ class MainWindow(QMainWindow):
             self._df.filter(pl.col("part_id") != "noise")
             .select(["part_id", "Hatches Power", "Hatch Speed"])
             .unique(subset=["part_id"])
+            .with_columns(pl.col("part_id").cast(pl.String))
             .sort("part_id")
         )
 
         for col in needed_columns:
             if col in self._derived:
-                base = base.join(self._derived[col], on="part_id", how="left")
+                right = self._derived[col].with_columns(pl.col("part_id").cast(pl.String))
+                base = base.join(right, on="part_id", how="left")
 
         return base
 
     def _prepare_row_df(self, needed_columns):
         if self._df is None:
             raise ValueError("No data loaded.")
-        df = self._df
+        import polars as pl
+
+        df = self._df.with_columns(pl.col("part_id").cast(pl.String))
         for col in needed_columns:
             if col in self._derived and col not in df.columns:
-                df = df.join(self._derived[col], on="part_id", how="left")
+                right = self._derived[col].with_columns(pl.col("part_id").cast(pl.String))
+                df = df.join(right, on="part_id", how="left")
         return df
 
     def _run_plot(self):
