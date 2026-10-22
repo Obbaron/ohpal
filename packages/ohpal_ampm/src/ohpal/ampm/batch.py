@@ -47,8 +47,8 @@ def _match_fraction(build: BuildParts, qp: QuantAMParts) -> float:
     pp = qp.parent_parts()
     if pp.is_empty():
         return 0.0
-    xs = pp["X Position"].cast(pl.Float64, strict=False).to_list()
-    ys = pp["Y Position"].cast(pl.Float64, strict=False).to_list()
+    xs = pp["x_center"].cast(pl.Float64, strict=False).to_list()
+    ys = pp["y_center"].cast(pl.Float64, strict=False).to_list()
     hits = 0
     for x, y in zip(xs, ys):
         if x is None or y is None:

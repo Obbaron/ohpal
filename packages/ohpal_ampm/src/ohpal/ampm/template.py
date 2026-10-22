@@ -114,16 +114,16 @@ def make_template_from_quant(
     qp = QuantAMParts.from_path(quant) if isinstance(quant, (str, Path)) else quant
 
     parent = qp.parent_parts()
-    for c in ("Part ID", "X Position", "Y Position"):
+    for c in ("part_id", "x_center", "y_center"):
         if c not in parent.columns:
             raise ValueError(f"QuantAM parent_parts missing {c!r} (have {parent.columns})")
 
     frame = parent.select(
         pl.lit(str(build_id)).alias("build_id"),
-        pl.col("Part ID").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
+        pl.col("part_id").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
         *([pl.lit(None, dtype=pl.String).alias("alias")] if include_alias else []),
-        pl.col("X Position").cast(pl.Float64, strict=False).alias("x"),
-        pl.col("Y Position").cast(pl.Float64, strict=False).alias("y"),
+        pl.col("x_center").cast(pl.Float64, strict=False).alias("x"),
+        pl.col("y_center").cast(pl.Float64, strict=False).alias("y"),
     )
 
     generated = {"build_id", "part_id", "x", "y"}
@@ -137,7 +137,7 @@ def make_template_from_quant(
                 f"{[c for c in params.columns if c not in ('X Position', 'Y Position')]}"
             )
         pcols = params.select(
-            pl.col("Part ID").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
+            pl.col("part_id").str.replace(_PART_WRAPPER.pattern, "${1}").alias("part_id"),
             *columns,
         )
         if rename:

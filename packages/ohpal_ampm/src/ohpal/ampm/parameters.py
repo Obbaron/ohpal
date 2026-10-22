@@ -39,8 +39,8 @@ log = logging.getLogger("ohpal.ampm.parameters")
 # override; the wiring doesn't need a code change to pick a different set.
 DEFAULT_PARAMETER_COLUMNS = ("Hatch Speed", "Hatches Power")
 
-_QUANT_X = "X Position"
-_QUANT_Y = "Y Position"
+_QUANT_X = "x_center"
+_QUANT_Y = "y_center"
 
 
 class ParameterMappingError(ValueError):
@@ -115,13 +115,13 @@ def part_parameters(
         x, y = row.get(_QUANT_X), row.get(_QUANT_Y)
         if x is None or y is None:
             part_ids.append(None)
-            unmatched.append((row.get("Part ID"), x, y, "missing X/Y"))
+            unmatched.append((row.get("part_id"), x, y, "missing X/Y"))
             continue
         try:
             part_ids.append(build.part_at(float(x), float(y), tol=tol))
         except PartResolutionError as e:
             part_ids.append(None)
-            unmatched.append((row.get("Part ID"), x, y, str(e)))
+            unmatched.append((row.get("part_id"), x, y, str(e)))
 
     if unmatched:
         log.warning(

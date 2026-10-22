@@ -60,24 +60,16 @@ SECTION_SCAN_VOLUME = "Scan Volume"
 
 
 class BuildStartedDHXML(BuildParts):
-    """Back-compat adapter: core :class:`BuildParts` with QuantAM column names.
+    """Back-compat alias for :class:`ohpal.core.build.BuildParts`.
 
-    ``ohpal.core`` exposes neutral canonical columns (``part_id``, ``x_min`` …);
-    the ampm spatial functions were written against QuantAM's spelling
-    (``Part ID``, ``X min`` …, ``X Position``/``Y Position``), so this adapter
-    renames the core table back to that vocabulary. New ampm code should prefer
-    ``BuildParts`` and the canonical names directly.
+    Kept so existing call sites that construct ``BuildStartedDHXML`` keep working.
+    ``parts_table`` drops the pre-suffix ``name`` column so the table is exactly
+    the canonical key + geometry (``part_id``, ``x_min`` … ``z_max``,
+    ``x_center``/``y_center``) the ampm spatial functions consume.
     """
 
-    _QUANTAM = {
-        "part_id": "Part ID",
-        "x_min": "X min", "y_min": "Y min", "z_min": "Z min",
-        "x_max": "X max", "y_max": "Y max", "z_max": "Z max",
-        "x_center": "X Position", "y_center": "Y Position",
-    }
-
     def parts_table(self):  # type: ignore[override]
-        return super().parts_table().drop("name").rename(self._QUANTAM)
+        return super().parts_table().drop("name")
 
 
 def _iter_sections(text: str) -> Iterator[tuple[str, int, list[list[str]]]]:
@@ -311,10 +303,10 @@ class QuantAMParts:
 
         wanted = {
             "Sr. No.": "Sr. No.",
-            "Source Index": "Part ID",
+            "Source Index": "part_id",
             "Layer Thickness": "Layer Thickness",
-            "X Position": "X Position",
-            "Y Position": "Y Position",
+            "X Position": "x_center",
+            "Y Position": "y_center",
             "Layers Count": "Layers Count",
         }
 
@@ -329,10 +321,10 @@ class QuantAMParts:
         out = out.with_columns(pl.col("Sr. No.").cast(pl.Int64))
 
         return out.with_columns(
-            pl.when(pl.len().over("Part ID") > 1)
-            .then(pl.col("Part ID") + pl.lit("#") + pl.col("Sr. No.").cast(pl.String))
-            .otherwise(pl.col("Part ID"))
-            .alias("Part ID")
+            pl.when(pl.len().over("part_id") > 1)
+            .then(pl.col("part_id") + pl.lit("#") + pl.col("Sr. No.").cast(pl.String))
+            .otherwise(pl.col("part_id"))
+            .alias("part_id")
         )
 
     def volume_parameters(self, *, variant: str = "1") -> pl.DataFrame:
@@ -351,7 +343,7 @@ class QuantAMParts:
         Returns
         -------
         DataFrame with one row per part, joining parent metadata with the
-        scan-volume parameters. The "Part ID" column is the key.
+        scan-volume parameters. The "part_id" column is the key.
         """
         if SECTION_SCAN_VOLUME not in self._sections:
             raise ValueError(f"No {SECTION_SCAN_VOLUME!r} section found in {self.path}")
@@ -423,9 +415,9 @@ def compute_part_id_map(
     cluster_col: str = "cluster",
     cluster_x_col: str = "Demand X",
     cluster_y_col: str = "Demand Y",
-    parts_id_col: str = "Part ID",
-    parts_x_col: str = "X Position",
-    parts_y_col: str = "Y Position",
+    parts_id_col: str = "part_id",
+    parts_x_col: str = "x_center",
+    parts_y_col: str = "y_center",
     max_distance_mm: float = 5.0,
     verbose: bool = True,
 ) -> dict[int, str]:
@@ -606,16 +598,13 @@ def join_parts_with_stats(
     parts_table: pl.DataFrame,
     *,
     stats_part_col: str = "part_id",
-    parts_part_col: str = "Part ID",
+    parts_part_col: str = "part_id",
     verbose: bool = True,
 ) -> pl.DataFrame:
     """
     Left-join a per-part stats table (e.g. CoV) onto a parts-parameter table.
 
-    Each input has one row per part. They use different column conventions:
-    ``compute_cov`` outputs ``part_id`` (lowercase, underscored), QuantAM
-    parts tables use ``Part ID`` (mixed case, the spelling QuantAM exports).
-    This function bridges the two.
+    Each input has one row per part, both keyed by the canonical ``part_id``.
 
     Parameters
     ----------
@@ -629,7 +618,7 @@ def join_parts_with_stats(
         Default ``"part_id"``.
     parts_part_col
         Column name of the part identifier in ``parts_table``.
-        Default ``"Part ID"``.
+        Default ``"part_id"``.
     verbose
         If True, warn about parts that have stats but no parameters
         (typically a sign of missing or misnamed part data).
@@ -693,9 +682,9 @@ def assign_nearest_part(
     *,
     x_col: str = "Demand X",
     y_col: str = "Demand Y",
-    parts_id_col: str = "Part ID",
-    parts_x_col: str = "X Position",
-    parts_y_col: str = "Y Position",
+    parts_id_col: str = "part_id",
+    parts_x_col: str = "x_center",
+    parts_y_col: str = "y_center",
     part_id_col: str = "part_id",
     max_distance_mm: float | None = None,
     noise_label: str | None = "noise",
@@ -890,13 +879,13 @@ def assign_bounding_box_part(
     x_col: str = "Demand X",
     y_col: str = "Demand Y",
     z_col: str = "Z",
-    parts_id_col: str = "Part ID",
-    xmin_col: str = "X min",
-    ymin_col: str = "Y min",
-    zmin_col: str = "Z min",
-    xmax_col: str = "X max",
-    ymax_col: str = "Y max",
-    zmax_col: str = "Z max",
+    parts_id_col: str = "part_id",
+    xmin_col: str = "x_min",
+    ymin_col: str = "y_min",
+    zmin_col: str = "z_min",
+    xmax_col: str = "x_max",
+    ymax_col: str = "y_max",
+    zmax_col: str = "z_max",
     part_id_col: str = "part_id",
     use_z: bool = False,
     noise_label: str | None = "noise",
