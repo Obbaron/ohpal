@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTabBar,
     QToolBar,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -60,21 +59,14 @@ class MainWindow(QMainWindow):
         self.tabbar.setTabsClosable(True)
         self.tabbar.setMovable(False)
 
-        self._plus = QToolButton()
-        plus = self._plus
-        plus.setText("+")
-        plus.setAutoRaise(True)
-        plus.setToolTip("New plot")
-        plus.setVisible(False)  # only shown once off the File tab
-        plus.clicked.connect(lambda: self._new_plot_tab())
-
+        # No "+" new-plot shortcut: creating a plot needs setup, so plots are
+        # created from the Data toolbar's "New plot" button instead.
         tab_row = QWidget()
         tab_row.setObjectName("TabRow")
         row = QHBoxLayout(tab_row)
         row.setContentsMargins(4, 2, 4, 0)
         row.setSpacing(2)
         row.addWidget(self.tabbar)
-        row.addWidget(plus)
         row.addStretch(1)
         root.addWidget(tab_row)
 
@@ -252,8 +244,6 @@ class MainWindow(QMainWindow):
         widget: QWidget | None = self.stack.widget(index)
         kind = widget.property("tabkind") if widget is not None else "file"
 
-        self._plus.setVisible(kind != "file")  # no "+" on the backstage
-
         # Panel: hidden by default, auto-opens only where there's relevant
         # content (currently the Plot tab). Switching tabs re-evaluates it, so
         # a panel the user closed reopens when they return to a plot.
@@ -270,6 +260,8 @@ class MainWindow(QMainWindow):
 
         self.toolbar.show()
         if kind == "data":
-            toolbars.populate_data(self.toolbar)
+            toolbars.populate_data(
+                self.toolbar, on_new_plot=lambda: self._new_plot_tab()
+            )
         else:
             toolbars.populate_plot(self.toolbar)

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QSizePolicy,
+    QSpinBox,
     QToolBar,
     QToolButton,
     QWidget,
@@ -70,27 +71,30 @@ def append_global(toolbar: QToolBar) -> dict[str, QToolButton]:
 
 
 # -- Data toolset ------------------------------------------------------
-def populate_data(toolbar: QToolBar) -> None:
+def populate_data(toolbar: QToolBar, *, on_new_plot=None) -> None:
+    # Layer (a single layer number) — first control. Each layer is its own
+    # file; this is a view filter on the cache, not a store-materialisation
+    # bound (those live in the backstage DataStore settings).
+    toolbar.addWidget(_muted("Layer"))
+    layer = QSpinBox()
+    layer.setRange(1, 100_000)
+    layer.setValue(1)
+    layer.setFixedWidth(80)
+    toolbar.addWidget(layer)
+    # New plot — second control. (Will open plot setup once wired.)
+    new_plot = _action(toolbar, "New plot")
+    if on_new_plot is not None:
+        new_plot.triggered.connect(on_new_plot)
+    toolbar.addSeparator()
     # Columns
     _action(toolbar, "Add column")       # single button -> popup w/ mode spinner
     _action(toolbar, "Remove")
-    _action(toolbar, "Rename")
     _action(toolbar, "Show/hide")
     toolbar.addSeparator()
-    # View filters — query the DataStore cache down to a subregion/sub-range
-    # (cheap; no rebuild). The store's own materialisation bounds live in the
-    # backstage DataStore settings, not here.
-    toolbar.addWidget(_muted("Layer"))
-    layer = QComboBox()
-    layer.addItems(["All layers", "Single…", "Range…"])
-    layer.setFixedWidth(110)
-    toolbar.addWidget(layer)
+    # View filters on the cache (cheap; no rebuild).
     _action(toolbar, "X/Y bounds")
     _action(toolbar, "Filter")
     _action(toolbar, "Clear filters")
-    toolbar.addSeparator()
-    # Plot
-    _action(toolbar, "New plot")
     toolbar.addSeparator()
     # Export
     _action(toolbar, "Export to Excel")
