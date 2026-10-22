@@ -1,10 +1,13 @@
 """File tab — the backstage, modelled on PowerPoint's File view.
 
-Full-window takeover (no per-tab toolbar). Left sidebar of file actions, a main
-area with the two primary action tiles and a Recent / Favourites / Search strip.
+Full-window takeover (no per-tab toolbar). Left sidebar of file actions; a main
+area that stacks a Start page (primary tiles + Recent/Favourites/Search) and a
+DataStore page. The DataStore entry appears dynamically once a build is loaded
+— the backstage is where the parquet-cache definition (columns, ranges, bounds,
+pipeline) is created and rebuilt.
 
-Inert except for two *structural* navigation signals the main window uses to
-move between surfaces: ``loadRequested`` and ``createExcelRequested``.
+Inert except for *structural* navigation signals the main window uses:
+``loadRequested``, ``createExcelRequested``, and ``datastoreCreateRequested``.
 """
 
 from __future__ import annotations
@@ -18,9 +21,13 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+
+from .datastore_settings import DataStoreSettings
 
 # Placeholder recent items, purely so the strip looks real while unwired.
 _RECENT = [
@@ -52,6 +59,7 @@ def _tile(title: str, subtitle: str) -> QPushButton:
 class Backstage(QWidget):
     loadRequested = pyqtSignal()
     createExcelRequested = pyqtSignal()
+    datastoreCreateRequested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -84,6 +92,9 @@ class Backstage(QWidget):
         self.btn_load = add("Load packet data", primary=True)
         self.btn_excel = add("Create Excel from AMPM", primary=True)
         lay.addSpacing(8)
+        # Appears only once a build is loaded.
+        self.btn_datastore = add("DataStore")
+        self.btn_datastore.setVisible(False)
         self.btn_open = add("Open")
         self.btn_export = add("Export")
         self.btn_info = add("Info")
@@ -94,12 +105,23 @@ class Backstage(QWidget):
         self.btn_load.clicked.connect(self.loadRequested)
         self.btn_open.clicked.connect(self.loadRequested)
         self.btn_excel.clicked.connect(self.createExcelRequested)
+        self.btn_datastore.clicked.connect(self.show_datastore_page)
         return bar
 
-    # -- main area -----------------------------------------------------
+    # -- main area (stacked: Start / DataStore) ------------------------
     def _build_main(self) -> QWidget:
-        main = QWidget()
-        lay = QVBoxLayout(main)
+        container = QWidget()
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.main_stack = QStackedWidget()
+        outer.addWidget(self.main_stack)
+        self.main_stack.addWidget(self._start_page())       # index 0
+        self.main_stack.addWidget(self._datastore_page())   # index 1
+        return container
+
+    def _start_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
         lay.setContentsMargins(32, 28, 32, 28)
         lay.setSpacing(18)
 
@@ -147,11 +169,51 @@ class Backstage(QWidget):
         self.recent = QListWidget()
         self.recent.addItems(_RECENT)
         lay.addWidget(self.recent, 1)
+        return page
 
-        return main
+    def _datastore_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setSpacing(10)
+
+        heading = QLabel("DataStore")
+        heading.setProperty("class", "SectionHeading")
+        lay.addWidget(heading)
+        sub = QLabel(
+            "Define what gets materialised into the parquet cache for this "
+            "build. View filters in the Data tab query this cache on top."
+        )
+        sub.setProperty("class", "TileSub")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.ds_form = DataStoreSettings()
+        self.ds_form.createRequested.connect(self.datastoreCreateRequested)
+        scroll.setWidget(self.ds_form)
+        lay.addWidget(scroll, 1)
+        return page
 
     def _divider(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
         return line
+
+    # -- state / navigation --------------------------------------------
+    def set_build_loaded(self, loaded: bool) -> None:
+        self.btn_datastore.setVisible(loaded)
+        if not loaded:
+            self.show_start_page()
+
+    def show_datastore_page(self) -> None:
+        self.main_stack.setCurrentIndex(1)
+
+    def show_start_page(self) -> None:
+        self.main_stack.setCurrentIndex(0)
+
+    def set_datastore_exists(self, exists: bool) -> None:
+        self.ds_form.set_exists(exists)

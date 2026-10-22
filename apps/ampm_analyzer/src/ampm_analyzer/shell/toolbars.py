@@ -78,7 +78,9 @@ def populate_data(toolbar: QToolBar) -> None:
     _action(toolbar, "Rename")
     _action(toolbar, "Show/hide")
     toolbar.addSeparator()
-    # Rows / limit
+    # View filters — query the DataStore cache down to a subregion/sub-range
+    # (cheap; no rebuild). The store's own materialisation bounds live in the
+    # backstage DataStore settings, not here.
     toolbar.addWidget(_muted("Layer"))
     layer = QComboBox()
     layer.addItems(["All layers", "Single…", "Range…"])

@@ -59,10 +59,12 @@ class MainWindow(QMainWindow):
         self.tabbar.setTabsClosable(True)
         self.tabbar.setMovable(False)
 
-        plus = QToolButton()
+        self._plus = QToolButton()
+        plus = self._plus
         plus.setText("+")
         plus.setAutoRaise(True)
         plus.setToolTip("New plot")
+        plus.setVisible(False)  # only shown once off the File tab
         plus.clicked.connect(lambda: self._new_plot_tab())
 
         tab_row = QWidget()
@@ -98,6 +100,7 @@ class MainWindow(QMainWindow):
         self.backstage.createExcelRequested.connect(
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
+        self.backstage.datastoreCreateRequested.connect(self._on_datastore_created)
         self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
@@ -143,10 +146,36 @@ class MainWindow(QMainWindow):
             self.tabbar.setCurrentIndex(index)
 
     def _open_data_tab(self) -> None:
-        if self._data_tab is None:
+        first_load = self._data_tab is None
+        if first_load:
             self._data_tab = DataTab()
             self._insert_page(1, self._data_tab, "Data", closable=False)
+            self.backstage.set_build_loaded(True)  # reveal the DataStore entry
         self._select_widget(self._data_tab)
+        if first_load:
+            self._prompt_datastore()
+
+    def _prompt_datastore(self) -> None:
+        """On first load with no cache, offer to create a DataStore."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        choice = QMessageBox.question(
+            self,
+            "DataStore",
+            "No datastore exists for this build.\n\nWould you like to create one?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self.backstage.show_datastore_page()
+            self.tabbar.setCurrentIndex(0)  # to File, to configure the store
+        else:
+            self.set_status("No datastore — create one from File → DataStore to plot")
+
+    def _on_datastore_created(self) -> None:
+        self.backstage.set_datastore_exists(True)
+        if self._data_tab is not None:
+            self._select_widget(self._data_tab)
+        self.set_status("DataStore created — not wired yet")
 
     def _new_plot_tab(self, title: str | None = None) -> None:
         if self._data_tab is None:
@@ -207,6 +236,8 @@ class MainWindow(QMainWindow):
     def _sync_toolbar(self, index: int) -> None:
         widget: QWidget | None = self.stack.widget(index)
         kind = widget.property("tabkind") if widget is not None else "file"
+
+        self._plus.setVisible(kind != "file")  # no "+" on the backstage
 
         self.toolbar.clear()
         if kind == "file":
