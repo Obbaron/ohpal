@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QSizePolicy,
-    QSpinBox,
     QToolBar,
     QToolButton,
     QWidget,
@@ -118,17 +117,6 @@ def populate_plot(toolbar: QToolBar) -> None:
     _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)
     _action(toolbar, "Clear")
     _action(toolbar, "Invert")
-    toolbar.addSeparator()
-    # Performance
-    _action(toolbar, "Decimate", checkable=True)
-    toolbar.addWidget(_muted("Cap"))
-    cap = QSpinBox()
-    cap.setRange(1000, 100_000_000)
-    cap.setSingleStep(50_000)
-    cap.setValue(500_000)
-    cap.setGroupSeparatorShown(True)
-    cap.setFixedWidth(100)
-    toolbar.addWidget(cap)
     toolbar.addSeparator()
     # Export
     _action(toolbar, "Screenshot")
