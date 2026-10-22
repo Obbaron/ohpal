@@ -1,5 +1,11 @@
 """The main window: tab strip, context-swapping toolbar, dock, status bar.
 
+Layout order, top to bottom: the tab strip, then the context toolbar, then the
+tab's content. To put the toolbar *below* the tabs (a QMainWindow toolbar area
+always sits above the central widget), the tab bar is decoupled from the
+content: a QTabBar drives a QStackedWidget, with the toolbar between them in the
+central layout.
+
 Only *structural* navigation is wired — opening the Data tab, spawning Plot
 tabs, swapping the toolbar/dock per active tab, and the status helpers. All the
 actual data and plot actions are inert, to be connected in a later pass.
@@ -9,14 +15,16 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QProgressBar,
+    QStackedWidget,
     QStatusBar,
     QTabBar,
-    QTabWidget,
     QToolBar,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -35,18 +43,48 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.resize(1300, 820)
 
-        # Central tab strip (view switcher).
-        self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
-        self.tabs.setMovable(False)
-        self.tabs.setDocumentMode(True)
-        self.setCentralWidget(self.tabs)
+        # Central area, stacked vertically: tab strip, then toolbar, then the
+        # active tab's content.
+        central = QWidget()
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.setCentralWidget(central)
 
-        # Context-swapping toolbar (contents rebuilt per active tab).
+        # Tab strip (view switcher) with the "+" new-plot button alongside it.
+        self.tabbar = QTabBar()
+        self.tabbar.setExpanding(False)
+        self.tabbar.setDrawBase(False)
+        self.tabbar.setDocumentMode(True)
+        self.tabbar.setTabsClosable(True)
+        self.tabbar.setMovable(False)
+
+        plus = QToolButton()
+        plus.setText("+")
+        plus.setAutoRaise(True)
+        plus.setToolTip("New plot")
+        plus.clicked.connect(lambda: self._new_plot_tab())
+
+        tab_row = QWidget()
+        tab_row.setObjectName("TabRow")
+        row = QHBoxLayout(tab_row)
+        row.setContentsMargins(4, 2, 4, 0)
+        row.setSpacing(2)
+        row.addWidget(self.tabbar)
+        row.addWidget(plus)
+        row.addStretch(1)
+        root.addWidget(tab_row)
+
+        # Context-swapping toolbar — now a plain widget in the layout, below the
+        # tab strip. Contents rebuilt per active tab.
         self.toolbar = QToolBar("Main")
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
-        self.addToolBar(self.toolbar)
+        root.addWidget(self.toolbar)
+
+        # Content pages, one per tab, kept in lockstep with the tab bar.
+        self.stack = QStackedWidget()
+        root.addWidget(self.stack, 1)
 
         # Side dock (repopulates per view).
         self.dock = Dock(self)
@@ -54,29 +92,80 @@ class MainWindow(QMainWindow):
 
         self._init_statusbar()
 
-        # "+" corner button -> new Plot tab.
-        plus = QToolButton()
-        plus.setText("+")
-        plus.setToolTip("New plot")
-        plus.clicked.connect(lambda: self._new_plot_tab())
-        self.tabs.setCornerWidget(plus, Qt.Corner.TopRightCorner)
-
         # File (backstage) tab — pinned left-most, non-closable.
         self.backstage = Backstage()
         self.backstage.loadRequested.connect(self._open_data_tab)
         self.backstage.createExcelRequested.connect(
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
-        self.tabs.addTab(self.backstage, "File")
-        self._lock_tab(0)
+        self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
 
-        self.tabs.currentChanged.connect(self._sync_toolbar)
-        self.tabs.tabCloseRequested.connect(self._close_tab)
+        self.tabbar.currentChanged.connect(self._on_tab_changed)
+        self.tabbar.tabCloseRequested.connect(self._close_tab)
 
-        self._sync_toolbar(self.tabs.currentIndex())
+        self.tabbar.setCurrentIndex(0)
+        self._on_tab_changed(0)
         self.set_status("Ready")
+
+    # -- page/tab management (tab bar + stack kept in lockstep) --------
+    def _add_page(self, widget: QWidget, title: str, *, closable: bool = True) -> int:
+        index = self.tabbar.addTab(title)
+        self.stack.insertWidget(index, widget)
+        if not closable:
+            self._lock_tab(index)
+        return index
+
+    def _insert_page(
+        self, index: int, widget: QWidget, title: str, *, closable: bool = True
+    ) -> int:
+        self.tabbar.insertTab(index, title)
+        self.stack.insertWidget(index, widget)
+        if not closable:
+            self._lock_tab(index)
+        return index
+
+    def _lock_tab(self, index: int) -> None:
+        """Remove the close button so this tab can't be closed."""
+        for pos in (
+            QTabBar.ButtonPosition.RightSide,
+            QTabBar.ButtonPosition.LeftSide,
+        ):
+            btn = self.tabbar.tabButton(index, pos)
+            if btn is not None:
+                btn.deleteLater()
+            self.tabbar.setTabButton(index, pos, None)
+
+    def _select_widget(self, widget: QWidget) -> None:
+        index = self.stack.indexOf(widget)
+        if index >= 0:
+            self.tabbar.setCurrentIndex(index)
+
+    def _open_data_tab(self) -> None:
+        if self._data_tab is None:
+            self._data_tab = DataTab()
+            self._insert_page(1, self._data_tab, "Data", closable=False)
+        self._select_widget(self._data_tab)
+
+    def _new_plot_tab(self, title: str | None = None) -> None:
+        if self._data_tab is None:
+            self._open_data_tab()
+        tab = PlotTab(title)
+        index = self._add_page(tab, tab.title, closable=True)
+        self.tabbar.setCurrentIndex(index)
+
+    def _close_tab(self, index: int) -> None:
+        widget = self.stack.widget(index)
+        if widget is not None and widget.property("tabkind") == "plot":
+            self.tabbar.removeTab(index)
+            self.stack.removeWidget(widget)
+            widget.deleteLater()
+
+    def _on_tab_changed(self, index: int) -> None:
+        if 0 <= index < self.stack.count():
+            self.stack.setCurrentIndex(index)
+        self._sync_toolbar(index)
 
     # -- status bar ----------------------------------------------------
     def _init_statusbar(self) -> None:
@@ -114,42 +203,9 @@ class MainWindow(QMainWindow):
             self._progress.setRange(0, 100)
         self._progress.setVisible(on)
 
-    # -- tab helpers ---------------------------------------------------
-    def _lock_tab(self, index: int) -> None:
-        """Remove the close button so this tab can't be closed."""
-        bar = self.tabs.tabBar()
-        for pos in (
-            QTabBar.ButtonPosition.RightSide,
-            QTabBar.ButtonPosition.LeftSide,
-        ):
-            btn = bar.tabButton(index, pos)
-            if btn is not None:
-                btn.deleteLater()
-            bar.setTabButton(index, pos, None)
-
-    def _open_data_tab(self) -> None:
-        if self._data_tab is None:
-            self._data_tab = DataTab()
-            index = self.tabs.insertTab(1, self._data_tab, "Data")
-            self._lock_tab(index)  # one Data tab; close the packet via File
-        self.tabs.setCurrentWidget(self._data_tab)
-
-    def _new_plot_tab(self, title: str | None = None) -> None:
-        if self._data_tab is None:
-            self._open_data_tab()
-        tab = PlotTab(title)
-        index = self.tabs.addTab(tab, tab.title)
-        self.tabs.setCurrentIndex(index)
-
-    def _close_tab(self, index: int) -> None:
-        widget = self.tabs.widget(index)
-        if widget is not None and widget.property("tabkind") == "plot":
-            self.tabs.removeTab(index)
-            widget.deleteLater()
-
     # -- toolbar swap --------------------------------------------------
     def _sync_toolbar(self, index: int) -> None:
-        widget: QWidget | None = self.tabs.widget(index)
+        widget: QWidget | None = self.stack.widget(index)
         kind = widget.property("tabkind") if widget is not None else "file"
 
         self.toolbar.clear()
