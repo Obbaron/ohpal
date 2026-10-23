@@ -165,8 +165,12 @@ def initial_scheme(app) -> str:
 
 def apply_theme(app, scheme: str = "light") -> None:
     """Apply Fusion + the scheme's palette + the stylesheet, and repolish."""
-    app.setStyle("Fusion")
+    app.setStyle("Fusion")  # fresh style; also resets palette to standard
     app.setPalette(_PALETTES.get(scheme, _light)())
+    # Clearing before re-setting forces the stylesheet to be re-parsed against
+    # the new palette; re-setting the identical string alone can be a no-op, so
+    # the palette(...) references wouldn't pick up the new colours.
+    app.setStyleSheet("")
     app.setStyleSheet(STYLESHEET)
     # Repolish existing widgets so a runtime switch repaints cleanly.
     for widget in app.allWidgets():

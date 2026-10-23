@@ -4,8 +4,10 @@ One QToolBar on the main window is rebuilt per active tab:
   * File  -> toolbar hidden (backstage has no toolbar)
   * Data  -> data toolset
   * Plot  -> plot toolset
-Undo / redo / help are glyph (icon-only) buttons pinned to the right and are
-re-appended on every rebuild so they persist across working tabs.
+
+The global cluster (undo / redo / help / settings) is NOT here — it lives in
+the tab row (see window.py) so it stays reachable on every tab, including File
+where this toolbar is hidden.
 
 Everything here is inert — actions carry no connections. Discrete
 actions/toggles/presets live on the toolbar; sliders live in the dock.
@@ -17,11 +19,8 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
-    QSizePolicy,
     QSpinBox,
     QToolBar,
-    QToolButton,
-    QWidget,
 )
 
 
@@ -47,33 +46,8 @@ def _muted(text: str) -> QLabel:
     return lab
 
 
-def _spacer() -> QWidget:
-    w = QWidget()
-    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    return w
-
-
-# -- right-hand persistent cluster ------------------------------------
-def append_global(toolbar: QToolBar, *, on_settings=None) -> dict[str, QToolButton]:
-    """Expanding spacer, then undo / redo / help / settings glyphs pinned right."""
-    toolbar.addWidget(_spacer())
-    glyphs = {"undo": "↶", "redo": "↷", "help": "?", "settings": "⚙"}
-    tips = {"undo": "Undo", "redo": "Redo", "help": "Help", "settings": "Settings"}
-    buttons: dict[str, QToolButton] = {}
-    for key, glyph in glyphs.items():
-        btn = QToolButton()
-        btn.setText(glyph)
-        btn.setToolTip(tips[key])
-        btn.setProperty("class", "ToolbarGlyph")
-        toolbar.addWidget(btn)
-        buttons[key] = btn
-    if on_settings is not None:
-        buttons["settings"].clicked.connect(on_settings)
-    return buttons
-
-
 # -- Data toolset ------------------------------------------------------
-def populate_data(toolbar: QToolBar, *, on_new_plot=None, on_settings=None) -> None:
+def populate_data(toolbar: QToolBar, *, on_new_plot=None) -> None:
     # Layer (a single layer number) — first control. Each layer is its own
     # file; this is a view filter on the cache, not a store-materialisation
     # bound (those live in the backstage DataStore settings).
@@ -100,11 +74,10 @@ def populate_data(toolbar: QToolBar, *, on_new_plot=None, on_settings=None) -> N
     toolbar.addSeparator()
     # Export
     _action(toolbar, "Export to Excel")
-    append_global(toolbar, on_settings=on_settings)
 
 
 # -- Plot toolset ------------------------------------------------------
-def populate_plot(toolbar: QToolBar, *, on_settings=None) -> None:
+def populate_plot(toolbar: QToolBar) -> None:
     # View
     _action(toolbar, "Reset view")
     _combo(toolbar, "View", ["Iso", "Top", "Front", "Side"], width=80)
@@ -126,4 +99,3 @@ def populate_plot(toolbar: QToolBar, *, on_settings=None) -> None:
     toolbar.addSeparator()
     # Export
     _action(toolbar, "Screenshot")
-    append_global(toolbar, on_settings=on_settings)

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTabBar,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -68,6 +69,22 @@ class MainWindow(QMainWindow):
         row.setSpacing(2)
         row.addWidget(self.tabbar)
         row.addStretch(1)
+        # Global cluster, pinned right of the tabs — persistent on every tab,
+        # including File (where the context toolbar is hidden).
+        for glyph, tip, key in (
+            ("↶", "Undo", "undo"),
+            ("↷", "Redo", "redo"),
+            ("?", "Help", "help"),
+            ("⚙", "Settings", "settings"),
+        ):
+            btn = QToolButton()
+            btn.setText(glyph)
+            btn.setToolTip(tip)
+            btn.setAutoRaise(True)
+            btn.setProperty("class", "ToolbarGlyph")
+            if key == "settings":
+                btn.clicked.connect(self._open_settings)
+            row.addWidget(btn)
         root.addWidget(tab_row)
 
         # Context-swapping toolbar — now a plain widget in the layout, below the
@@ -303,9 +320,7 @@ class MainWindow(QMainWindow):
         self.toolbar.show()
         if kind == "data":
             toolbars.populate_data(
-                self.toolbar,
-                on_new_plot=lambda: self._new_plot_tab(),
-                on_settings=self._open_settings,
+                self.toolbar, on_new_plot=lambda: self._new_plot_tab()
             )
         else:
-            toolbars.populate_plot(self.toolbar, on_settings=self._open_settings)
+            toolbars.populate_plot(self.toolbar)
