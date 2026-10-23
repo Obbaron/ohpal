@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import toolbars
+from . import theme, toolbars
 from .backstage import Backstage
 from .data_tab import DataTab
 from .dock import SidePanel
@@ -107,6 +107,15 @@ class MainWindow(QMainWindow):
         self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
+
+        # Theme: "auto" follows the OS (and keeps following live), or a fixed
+        # "light" / "dark". The launch scheme was applied in app.py.
+        self._theme_choice = "auto"
+        from PyQt6.QtWidgets import QApplication
+
+        hints = QApplication.instance().styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_os_scheme_changed)
 
         self.tabbar.currentChanged.connect(self._on_tab_changed)
         self.tabbar.tabCloseRequested.connect(self._close_tab)
@@ -239,6 +248,39 @@ class MainWindow(QMainWindow):
         """User dismissed the panel; it reopens when they revisit a plot tab."""
         self.panel.setVisible(False)
 
+    # -- settings / theme ----------------------------------------------
+    def _open_settings(self) -> None:
+        from PyQt6.QtGui import QActionGroup, QCursor
+        from PyQt6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.addSection("Theme")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for label, choice in (("Auto (system)", "auto"), ("Light", "light"), ("Dark", "dark")):
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(choice == self._theme_choice)
+            group.addAction(act)
+            act.triggered.connect(lambda _checked, c=choice: self._set_theme_choice(c))
+        menu.exec(QCursor.pos())
+
+    def _set_theme_choice(self, choice: str) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        self._theme_choice = choice
+        app = QApplication.instance()
+        scheme = theme.initial_scheme(app) if choice == "auto" else choice
+        theme.apply_theme(app, scheme)
+
+    def _on_os_scheme_changed(self, *_) -> None:
+        """When following the OS, re-apply as it flips light/dark."""
+        if self._theme_choice == "auto":
+            from PyQt6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            theme.apply_theme(app, theme.initial_scheme(app))
+
     # -- toolbar swap --------------------------------------------------
     def _sync_toolbar(self, index: int) -> None:
         widget: QWidget | None = self.stack.widget(index)
@@ -261,7 +303,9 @@ class MainWindow(QMainWindow):
         self.toolbar.show()
         if kind == "data":
             toolbars.populate_data(
-                self.toolbar, on_new_plot=lambda: self._new_plot_tab()
+                self.toolbar,
+                on_new_plot=lambda: self._new_plot_tab(),
+                on_settings=self._open_settings,
             )
         else:
-            toolbars.populate_plot(self.toolbar)
+            toolbars.populate_plot(self.toolbar, on_settings=self._open_settings)

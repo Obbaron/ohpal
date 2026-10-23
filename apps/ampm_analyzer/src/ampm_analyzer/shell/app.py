@@ -12,7 +12,7 @@ from importlib.resources import files
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication
 
-from .theme import apply_theme
+from .theme import apply_theme, initial_scheme
 from .window import MainWindow
 
 
@@ -30,7 +30,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setOrganizationName("AMPM")
     app.setApplicationName("AMPM Analyzer")
-    apply_theme(app)
+    apply_theme(app, initial_scheme(app))  # follow the OS light/dark at launch
 
     window = MainWindow()
     window.setWindowIcon(_app_icon())

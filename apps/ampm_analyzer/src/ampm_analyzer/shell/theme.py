@@ -1,153 +1,175 @@
-"""Application styling.
+"""Application theming.
 
-Light-touch so it's easy to restyle. The one layout-relevant rule here is the
-**subtle tint on the left-most File tab** (``QTabBar::tab:first``), per the
-locked design decision — a tint, not an accent-coloured block.
+The app uses the **Fusion** style (a platform-independent drawing engine) with a
+**QPalette** per theme. The palette is the single source of truth: the
+stylesheet below references ``palette(...)`` roles, so it follows whichever
+palette is active and never needs re-interpolating. Switching theme is just
+swapping the palette.
+
+- ``apply_theme(app, scheme)`` — sets Fusion + the scheme's palette + the QSS,
+  and repolishes existing widgets (so it works at startup *and* at runtime).
+- ``initial_scheme(app)`` — picks "light"/"dark" from the OS via
+  ``QStyleHints.colorScheme()`` at launch.
+
+Adding a theme (e.g. high-contrast) is just another palette builder — the style,
+the stylesheet and the switch machinery don't change.
 """
 
 from __future__ import annotations
 
-# A restrained neutral palette. Swap these for the project's own later.
-BG = "#f4f5f7"
-SURFACE = "#ffffff"
-BORDER = "#d7dbe0"
-TEXT = "#1f2328"
-MUTED = "#6b7280"
-ACCENT = "#3b6ea5"
-FILE_TINT = "#e9eef5"  # subtle tint for the File tab
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPalette
 
-STYLESHEET = f"""
-QMainWindow, QWidget {{
-    background: {BG};
-    color: {TEXT};
-    font-size: 13px;
-}}
+Role = QPalette.ColorRole
+Group = QPalette.ColorGroup
+
+
+def _palette(colors: dict, *, disabled_text: str, disabled_button: str) -> QPalette:
+    p = QPalette()
+    for role, value in colors.items():
+        p.setColor(role, QColor(value))
+    # Disabled group: dimmed text so greyed-out controls read correctly.
+    for role in (Role.Text, Role.WindowText, Role.ButtonText):
+        p.setColor(Group.Disabled, role, QColor(disabled_text))
+    p.setColor(Group.Disabled, Role.Button, QColor(disabled_button))
+    return p
+
+
+def _light() -> QPalette:
+    return _palette(
+        {
+            Role.Window: "#f4f5f7",          # app background
+            Role.WindowText: "#1f2328",      # primary text
+            Role.Base: "#ffffff",            # inputs, table, surfaces
+            Role.AlternateBase: "#e9eef5",   # tints: sidebar, headers, File tab
+            Role.Text: "#1f2328",
+            Role.PlaceholderText: "#6b7280", # muted / secondary text
+            Role.Button: "#ffffff",
+            Role.ButtonText: "#1f2328",
+            Role.BrightText: "#ffffff",
+            Role.Highlight: "#3b6ea5",       # accent (selection, checked)
+            Role.HighlightedText: "#ffffff",
+            Role.Link: "#3b6ea5",
+            Role.ToolTipBase: "#ffffff",
+            Role.ToolTipText: "#1f2328",
+            Role.Mid: "#d7dbe0",             # borders / strokes
+            Role.Dark: "#b9bfc7",
+            Role.Shadow: "#c9ced5",
+        },
+        disabled_text="#9aa1ab",
+        disabled_button="#eef0f3",
+    )
+
+
+def _dark() -> QPalette:
+    return _palette(
+        {
+            Role.Window: "#2b2d30",
+            Role.WindowText: "#e6e6e6",
+            Role.Base: "#1e1f22",
+            Role.AlternateBase: "#34373b",
+            Role.Text: "#e6e6e6",
+            Role.PlaceholderText: "#9aa1ab",
+            Role.Button: "#34373b",
+            Role.ButtonText: "#e6e6e6",
+            Role.BrightText: "#ffffff",
+            Role.Highlight: "#3b82f6",       # brighter accent for dark
+            Role.HighlightedText: "#ffffff",
+            Role.Link: "#5a9bf0",
+            Role.ToolTipBase: "#34373b",
+            Role.ToolTipText: "#e6e6e6",
+            Role.Mid: "#45494e",
+            Role.Dark: "#17181a",
+            Role.Shadow: "#101113",
+        },
+        disabled_text="#6b7280",
+        disabled_button="#2b2d30",
+    )
+
+
+_PALETTES = {"light": _light, "dark": _dark}
+
+# Stylesheet references palette(...) roles only, so it follows the active
+# palette. Base widgets (combos, spin boxes, sliders, group boxes, line edits,
+# scrollbars) are left to Fusion + the palette; only bespoke surfaces are styled.
+STYLESHEET = """
+QMainWindow, QWidget { font-size: 13px; }
 
 /* --- Tab strip (view switcher) --- */
-QTabWidget::pane {{
-    border: 1px solid {BORDER};
-    background: {SURFACE};
-    top: -1px;
-}}
-QTabBar::tab {{
-    background: {BG};
-    border: 1px solid {BORDER};
+QTabBar::tab {
+    background: palette(window);
+    border: 1px solid palette(mid);
     border-bottom: none;
     padding: 6px 14px;
     margin-right: 2px;
     border-top-left-radius: 5px;
     border-top-right-radius: 5px;
-    color: {MUTED};
-}}
-QTabBar::tab:selected {{
-    background: {SURFACE};
-    color: {TEXT};
-}}
-/* The File tab, pinned left-most, distinguished by a subtle tint only. */
-QTabBar::tab:first {{
-    background: {FILE_TINT};
-    color: {TEXT};
-    font-weight: 600;
-}}
-QTabBar::tab:first:selected {{
-    background: {SURFACE};
-}}
+    color: palette(placeholder-text);
+}
+QTabBar::tab:selected { background: palette(base); color: palette(window-text); }
+/* File tab, pinned left-most, distinguished by a subtle tint only. */
+QTabBar::tab:first { background: palette(alternate-base); color: palette(window-text); font-weight: 600; }
+QTabBar::tab:first:selected { background: palette(base); }
 
 /* --- Toolbar --- */
-QToolBar {{
-    background: {SURFACE};
-    border-bottom: 1px solid {BORDER};
-    spacing: 3px;
-    padding: 3px;
-}}
-QToolButton {{
-    padding: 4px 8px;
-    border-radius: 4px;
-    color: {TEXT};
-}}
-QToolButton:hover {{ background: {BG}; }}
-QToolButton:checked {{ background: {FILE_TINT}; }}
-QToolBar QComboBox, QToolBar QSpinBox, QToolBar QDoubleSpinBox {{
-    padding: 2px 4px;
-    min-height: 20px;
-}}
-QToolBar QLabel {{ color: {MUTED}; padding: 0 2px 0 6px; }}
-.ToolbarGlyph {{ font-size: 15px; padding: 4px 8px; }}
+QToolBar { background: palette(base); border-bottom: 1px solid palette(mid); spacing: 3px; padding: 3px; }
+QToolButton { padding: 4px 8px; border-radius: 4px; color: palette(button-text); }
+QToolButton:hover { background: palette(window); }
+QToolButton:checked { background: palette(alternate-base); }
+QToolBar QLabel { color: palette(placeholder-text); padding: 0 2px 0 6px; }
+.ToolbarGlyph { font-size: 15px; padding: 4px 8px; }
 
 /* --- Backstage --- */
-#Backstage {{ background: {SURFACE}; }}
-#BackstageSidebar {{
-    background: {FILE_TINT};
-    border-right: 1px solid {BORDER};
-}}
-#BackstageSidebar QPushButton {{
-    text-align: left;
-    padding: 9px 16px;
-    border: none;
-    border-radius: 0;
-    color: {TEXT};
-}}
-#BackstageSidebar QPushButton:hover {{ background: {SURFACE}; }}
-#BackstageSidebar QPushButton[primary="true"] {{ font-weight: 600; }}
-.Tile {{
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-}}
-.Tile:hover {{ border-color: {ACCENT}; }}
-.TileTitle {{ font-size: 15px; font-weight: 600; }}
-.TileSub {{ color: {MUTED}; }}
-.SectionHeading {{ font-size: 18px; font-weight: 600; }}
+#Backstage { background: palette(base); }
+#BackstageSidebar { background: palette(alternate-base); border-right: 1px solid palette(mid); }
+#BackstageSidebar QPushButton { text-align: left; padding: 9px 16px; border: none; border-radius: 0; color: palette(window-text); }
+#BackstageSidebar QPushButton:hover { background: palette(base); }
+#BackstageSidebar QPushButton[primary="true"] { font-weight: 600; }
+.Tile { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }
+.Tile:hover { border-color: palette(highlight); }
+.TileTitle { font-size: 15px; font-weight: 600; }
+.TileSub { color: palette(placeholder-text); }
+.SectionHeading { font-size: 18px; font-weight: 600; }
 
-QPushButton {{
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 5px 12px;
-}}
-QPushButton:hover {{ border-color: {ACCENT}; }}
-QPushButton:checked {{ background: {ACCENT}; color: white; border-color: {ACCENT}; }}
+QPushButton { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; padding: 5px 12px; }
+QPushButton:hover { border-color: palette(highlight); }
+QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); border-color: palette(highlight); }
 
 /* --- Grid --- */
-QTableView {{
-    background: {SURFACE};
-    gridline-color: {BORDER};
-    selection-background-color: {FILE_TINT};
-    selection-color: {TEXT};
-}}
-QHeaderView::section {{
-    background: {BG};
-    padding: 5px 8px;
-    border: none;
-    border-right: 1px solid {BORDER};
-    border-bottom: 1px solid {BORDER};
-    color: {MUTED};
-    font-weight: 600;
-}}
+QTableView { background: palette(base); gridline-color: palette(mid); selection-background-color: palette(alternate-base); selection-color: palette(window-text); }
+QHeaderView::section { background: palette(window); padding: 5px 8px; border: none; border-right: 1px solid palette(mid); border-bottom: 1px solid palette(mid); color: palette(placeholder-text); font-weight: 600; }
 
 /* --- Side panel --- */
-#SidePanel {{
-    background: {SURFACE};
-    border-left: 1px solid {BORDER};
-}}
-#PanelHeader {{
-    background: {FILE_TINT};
-    border-bottom: 1px solid {BORDER};
-}}
-#DockBody {{ background: {SURFACE}; }}
-.PanelHeading {{ font-weight: 600; color: {MUTED}; }}
+#SidePanel { background: palette(base); border-left: 1px solid palette(mid); }
+#PanelHeader { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
+#DockBody { background: palette(base); }
+.PanelHeading { font-weight: 600; color: palette(placeholder-text); }
 
 /* --- Status bar --- */
-QStatusBar {{
-    background: {SURFACE};
-    border-top: 1px solid {BORDER};
-}}
-QStatusBar::item {{ border: none; }}
-#StatusLog {{ color: {MUTED}; }}
-.StatChip {{ color: {MUTED}; padding: 0 8px; border-left: 1px solid {BORDER}; }}
+QStatusBar { background: palette(base); border-top: 1px solid palette(mid); }
+QStatusBar::item { border: none; }
+#StatusLog { color: palette(placeholder-text); }
+.StatChip { color: palette(placeholder-text); padding: 0 8px; border-left: 1px solid palette(mid); }
 """
 
 
-def apply_theme(app) -> None:
-    """Apply the stylesheet to a QApplication."""
+def initial_scheme(app) -> str:
+    """Pick the launch theme from the OS preference (Qt 6.5+)."""
+    try:
+        if app.styleHints().colorScheme() == Qt.ColorScheme.Dark:
+            return "dark"
+    except Exception:  # noqa: BLE001 - fall back if unavailable
+        pass
+    return "light"
+
+
+def apply_theme(app, scheme: str = "light") -> None:
+    """Apply Fusion + the scheme's palette + the stylesheet, and repolish."""
+    app.setStyle("Fusion")
+    app.setPalette(_PALETTES.get(scheme, _light)())
     app.setStyleSheet(STYLESHEET)
+    # Repolish existing widgets so a runtime switch repaints cleanly.
+    for widget in app.allWidgets():
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
