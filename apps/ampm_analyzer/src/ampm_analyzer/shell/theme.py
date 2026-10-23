@@ -153,6 +153,11 @@ QStatusBar::item { border: none; }
 """
 
 
+def icon_color(app) -> str:
+    """Hex colour icons should be tinted to for the active palette."""
+    return app.palette().color(Role.WindowText).name()
+
+
 def initial_scheme(app) -> str:
     """Pick the launch theme from the OS preference (Qt 6.5+)."""
     try:

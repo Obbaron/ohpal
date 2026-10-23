@@ -23,10 +23,16 @@ from PyQt6.QtWidgets import (
     QToolBar,
 )
 
+from . import icons
+
 
 # -- small builders ----------------------------------------------------
-def _action(toolbar: QToolBar, text: str, *, checkable: bool = False) -> QAction:
+def _action(
+    toolbar: QToolBar, text: str, icon: str, color: str, *, checkable: bool = False
+) -> QAction:
     act = QAction(text, toolbar)
+    act.setToolTip(text)  # icon-only toolbar -> text becomes the tooltip
+    act.setIcon(icons.ui(icon, color))
     act.setCheckable(checkable)
     toolbar.addAction(act)
     return act
@@ -47,7 +53,7 @@ def _muted(text: str) -> QLabel:
 
 
 # -- Data toolset ------------------------------------------------------
-def populate_data(toolbar: QToolBar, *, on_new_plot=None) -> None:
+def populate_data(toolbar: QToolBar, *, color: str, on_new_plot=None) -> None:
     # Layer (a single layer number) — first control. Each layer is its own
     # file; this is a view filter on the cache, not a store-materialisation
     # bound (those live in the backstage DataStore settings).
@@ -58,44 +64,44 @@ def populate_data(toolbar: QToolBar, *, on_new_plot=None) -> None:
     layer.setFixedWidth(80)
     toolbar.addWidget(layer)
     # New plot — second control. (Will open plot setup once wired.)
-    new_plot = _action(toolbar, "New plot")
+    new_plot = _action(toolbar, "New plot", "new_plot", color)
     if on_new_plot is not None:
         new_plot.triggered.connect(on_new_plot)
     toolbar.addSeparator()
     # Columns
-    _action(toolbar, "Add column")       # single button -> popup w/ mode spinner
-    _action(toolbar, "Remove")
-    _action(toolbar, "Show/hide")
+    _action(toolbar, "Add column", "add_column", color)  # popup w/ mode spinner
+    _action(toolbar, "Remove", "remove_column", color)
+    _action(toolbar, "Show/hide", "show_hide", color)
     toolbar.addSeparator()
     # View filters on the cache (cheap; no rebuild).
-    _action(toolbar, "X/Y bounds")
-    _action(toolbar, "Filter")
-    _action(toolbar, "Clear filters")
+    _action(toolbar, "X/Y bounds", "xy_bounds", color)
+    _action(toolbar, "Filter", "filter", color)
+    _action(toolbar, "Clear filters", "clear_filters", color)
     toolbar.addSeparator()
     # Export
-    _action(toolbar, "Export to Excel")
+    _action(toolbar, "Export to Excel", "export_excel", color)
 
 
 # -- Plot toolset ------------------------------------------------------
-def populate_plot(toolbar: QToolBar) -> None:
+def populate_plot(toolbar: QToolBar, *, color: str) -> None:
     # View
-    _action(toolbar, "Reset view")
+    _action(toolbar, "Reset view", "reset_view", color)
     _combo(toolbar, "View", ["Iso", "Top", "Front", "Side"], width=80)
     _combo(toolbar, "Proj", ["Perspective", "Ortho"], width=110)
     toolbar.addSeparator()
     # Scene toggles (display on/off). Legend joins the scene toggles; colour-by,
     # colormap, scale and marker now live in the side panel. "Colour by" is a
     # plot input (a data column) and belongs to plot generation, not here.
-    axes = _action(toolbar, "Axes", checkable=True)
+    axes = _action(toolbar, "Axes", "axes", color, checkable=True)
     axes.setChecked(True)
-    _action(toolbar, "Grid", checkable=True)
-    _action(toolbar, "BBox", checkable=True)
-    _action(toolbar, "Legend", checkable=True)
+    _action(toolbar, "Grid", "grid", color, checkable=True)
+    _action(toolbar, "BBox", "bbox", color, checkable=True)
+    _action(toolbar, "Legend", "legend", color, checkable=True)
     toolbar.addSeparator()
     # Select
     _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)
-    _action(toolbar, "Clear")
-    _action(toolbar, "Invert")
+    _action(toolbar, "Clear", "clear_sel", color)
+    _action(toolbar, "Invert", "invert_sel", color)
     toolbar.addSeparator()
     # Export
-    _action(toolbar, "Screenshot")
+    _action(toolbar, "Screenshot", "screenshot", color)

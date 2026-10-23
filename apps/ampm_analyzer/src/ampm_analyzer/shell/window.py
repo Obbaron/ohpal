@@ -13,8 +13,9 @@ actual data and plot actions are inert, to be connected in a later pass.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -29,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import theme, toolbars
+from . import icons, theme, toolbars
 from .backstage import Backstage
 from .data_tab import DataTab
 from .dock import SidePanel
@@ -71,27 +72,28 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         # Global cluster, pinned right of the tabs — persistent on every tab,
         # including File (where the context toolbar is hidden).
-        for glyph, tip, key in (
-            ("↶", "Undo", "undo"),
-            ("↷", "Redo", "redo"),
-            ("?", "Help", "help"),
-            ("⚙", "Settings", "settings"),
-        ):
+        color = self._icon_color()
+        self._global_btns: dict[str, QToolButton] = {}
+        for tip, key in (("Undo", "undo"), ("Redo", "redo"), ("Help", "help"), ("Settings", "settings")):
             btn = QToolButton()
-            btn.setText(glyph)
             btn.setToolTip(tip)
             btn.setAutoRaise(True)
-            btn.setProperty("class", "ToolbarGlyph")
+            btn.setIconSize(QSize(18, 18))
+            btn.setIcon(icons.ui(key, color))
             if key == "settings":
                 btn.clicked.connect(self._open_settings)
             row.addWidget(btn)
+            self._global_btns[key] = btn
         root.addWidget(tab_row)
 
         # Context-swapping toolbar — now a plain widget in the layout, below the
-        # tab strip. Contents rebuilt per active tab.
+        # tab strip. Contents rebuilt per active tab. Icon-only (Office-style);
+        # each action's text becomes its tooltip.
         self.toolbar = QToolBar("Main")
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.toolbar.setIconSize(QSize(18, 18))
         root.addWidget(self.toolbar)
 
         # Content row: the tab pages, with the side panel beside them (so the
@@ -121,6 +123,7 @@ class MainWindow(QMainWindow):
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
         self.backstage.datastoreCreateRequested.connect(self._on_datastore_created)
+        self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
@@ -282,21 +285,32 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _checked, c=choice: self._set_theme_choice(c))
         menu.exec(QCursor.pos())
 
-    def _set_theme_choice(self, choice: str) -> None:
-        from PyQt6.QtWidgets import QApplication
+    def _icon_color(self) -> str:
+        return theme.icon_color(QApplication.instance())
 
+    def _apply_scheme(self, scheme: str) -> None:
+        app = QApplication.instance()
+        theme.apply_theme(app, scheme)
+        icons.clear_cache()  # drop icons tinted for the old palette
+        self._refresh_icons()
+
+    def _refresh_icons(self) -> None:
+        color = self._icon_color()
+        for key, btn in self._global_btns.items():
+            btn.setIcon(icons.ui(key, color))
+        self._sync_toolbar(self.tabbar.currentIndex())  # rebuild with new colour
+        self.backstage.apply_icons(color)
+
+    def _set_theme_choice(self, choice: str) -> None:
         self._theme_choice = choice
         app = QApplication.instance()
         scheme = theme.initial_scheme(app) if choice == "auto" else choice
-        theme.apply_theme(app, scheme)
+        self._apply_scheme(scheme)
 
     def _on_os_scheme_changed(self, *_) -> None:
         """When following the OS, re-apply as it flips light/dark."""
         if self._theme_choice == "auto":
-            from PyQt6.QtWidgets import QApplication
-
-            app = QApplication.instance()
-            theme.apply_theme(app, theme.initial_scheme(app))
+            self._apply_scheme(theme.initial_scheme(QApplication.instance()))
 
     # -- toolbar swap --------------------------------------------------
     def _sync_toolbar(self, index: int) -> None:
@@ -318,9 +332,10 @@ class MainWindow(QMainWindow):
             return
 
         self.toolbar.show()
+        color = self._icon_color()
         if kind == "data":
             toolbars.populate_data(
-                self.toolbar, on_new_plot=lambda: self._new_plot_tab()
+                self.toolbar, color=color, on_new_plot=lambda: self._new_plot_tab()
             )
         else:
-            toolbars.populate_plot(self.toolbar)
+            toolbars.populate_plot(self.toolbar, color=color)

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import icons
 from .datastore_settings import DataStoreSettings
 
 # Placeholder recent items, purely so the strip looks real while unwired.
@@ -217,3 +218,17 @@ class Backstage(QWidget):
 
     def set_datastore_exists(self, exists: bool) -> None:
         self.ds_form.set_exists(exists)
+
+    def apply_icons(self, color: str) -> None:
+        """(Re)tint the sidebar icons for the active theme."""
+        mapping = {
+            self.btn_load: "load_packet",
+            self.btn_excel: "create_excel",
+            self.btn_datastore: "datastore",
+            self.btn_open: "open",
+            self.btn_export: "export",
+            self.btn_info: "info",
+            self.btn_close: "close",
+        }
+        for button, name in mapping.items():
+            button.setIcon(icons.ui(name, color))
