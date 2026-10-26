@@ -80,8 +80,35 @@ class DataTab(QWidget):
                 self.table.setItem(r, c, QTableWidgetItem(_sample_value(col, r)))
 
         lay.addWidget(self.table)
+        self._columns: list[str] = list(COLUMNS)
 
     def selected_columns(self) -> list[str]:
         """Headers of the currently selected columns (used later by New plot)."""
         cols = sorted({idx.column() for idx in self.table.selectedIndexes()})
-        return [COLUMNS[c] for c in cols]
+        return [self._columns[c] for c in cols if c < len(self._columns)]
+
+    def set_dataframe(self, df) -> None:
+        """Populate the grid from a Polars DataFrame (Stage 1: capped sample).
+
+        This is a simple QTableWidget fill; the virtualised model arrives in
+        Stage 3. ``df`` is expected to be already row-capped by the caller.
+        """
+        cols = list(df.columns)
+        self._columns = cols
+        self.table.clear()
+        self.table.setColumnCount(len(cols))
+        self.table.setRowCount(df.height)
+        self.table.setHorizontalHeaderLabels(cols)
+
+        # Iterate columns (Polars is columnar) and format cells.
+        for c, name in enumerate(cols):
+            series = df[name]
+            is_float = series.dtype.is_float()
+            for r, value in enumerate(series.to_list()):
+                if value is None:
+                    text = ""
+                elif is_float:
+                    text = f"{value:.4g}"
+                else:
+                    text = str(value)
+                self.table.setItem(r, c, QTableWidgetItem(text))

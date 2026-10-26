@@ -32,9 +32,11 @@ from PyQt6.QtWidgets import (
 
 from . import icons, theme, toolbars
 from .backstage import Backstage
+from .controller import AppController
 from .data_tab import DataTab
 from .dock import SidePanel
 from .plot_tab import PlotTab
+from .state import BuildSession
 
 APP_TITLE = "AMPM Analyzer"
 
@@ -116,9 +118,18 @@ class MainWindow(QMainWindow):
 
         self._init_statusbar()
 
+        # Session + controller: the controller owns ohpal + threading; the
+        # window only reacts to session signals (on the main thread).
+        self.session = BuildSession()
+        self.controller = AppController(self, self.session)
+        self.session.loadStarted.connect(self._on_load_started)
+        self.session.buildLoaded.connect(self._on_build_loaded)
+        self.session.queryReady.connect(self._on_query_ready)
+        self.session.loadFailed.connect(self._on_load_failed)
+
         # File (backstage) tab — pinned left-most, non-closable.
         self.backstage = Backstage()
-        self.backstage.loadRequested.connect(self._open_data_tab)
+        self.backstage.loadRequested.connect(self.controller.load_build)
         self.backstage.createExcelRequested.connect(
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
@@ -177,15 +188,49 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.tabbar.setCurrentIndex(index)
 
-    def _open_data_tab(self) -> None:
-        first_load = self._data_tab is None
-        if first_load:
+    def _ensure_data_tab(self) -> DataTab:
+        """Create the single Data tab if needed; return it (no side prompts)."""
+        if self._data_tab is None:
             self._data_tab = DataTab()
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
+        return self._data_tab
+
+    # -- load lifecycle (driven by BuildSession signals) ---------------
+    def _on_load_started(self, label: str) -> None:
+        self.backstage.set_loading(True)
+        self.show_progress(True, busy=True)
+        self.set_status(f"Loading {label}…")
+
+    def _on_build_loaded(self, store) -> None:
+        self._ensure_data_tab()
         self._select_widget(self._data_tab)
-        if first_load:
-            self._prompt_datastore()
+        self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
+        self._stats["build"].setText(f"build: {self.session.build_name}")
+        first = store.layers[0]
+        self.set_status(f"Querying layer {first}…")
+
+    def _on_query_ready(self, result) -> None:
+        self.backstage.set_loading(False)
+        self.show_progress(False)
+        self._data_tab.set_dataframe(result.df)
+        lo, hi = result.layers
+        self._stats["points"].setText(f"points: {result.total_rows:,}")
+        self._stats["drawn"].setText(f"drawn: {result.shown_rows:,}")
+        capped = (
+            f" (showing first {result.shown_rows:,})"
+            if result.shown_rows < result.total_rows
+            else ""
+        )
+        self.set_status(
+            f"Loaded layer {lo}: {result.total_rows:,} rows{capped}"
+        )
+
+    def _on_load_failed(self, message: str) -> None:
+        self.backstage.set_loading(False)
+        self.show_progress(False)
+        first_line = message.strip().splitlines()[-1] if message.strip() else message
+        self.set_status(f"Load failed: {first_line}")
 
     def _prompt_datastore(self) -> None:
         """On first load with no cache, offer to create a DataStore."""
@@ -210,8 +255,7 @@ class MainWindow(QMainWindow):
         self.set_status("DataStore created — not wired yet")
 
     def _new_plot_tab(self, title: str | None = None) -> None:
-        if self._data_tab is None:
-            self._open_data_tab()
+        self._ensure_data_tab()
         tab = PlotTab(title)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
@@ -339,3 +383,8 @@ class MainWindow(QMainWindow):
             )
         else:
             toolbars.populate_plot(self.toolbar, color=color)
+
+    # -- shutdown ------------------------------------------------------
+    def closeEvent(self, event) -> None:
+        self.controller.shutdown()  # stop any running worker thread
+        super().closeEvent(event)

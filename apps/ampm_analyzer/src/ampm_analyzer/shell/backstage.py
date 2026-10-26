@@ -219,6 +219,11 @@ class Backstage(QWidget):
     def set_datastore_exists(self, exists: bool) -> None:
         self.ds_form.set_exists(exists)
 
+    def set_loading(self, loading: bool) -> None:
+        """Disable the load entry points while a load is in flight."""
+        for w in (self.btn_load, self.btn_open, self.tile_load):
+            w.setEnabled(not loading)
+
     def apply_icons(self, color: str) -> None:
         """(Re)tint the sidebar icons for the active theme."""
         mapping = {
