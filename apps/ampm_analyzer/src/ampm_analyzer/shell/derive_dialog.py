@@ -38,9 +38,17 @@ class DeriveColumnDialog(QDialog):
 
         self.expr_edit = QLineEdit()
         self.expr_edit.setPlaceholderText(
-            "e.g. [LaserVIEW (mean)] / [MeltVIEW melt pool (mean)]"
+            "e.g. cov([LaserVIEW (mean)])   or   [A] / [B]"
         )
         form.addRow("Formula", self.expr_edit)
+
+        # Group by — aggregates (mean, std, cov, …) compute within each value of
+        # this column and map back to the rows. "none" = over the whole frame.
+        self.group_combo = QComboBox()
+        self.group_combo.addItem("— none —", "")
+        for name in self._columns:
+            self.group_combo.addItem(name, name)
+        form.addRow("Group by", self.group_combo)
         lay.addLayout(form)
 
         pick = QHBoxLayout()
@@ -53,8 +61,10 @@ class DeriveColumnDialog(QDialog):
         lay.addLayout(pick)
 
         hint = QLabel(
-            "Reference columns in [brackets]. Operators: +  −  *  /  %  ** . "
-            "Functions: abs, sqrt, log, log10, exp, sin, cos, min(a, b), max(a, b)."
+            "Reference columns in [brackets]. Operators: +  −  *  /  %  ** .\n"
+            "Element-wise: abs, sqrt, log, log10, exp, sin, cos.\n"
+            "Aggregate: mean, std, var, median, sum, min, max, count, "
+            "n_unique, first, last, cov (=std/mean)."
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -100,5 +110,9 @@ class DeriveColumnDialog(QDialog):
         self.error.setText(text)
         self.error.setVisible(True)
 
-    def result_values(self) -> tuple[str, str]:
-        return self.name_edit.text().strip(), self.expr_edit.text().strip()
+    def result_values(self) -> tuple[str, str, str]:
+        return (
+            self.name_edit.text().strip(),
+            self.expr_edit.text().strip(),
+            self.group_combo.currentData() or "",
+        )

@@ -453,12 +453,13 @@ class MainWindow(QMainWindow):
         dlg = DeriveColumnDialog(dt._columns, self, taken=taken)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        name, expr = dlg.result_values()
-        err = self.controller.add_derivation(name, expr)
+        name, expr, group = dlg.result_values()
+        err = self.controller.add_derivation(name, expr, group)
         if err:
             self.set_status(f"Derive column failed: {err}")
         else:
-            self.set_status(f"Added derived column '{name}'.")
+            by = f" by {group}" if group else ""
+            self.set_status(f"Added derived column '{name}'{by}.")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:

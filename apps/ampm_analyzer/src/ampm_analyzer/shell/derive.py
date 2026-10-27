@@ -1,12 +1,18 @@
-"""Row-wise derived columns.
+"""Derived columns.
 
-A derived column is a formula over existing columns, evaluated per row and
-re-applied to every query result (so it survives layer changes). Columns are
-referenced by name inside square brackets, e.g.::
+A derived column is a formula over existing columns, re-applied to every query
+result (so it survives layer changes). Columns are referenced by name inside
+square brackets, e.g.::
 
     [MeltVIEW melt pool (mean)] / [LaserVIEW (mean)]
 
-Only arithmetic and a small set of math functions are allowed; the formula is
+Formulas mix *element-wise* functions (per row: abs, sqrt, …) and *aggregate*
+functions (reduce a column: mean, std, …). An aggregate on its own is the
+whole-frame value broadcast to every row. With a ``group`` column the formula
+is evaluated within each group and mapped back to its rows (Polars ``.over``),
+so ``cov([signal])`` grouped by ``part`` gives each row its part's CoV.
+
+Only arithmetic and the whitelisted functions are allowed; the formula is
 parsed to an AST and compiled to a Polars expression — never ``eval``-ed.
 Derivations are applied in order, so a later one may reference an earlier one.
 """
@@ -19,25 +25,44 @@ from typing import Any
 
 _TOKEN_RE = re.compile(r"\[([^\[\]]+)\]")
 
+# Element-wise (per-row) functions.
+_ELEMENTWISE = ("abs", "sqrt", "log", "log10", "exp", "sin", "cos")
+# Aggregate (reduction) functions — one value per group (or whole frame).
+_AGGREGATE = (
+    "mean", "std", "var", "median", "sum",
+    "min", "max", "count", "n_unique", "first", "last", "cov",
+)
+
 
 class DeriveError(ValueError):
     """A formula that can't be compiled (bad syntax, unknown column, …)."""
 
 
 def _functions() -> dict[str, tuple[int, Any]]:
-    import polars as pl
-
-    return {
-        "abs": (1, lambda a: a.abs()),
-        "sqrt": (1, lambda a: a.sqrt()),
-        "log": (1, lambda a: a.log()),
-        "log10": (1, lambda a: a.log10()),
-        "exp": (1, lambda a: a.exp()),
-        "sin": (1, lambda a: a.sin()),
-        "cos": (1, lambda a: a.cos()),
-        "min": (2, lambda a, b: pl.min_horizontal(a, b)),
-        "max": (2, lambda a, b: pl.max_horizontal(a, b)),
+    agg = {
+        "mean": lambda a: a.mean(),
+        "std": lambda a: a.std(),
+        "var": lambda a: a.var(),
+        "median": lambda a: a.median(),
+        "sum": lambda a: a.sum(),
+        "min": lambda a: a.min(),
+        "max": lambda a: a.max(),
+        "count": lambda a: a.count(),
+        "n_unique": lambda a: a.n_unique(),
+        "first": lambda a: a.first(),
+        "last": lambda a: a.last(),
+        "cov": lambda a: a.std() / a.mean(),  # coefficient of variation
     }
+    elem = {
+        "abs": lambda a: a.abs(),
+        "sqrt": lambda a: a.sqrt(),
+        "log": lambda a: a.log(),
+        "log10": lambda a: a.log10(),
+        "exp": lambda a: a.exp(),
+        "sin": lambda a: a.sin(),
+        "cos": lambda a: a.cos(),
+    }
+    return {name: (1, fn) for name, fn in {**agg, **elem}.items()}
 
 
 def compile_expr(text: str, columns) -> Any:
@@ -133,6 +158,9 @@ def apply(df, derivations):
     for d in derivations or []:
         try:
             expr = compile_expr(d["expr"], out.columns)
+            group = d.get("group")
+            if group and group in out.columns:
+                expr = expr.over(group)  # per-group, mapped back to rows
             out = out.with_columns(expr.alias(d["name"]))
         except Exception:  # noqa: BLE001 — skip a bad derivation, keep the rest
             continue

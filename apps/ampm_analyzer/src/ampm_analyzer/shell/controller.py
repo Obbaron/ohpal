@@ -274,10 +274,13 @@ class AppController(QObject):
         df = derive.apply(result.df, self.session.derivations)
         return QueryResult(df, result.total_rows, result.shown_rows, result.layers)
 
-    def add_derivation(self, name: str, expr_text: str) -> str | None:
+    def add_derivation(
+        self, name: str, expr_text: str, group: str = ""
+    ) -> str | None:
         """Register a derived column and refresh the grid.
 
-        Returns an error message, or None on success.
+        ``group`` (optional) is a column to aggregate within. Returns an error
+        message, or None on success.
         """
         base = self._base_df
         names = list(base.columns) if base is not None else []
@@ -288,7 +291,9 @@ class AppController(QObject):
             derive.compile_expr(expr_text, names)
         except derive.DeriveError as exc:
             return str(exc)
-        self.session.derivations.append({"name": name, "expr": expr_text})
+        self.session.derivations.append(
+            {"name": name, "expr": expr_text, "group": group}
+        )
         self._refresh_derived()
         return None
 
