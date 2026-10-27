@@ -124,11 +124,13 @@ def populate_data(
     *,
     color: str,
     columns: list[str] | None = None,
+    hidden_columns: set | None = None,
     layers: list[int] | None = None,
     current_layer: int | None = None,
     sidebar_open: bool = False,
     on_toggle_sidebar=None,
     on_layer_changed=None,
+    on_column_visibility=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -152,12 +154,15 @@ def populate_data(
     toolbar.addWidget(layer)
     toolbar.addSeparator()
 
-    # Columns
+    # Columns — show/hide reflects the grid's current hidden set.
     cols_btn = _menu_button(toolbar, "Show/hide columns", "show_hide", color)
+    hidden = hidden_columns or set()
     for name in columns:
         a = cols_btn.menu().addAction(name)
         a.setCheckable(True)
-        a.setChecked(True)  # all visible by default (inert)
+        a.setChecked(name not in hidden)
+        if on_column_visibility is not None:
+            a.toggled.connect(lambda vis, n=name: on_column_visibility(n, vis))
     _action(toolbar, "Rename column", "rename_column", color)
     _action(toolbar, "Add column", "add_column", color)
     _action(toolbar, "Remove column", "remove_column", color)

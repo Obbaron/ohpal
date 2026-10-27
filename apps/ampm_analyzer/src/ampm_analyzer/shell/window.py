@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, theme, toolbars
+from . import icons, theme, toolbars, uistate
 from .backstage import Backstage
 from .controller import AppController
 from .data_tab import DataTab
@@ -145,6 +145,8 @@ class MainWindow(QMainWindow):
         self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
+        self._pending_grid_state: bytes | None = None  # per-build column layout
+        self._grid_cache_dir = None  # where to persist the layout
 
         # Theme: "auto" follows the OS (and keeps following live), or a fixed
         # "light" / "dark". The launch scheme was applied in app.py.
@@ -199,9 +201,17 @@ class MainWindow(QMainWindow):
         """Create the single Data tab if needed; return it (no side prompts)."""
         if self._data_tab is None:
             self._data_tab = DataTab()
+            self._data_tab.set_persisted_state(self._pending_grid_state)
+            self._data_tab.layoutChanged.connect(self._save_grid_ui)
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
         return self._data_tab
+
+    def _save_grid_ui(self) -> None:
+        if self._grid_cache_dir is not None and self._data_tab is not None:
+            uistate.save_grid_header(
+                self._grid_cache_dir, self._data_tab.current_state()
+            )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
     def _on_load_started(self, label: str) -> None:
@@ -215,6 +225,11 @@ class MainWindow(QMainWindow):
         # so New (which goes to setup first) doesn't flash an empty grid.
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
+        # Load this build's saved column layout (or None → defaults).
+        self._grid_cache_dir = store.cache_dir
+        self._pending_grid_state = uistate.load_grid_header(store.cache_dir)
+        if self._data_tab is not None:
+            self._data_tab.set_persisted_state(self._pending_grid_state)
 
     def _on_setup_required(self, payload) -> None:
         config, layers, columns, exists = payload
@@ -391,15 +406,20 @@ class MainWindow(QMainWindow):
         color = self._icon_color()
         if kind == "data":
             store = self.session.store
+            dt = self._data_tab
             toolbars.populate_data(
                 self.toolbar,
                 color=color,
-                columns=self._data_tab._columns if self._data_tab else None,
+                columns=dt._columns if dt else None,
+                hidden_columns=dt.hidden_columns() if dt else None,
                 layers=list(store.layers) if store is not None else None,
                 current_layer=self.session.current_layer,
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
                 on_layer_changed=self._on_layer_changed,
+                on_column_visibility=(
+                    (lambda n, v: dt.set_column_visible(n, v)) if dt else None
+                ),
                 on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
