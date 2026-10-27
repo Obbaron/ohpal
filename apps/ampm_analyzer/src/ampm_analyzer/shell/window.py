@@ -283,9 +283,6 @@ class MainWindow(QMainWindow):
         # toolbar rebuild to refresh the Show/hide list.
         if changed and was_on_data:
             self._sync_toolbar(self.tabbar.currentIndex())
-        # Dumb plots: hand every open plot the (new) shared result.
-        for tab in self._plot_tabs:
-            tab.set_dataframe(result.df)
         lo, hi = result.layers
         where = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
         capped = (
@@ -313,16 +310,34 @@ class MainWindow(QMainWindow):
             return
         from .plot_dialog import NewPlotDialog
 
+        store = self.session.store
         columns = list(self.session.result.df.columns)
-        dlg = NewPlotDialog(kind, columns, self)
+        layers = list(store.layers) if store is not None else []
+        dlg = NewPlotDialog(kind, columns, layers, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.spec()
+        span = dlg.span()  # ("all", None, None) or ("range", lo, hi)
         self._ensure_data_tab()
-        tab = PlotTab(spec, self.session.result.df)
+        tab = PlotTab(spec, span=span)
         self._plot_tabs.append(tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
+        # Query this plot's own span, then shape + feed it.
+        tab.set_loading(f"Querying {tab.span_label}…")
+        self.controller.query_for(*span, lambda raw, t=tab: self._feed_plot(t, raw))
+
+    def _feed_plot(self, tab, raw_df) -> None:
+        if tab not in self._plot_tabs:
+            return  # closed before the query returned
+        tab.raw = raw_df
+        tab.set_dataframe(self.controller.shape(raw_df))
+
+    def _reshape_plots(self) -> None:
+        """Re-shape open plots from their raw span after a column change."""
+        for tab in self._plot_tabs:
+            if getattr(tab, "raw", None) is not None:
+                tab.set_dataframe(self.controller.shape(tab.raw))
 
     def _close_tab(self, index: int) -> None:
         widget = self.stack.widget(index)
@@ -462,12 +477,10 @@ class MainWindow(QMainWindow):
                 hidden_columns=dt.hidden_columns() if dt else None,
                 removed_columns=list(self.session.removed),
                 layers=list(store.layers) if store is not None else None,
-                span_mode=self.session.span_mode,
-                span_lo=(self.session.span_range or (self.session.current_layer,))[0],
-                span_hi=(self.session.span_range or (None, self.session.current_layer))[-1],
+                current_layer=self.session.current_layer,
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
-                on_span_changed=self._on_span_changed,
+                on_layer_changed=self._on_layer_changed,
                 on_column_visibility=(
                     (lambda n, v: dt.set_column_visible(n, v)) if dt else None
                 ),
@@ -480,8 +493,8 @@ class MainWindow(QMainWindow):
         else:
             toolbars.populate_plot(self.toolbar, color=color)
 
-    def _on_span_changed(self, mode: str, lo: int | None, hi: int | None) -> None:
-        self.controller.set_span(mode, lo, hi)
+    def _on_layer_changed(self, layer: int) -> None:
+        self.controller.show_layer(layer)
 
     def _add_derive_column(self) -> None:
         dt = self._data_tab
@@ -501,6 +514,7 @@ class MainWindow(QMainWindow):
             by = f" by {group}" if group else ""
             self.set_status(f"Added derived column '{name}'{by}.")
             self._save_ui()
+            self._reshape_plots()
 
     def _add_group_label(self) -> None:
         dt = self._data_tab
@@ -519,6 +533,7 @@ class MainWindow(QMainWindow):
         else:
             self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
             self._save_ui()
+            self._reshape_plots()
 
     def _remove_columns(self) -> None:
         dt = self._data_tab
@@ -533,6 +548,7 @@ class MainWindow(QMainWindow):
         if done:
             self.set_status(f"Removed {len(done)} column(s): {', '.join(done)}.")
             self._save_ui()
+            self._reshape_plots()
         if blocked:
             self.set_status(f"Can't remove required column(s): {', '.join(blocked)}.")
 
@@ -540,6 +556,7 @@ class MainWindow(QMainWindow):
         self.controller.restore_column(name)
         self.set_status(f"Restored column '{name}'.")
         self._save_ui()
+        self._reshape_plots()
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:

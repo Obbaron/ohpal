@@ -129,66 +129,6 @@ class _StayOpenMenu(QMenu):
         super().mouseReleaseEvent(event)
 
 
-def _span_cluster(toolbar: QToolBar, *, layers, mode, lo, hi, on_change) -> None:
-    """The shared-span selector: mode combo + single/range layer spinboxes.
-
-    One control for the whole working span (grid + plots). "This layer" shows one
-    spinbox; "Range" shows lo/hi; "All" shows none. Emits on_change(mode, lo, hi).
-    """
-    toolbar.addWidget(_muted("Layers"))
-    combo = QComboBox()
-    combo.setFixedWidth(96)
-    for text, key in (("This layer", "single"), ("Range", "range"), ("All", "all")):
-        combo.addItem(text, key)
-
-    single = LayerSpinBox()
-    single.setFixedWidth(80)
-    lo_sb = LayerSpinBox()
-    lo_sb.setFixedWidth(80)
-    to_lab = _muted("to")
-    hi_sb = LayerSpinBox()
-    hi_sb.setFixedWidth(80)
-    if layers:
-        single.set_layers(layers, lo)
-        lo_sb.set_layers(layers, lo)
-        hi_sb.set_layers(layers, hi)
-    else:
-        for w in (combo, single, lo_sb, hi_sb):
-            w.setEnabled(False)
-
-    a_single = toolbar.addWidget(single)
-    a_lo = toolbar.addWidget(lo_sb)
-    a_to = toolbar.addWidget(to_lab)
-    a_hi = toolbar.addWidget(hi_sb)
-
-    def _sync_visibility() -> None:
-        m = combo.currentData()
-        a_single.setVisible(m == "single")
-        a_lo.setVisible(m == "range")
-        a_to.setVisible(m == "range")
-        a_hi.setVisible(m == "range")
-
-    combo.setCurrentIndex(max(0, combo.findData(mode or "single")))
-    _sync_visibility()  # before wiring, so building doesn't fire a query
-
-    def _emit() -> None:
-        if on_change is None:
-            return
-        m = combo.currentData()
-        if m == "single":
-            on_change("single", single.value(), single.value())
-        elif m == "range":
-            on_change("range", lo_sb.value(), hi_sb.value())
-        else:
-            on_change("all", None, None)
-
-    # Place the combo first (left of the spinboxes) by inserting before them.
-    toolbar.insertWidget(a_single, combo)
-    combo.currentIndexChanged.connect(lambda _i: (_sync_visibility(), _emit()))
-    for sb in (single, lo_sb, hi_sb):
-        sb.valueChanged.connect(lambda _v: _emit())
-
-
 def _menu_button(
     toolbar: QToolBar, text: str, icon: str, color: str, *, stay_open: bool = False
 ) -> QToolButton:
@@ -214,12 +154,10 @@ def populate_data(
     hidden_columns: set | None = None,
     removed_columns: list[str] | None = None,
     layers: list[int] | None = None,
-    span_mode: str = "single",
-    span_lo: int | None = None,
-    span_hi: int | None = None,
+    current_layer: int | None = None,
     sidebar_open: bool = False,
     on_toggle_sidebar=None,
-    on_span_changed=None,
+    on_layer_changed=None,
     on_column_visibility=None,
     on_add_derive=None,
     on_add_label=None,
@@ -235,15 +173,17 @@ def populate_data(
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
 
-    # Layers — the shared working span shown in the grid and fed to all plots.
-    _span_cluster(
-        toolbar,
-        layers=layers,
-        mode=span_mode,
-        lo=span_lo,
-        hi=span_hi,
-        on_change=on_span_changed,
-    )
+    # Layer — which layer the grid shows (grid-only; plots carry their own span).
+    toolbar.addWidget(_muted("Layer"))
+    layer = LayerSpinBox()
+    layer.setFixedWidth(80)
+    if layers:
+        layer.set_layers(layers, current_layer)
+    else:
+        layer.setEnabled(False)
+    if on_layer_changed is not None:
+        layer.valueChanged.connect(on_layer_changed)
+    toolbar.addWidget(layer)
     toolbar.addSeparator()
 
     # Columns — show/hide reflects the grid's current hidden set.

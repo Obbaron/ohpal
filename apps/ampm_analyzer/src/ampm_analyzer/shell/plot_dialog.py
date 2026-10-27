@@ -7,25 +7,30 @@ or the colour. Defaults come from plotspec.default_spec but are freely changed.
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
+    QRadioButton,
     QVBoxLayout,
 )
 
 from .plotspec import PlotSpec, default_spec
+from .toolbars import LayerSpinBox
 
 _NONE = "— none —"
 
 
 class NewPlotDialog(QDialog):
-    def __init__(self, kind: str, columns, parent=None) -> None:
+    def __init__(self, kind: str, columns, layers=None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"New {kind}")
         self._kind = kind
         self._columns = list(columns)
+        self._layers = list(layers or [])
         base = default_spec(kind, self._columns)
 
         lay = QVBoxLayout(self)
@@ -56,6 +61,32 @@ class NewPlotDialog(QDialog):
         form.addRow("Colour by", self.color_combo)
         lay.addLayout(form)
 
+        # Layer span this plot queries — its own, independent of the grid.
+        span_row = QHBoxLayout()
+        self.radio_all = QRadioButton("All layers")
+        self.radio_range = QRadioButton("Range")
+        self.radio_all.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self.radio_all)
+        grp.addButton(self.radio_range)
+        self.lo_spin = LayerSpinBox()
+        self.hi_spin = LayerSpinBox()
+        for sb in (self.lo_spin, self.hi_spin):
+            sb.setFixedWidth(80)
+        if self._layers:
+            self.lo_spin.set_layers(self._layers, self._layers[0])
+            self.hi_spin.set_layers(self._layers, self._layers[-1])
+        self._sync_range_enabled()
+        self.radio_all.toggled.connect(lambda _c: self._sync_range_enabled())
+        span_row.addWidget(QLabel("Layers"))
+        span_row.addWidget(self.radio_all)
+        span_row.addWidget(self.radio_range)
+        span_row.addWidget(self.lo_spin)
+        span_row.addWidget(QLabel("to"))
+        span_row.addWidget(self.hi_spin)
+        span_row.addStretch(1)
+        lay.addLayout(span_row)
+
         hint = QLabel(
             "Any column can go on any channel. Numeric colour → colormap; "
             "a label column → discrete colours + legend."
@@ -71,6 +102,11 @@ class NewPlotDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
 
+    def _sync_range_enabled(self) -> None:
+        on = self.radio_range.isChecked()
+        self.lo_spin.setEnabled(on)
+        self.hi_spin.setEnabled(on)
+
     def spec(self) -> PlotSpec:
         color = self.color_combo.currentText()
         return PlotSpec(
@@ -80,3 +116,9 @@ class NewPlotDialog(QDialog):
             z=self.z_combo.currentText() if self.z_combo is not None else None,
             color=None if color == _NONE else color,
         )
+
+    def span(self) -> tuple:
+        """("all", None, None) or ("range", lo, hi)."""
+        if self.radio_range.isChecked():
+            return ("range", self.lo_spin.value(), self.hi_spin.value())
+        return ("all", None, None)

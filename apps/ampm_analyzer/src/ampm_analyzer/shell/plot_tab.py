@@ -33,15 +33,17 @@ def _placeholder(message: str) -> QWidget:
 class PlotTab(QWidget):
     _counter = 0
 
-    def __init__(self, spec: PlotSpec, df=None, title: str | None = None,
+    def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("tabkind", "plot")
         PlotTab._counter += 1
         self.spec = spec
+        self.span = span or ("all", None, None)
         self.title = title or f"{spec.kind} {PlotTab._counter}"
 
-        self._df = df
+        self._df = None
+        self.raw = None  # the plot's own raw span query (for re-shaping)
         self._canvas = None
         self._view = None
         self._scatter = None
@@ -51,8 +53,14 @@ class PlotTab(QWidget):
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._body = self._build_canvas()
         self._lay.addWidget(self._body)
-        if df is not None:
-            self.set_dataframe(df)
+
+    @property
+    def span_label(self) -> str:
+        mode, lo, hi = self.span
+        return "all layers" if mode == "all" else f"layers {lo}–{hi}"
+
+    def set_loading(self, text: str) -> None:
+        self._show_overlay(text)
 
     # -- canvas --------------------------------------------------------
     def _build_canvas(self) -> QWidget:

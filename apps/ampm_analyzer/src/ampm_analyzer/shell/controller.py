@@ -47,8 +47,12 @@ class AppController(QObject):
         self._busy = False
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
-        self._pending_span: tuple[int, int] | None = None
-        self._base_df = None  # last raw query output, before derived columns
+        self._base_df = None  # last raw grid query output, before shaping
+        # All queries (grid + per-plot spans) serialize through one worker to
+        # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
+        # coalesce). Grid requests coalesce (latest wins); plot requests don't.
+        self._queue: list[dict] = []
+        self._current: dict | None = None
 
     # -- entry points --------------------------------------------------
     def new_build(self) -> None:
@@ -200,58 +204,71 @@ class AppController(QObject):
         if status is not None:
             self.session.fail(status)
 
-    # -- span navigation (the shared working span) ---------------------
-    def set_span(self, mode: str, lo: int | None = None, hi: int | None = None) -> None:
-        """Set the shared span the grid and all plots see (pending-latest).
+    # -- grid navigation (single layer) --------------------------------
+    def show_layer(self, layer: int) -> None:
+        """Show one layer in the grid (snapped; grid-only, coalesced)."""
+        store = self.session.store
+        if store is None:
+            return
+        L = min(store.layers, key=lambda x: abs(x - layer))
+        if L == self.session.current_layer and self.session.result is not None:
+            return
+        self._request((L, L), self._deliver_grid, f"layer {L}", coalesce=True)
 
-        ``mode`` is "single", "range" or "all". Bounds snap to real layers.
+    def _resolve_span(self, mode: str, lo=None, hi=None) -> tuple[int, int]:
+        layers = self.session.store.layers
+
+        def snap(v):
+            return min(layers, key=lambda x: abs(x - v))
+
+        if mode == "all":
+            return layers[0], layers[-1]
+        lo = snap(lo if lo is not None else layers[0])
+        hi = snap(hi if hi is not None else layers[-1])
+        return (lo, hi) if lo <= hi else (hi, lo)
+
+    # -- per-plot span query (its own dataset, not the grid's) ---------
+    def query_for(self, mode: str, lo, hi, on_raw) -> None:
+        """Query a plot's span off-thread; call ``on_raw(raw_df)`` when ready.
+
+        Shaping (derived/removed columns) is applied by the caller via ``shape``
+        so a plot can re-shape without re-querying.
         """
         store = self.session.store
         if store is None:
             return
-        layers = store.layers
+        qlo, qhi = self._resolve_span(mode, lo, hi)
+        label = f"plot layer {qlo}" if qlo == qhi else f"plot layers {qlo}–{qhi}"
+        self._request(
+            (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False
+        )
 
-        def _snap(v):
-            return min(layers, key=lambda L: abs(L - v))
-
-        if mode == "all":
-            qlo, qhi = layers[0], layers[-1]
-        elif mode == "range":
-            lo = _snap(lo if lo is not None else layers[0])
-            hi = _snap(hi if hi is not None else layers[-1])
-            qlo, qhi = (lo, hi) if lo <= hi else (hi, lo)
-        else:  # single
-            qlo = qhi = _snap(lo if lo is not None else layers[0])
-
-        self.session.span_mode = mode
-        self.session.span_range = (qlo, qhi)
-        if (
-            self.session.result is not None
-            and self.session.result.layers == (qlo, qhi)
-        ):
-            return  # already showing this span
-        self._pending_span = (qlo, qhi)
+    # -- query queue (serialized worker) -------------------------------
+    def _request(self, span, dest, label: str, coalesce: bool) -> None:
+        if coalesce:  # drop any still-queued grid request; keep the latest
+            self._queue = [r for r in self._queue if not r["coalesce"]]
+        self._queue.append(
+            {"span": span, "dest": dest, "label": label, "coalesce": coalesce}
+        )
         if not self._busy:
-            self._run_pending()
+            self._start_next()
 
-    def _run_pending(self) -> None:
-        if self._pending_span is None:
+    def _start_next(self) -> None:
+        if self._busy or not self._queue:
             return
-        lo, hi = self._pending_span
-        self._pending_span = None
-        label = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
-        self.session.begin_load(label)
-        self._start_query(self.session.store, (lo, hi))
+        req = self._queue.pop(0)
+        self._current = req
+        self._busy = True
+        self.session.begin_load(req["label"])
+        self._start_query(self.session.store, req["span"])
 
-    # -- threaded query ------------------------------------------------
     def _begin_query(self, store) -> None:
         first = store.layers[0]
-        self.session.span_mode = "single"
-        self.session.span_range = (first, first)
-        self._start_query(store, (first, first))
+        self._busy = False  # release the load guard; the query queue takes over
+        self._request((first, first), self._deliver_grid, f"layer {first}",
+                      coalesce=True)
 
     def _start_query(self, store, layers: tuple[int, int]) -> None:
-        self._busy = True
         thread = QThread(self)
         worker = QueryWorker(store, layers, row_cap=None)  # virtualised grid: no cap
         worker.moveToThread(thread)
@@ -286,23 +303,31 @@ class AppController(QObject):
 
     def _on_query_finished(self, result) -> None:
         self._busy = False
-        self.session.current_layer = result.layers[0]
-        self._base_df = result.df  # keep the raw output for re-deriving
-        self.session.set_result(self._pipeline(result))
-        self._run_pending()  # a layer change requested while we were busy
+        req = self._current
+        self._current = None
+        if req is not None:
+            req["dest"](result)  # grid → _deliver_grid; plot → its callback
+        self._start_next()  # run the next queued request, if any
 
-    # -- column pipeline (derive, then drop removed) -------------------
-    def _pipeline(self, template: QueryResult) -> QueryResult:
-        """Build the display frame from the raw base: add derived columns, then
-        project out removed source columns. ``template`` supplies the row/layer
-        metadata (unaffected by column changes)."""
-        df = self._base_df
+    def _deliver_grid(self, result) -> None:
+        self.session.current_layer = result.layers[0]
+        self._base_df = result.df  # keep the raw output for re-shaping
+        shaped = self._shape(result.df)
+        self.session.set_result(
+            QueryResult(shaped, result.total_rows, result.shown_rows, result.layers)
+        )
+
+    # -- column shaping (derive, then drop removed) --------------------
+    def shape(self, df):
+        """Apply the derived + removed-column pipeline to any frame. Public so a
+        plot can re-shape its own span without re-querying."""
+        return self._shape(df)
+
+    def _shape(self, df):
         if self.session.derivations:
             df = derive.apply(df, self.session.derivations)
         drop = [c for c in self.session.removed if c in df.columns]
-        if drop:
-            df = df.drop(drop)  # derived cols that used them are already computed
-        return QueryResult(df, template.total_rows, template.shown_rows, template.layers)
+        return df.drop(drop) if drop else df
 
     def add_derivation(
         self, name: str, expr_text: str, group: str = ""
@@ -387,18 +412,24 @@ class AppController(QObject):
     def _refresh_derived(self) -> None:
         if self._base_df is None or self.session.result is None:
             return
-        self.session.set_result(self._pipeline(self.session.result))
+        r = self.session.result
+        shaped = self._shape(self._base_df)
+        self.session.set_result(
+            QueryResult(shaped, r.total_rows, r.shown_rows, r.layers)
+        )
 
     def _on_cache_finished(self, store) -> None:
-        # Cache built — now show the first layer.
+        # Cache built — now show the first layer in the grid.
         first = store.layers[0]
-        self.session.span_mode = "single"
-        self.session.span_range = (first, first)
-        self._start_query(store, (first, first))
+        self._busy = False
+        self._request((first, first), self._deliver_grid, f"layer {first}",
+                      coalesce=True)
 
     def _on_worker_error(self, message: str) -> None:
         self._busy = False
+        self._current = None
         self.session.fail(message)
+        self._start_next()  # don't strand the queue on one failure
 
     def _clear_thread(self, thread: QThread) -> None:
         if self._thread is thread:
