@@ -255,8 +255,11 @@ class MainWindow(QMainWindow):
         self.backstage.set_loading(False)
         self.show_progress(False)
         self._ensure_data_tab()
-        self._select_widget(self._data_tab)
+        # Populate the model BEFORE selecting the tab: switching tabs rebuilds
+        # the toolbar (incl. the Show/hide columns menu), which must see the
+        # real columns, not an empty model.
         self._data_tab.set_dataframe(result.df)
+        self._select_widget(self._data_tab)
         lo, hi = result.layers
         capped = (
             f" (showing first {result.shown_rows:,})"
