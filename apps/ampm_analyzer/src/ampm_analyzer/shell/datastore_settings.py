@@ -153,9 +153,13 @@ class DataStoreSettings(QWidget):
         def shown(value) -> str:
             return str(value) if value else _MISSING
 
-        # Columns to include.
+        # Columns to include — optional first, the locked always-required ones
+        # grouped together at the bottom.
         self.columns_list.clear()
-        for name in columns or []:
+        cols = columns or []
+        optional = [c for c in cols if c not in _ALWAYS]
+        required = [c for c in cols if c in _ALWAYS]
+        for name in optional + required:
             item = QListWidgetItem(name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)

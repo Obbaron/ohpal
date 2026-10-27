@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         self.backstage.set_datastore_exists(exists)
         self.backstage.show_datastore_page()
         self.tabbar.setCurrentIndex(0)  # File tab
-        self.set_status("Set up the DataStore, then Build.")
+        self.set_status("Setting up DataStore…")
 
     def _on_build_requested(self) -> None:
         scope = self.backstage.ds_form.scope()
