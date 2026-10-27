@@ -1,9 +1,13 @@
-"""Per-build UI state (grid column layout).
+"""Per-build UI state (grid layout + derived columns + removed columns).
 
 Saved as a small JSON file in the build's cache dir (like the legacy
-``.ampm-ui.json``), so a user's column order / hidden set / widths persist per
-build and travel with its cache. The grid header is stored as a base64 blob
-from ``QHeaderView.saveState()``.
+``.ampm-ui.json``), so a user's column order / hidden set / widths, their derived
+columns and their removed columns persist per build and travel with its cache.
+The grid header is a base64 blob from ``QHeaderView.saveState()``; derivations
+and the removed list are stored as-is (plain dicts / strings).
+
+The schema is additive: an older file that holds only ``grid_header`` still
+loads (the other keys default to empty).
 """
 
 from __future__ import annotations
@@ -20,24 +24,46 @@ def _path(cache_dir: Path) -> Path:
     return Path(cache_dir) / _FILENAME
 
 
-def load_grid_header(cache_dir: Path) -> bytes | None:
+def _empty() -> dict:
+    return {"grid_header": None, "derivations": [], "removed": []}
+
+
+def load_state(cache_dir: Path) -> dict:
+    """Return {"grid_header": bytes|None, "derivations": list, "removed": list}."""
     try:
         data = json.loads(_path(cache_dir).read_text(encoding="utf-8"))
         if data.get("version") != _VERSION:
-            return None
+            return _empty()
         blob = data.get("grid_header")
-        return base64.b64decode(blob) if blob else None
+        return {
+            "grid_header": base64.b64decode(blob) if blob else None,
+            "derivations": data.get("derivations") or [],
+            "removed": data.get("removed") or [],
+        }
     except (OSError, ValueError, KeyError):
-        return None
+        return _empty()
 
 
-def save_grid_header(cache_dir: Path, state: bytes) -> None:
+def save_state(
+    cache_dir: Path,
+    *,
+    grid_header: bytes | None = None,
+    derivations: list | None = None,
+    removed: list | None = None,
+) -> None:
+    """Write the full UI state. Best-effort — never blocks on failure."""
     try:
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": _VERSION,
-            "grid_header": base64.b64encode(bytes(state)).decode("ascii"),
+            "grid_header": (
+                base64.b64encode(bytes(grid_header)).decode("ascii")
+                if grid_header
+                else None
+            ),
+            "derivations": list(derivations or []),
+            "removed": list(removed or []),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:

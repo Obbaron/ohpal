@@ -204,16 +204,22 @@ class MainWindow(QMainWindow):
         if self._data_tab is None:
             self._data_tab = DataTab()
             self._data_tab.set_persisted_state(self._pending_grid_state)
-            self._data_tab.layoutChanged.connect(self._save_grid_ui)
+            self._data_tab.layoutChanged.connect(self._save_ui)
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
         return self._data_tab
 
-    def _save_grid_ui(self) -> None:
-        if self._grid_cache_dir is not None and self._data_tab is not None:
-            uistate.save_grid_header(
-                self._grid_cache_dir, self._data_tab.current_state()
-            )
+    def _save_ui(self) -> None:
+        """Persist grid layout + derivations + removed columns for this build."""
+        if self._grid_cache_dir is None:
+            return
+        header = self._data_tab.current_state() if self._data_tab is not None else None
+        uistate.save_state(
+            self._grid_cache_dir,
+            grid_header=header,
+            derivations=self.session.derivations,
+            removed=self.session.removed,
+        )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
     def _on_load_started(self, label: str) -> None:
@@ -227,9 +233,14 @@ class MainWindow(QMainWindow):
         # so New (which goes to setup first) doesn't flash an empty grid.
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
-        # Load this build's saved column layout (or None → defaults).
+        # Restore this build's saved UI state. set_store has just cleared the
+        # session's derivations/removed; put the saved ones back before the first
+        # query, so the controller's pipeline applies them to the first result.
         self._grid_cache_dir = store.cache_dir
-        self._pending_grid_state = uistate.load_grid_header(store.cache_dir)
+        state = uistate.load_state(store.cache_dir)
+        self.session.derivations = list(state["derivations"])
+        self.session.removed = list(state["removed"])
+        self._pending_grid_state = state["grid_header"]
         if self._data_tab is not None:
             self._data_tab.set_persisted_state(self._pending_grid_state)
 
@@ -464,6 +475,7 @@ class MainWindow(QMainWindow):
         else:
             by = f" by {group}" if group else ""
             self.set_status(f"Added derived column '{name}'{by}.")
+            self._save_ui()
 
     def _add_group_label(self) -> None:
         dt = self._data_tab
@@ -481,6 +493,7 @@ class MainWindow(QMainWindow):
             self.set_status(f"Group label failed: {err}")
         else:
             self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
+            self._save_ui()
 
     def _remove_columns(self) -> None:
         dt = self._data_tab
@@ -494,12 +507,14 @@ class MainWindow(QMainWindow):
         done = [n for n in names if n not in blocked]
         if done:
             self.set_status(f"Removed {len(done)} column(s): {', '.join(done)}.")
+            self._save_ui()
         if blocked:
             self.set_status(f"Can't remove required column(s): {', '.join(blocked)}.")
 
     def _restore_column(self, name: str) -> None:
         self.controller.restore_column(name)
         self.set_status(f"Restored column '{name}'.")
+        self._save_ui()
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:
