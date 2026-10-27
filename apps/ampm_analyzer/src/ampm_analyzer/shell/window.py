@@ -390,16 +390,23 @@ class MainWindow(QMainWindow):
         self.toolbar.show()
         color = self._icon_color()
         if kind == "data":
+            store = self.session.store
             toolbars.populate_data(
                 self.toolbar,
                 color=color,
                 columns=self._data_tab._columns if self._data_tab else None,
+                layers=list(store.layers) if store is not None else None,
+                current_layer=self.session.current_layer,
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
+                on_layer_changed=self._on_layer_changed,
                 on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
             toolbars.populate_plot(self.toolbar, color=color)
+
+    def _on_layer_changed(self, layer: int) -> None:
+        self.controller.show_layer(layer)
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:

@@ -45,6 +45,7 @@ class AppController(QObject):
         self._busy = False
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
+        self._pending_layer: int | None = None
 
     # -- entry points --------------------------------------------------
     def new_build(self) -> None:
@@ -196,6 +197,27 @@ class AppController(QObject):
         if status is not None:
             self.session.fail(status)
 
+    # -- layer navigation ----------------------------------------------
+    def show_layer(self, layer: int) -> None:
+        """Query a single layer for the grid (constrained; pending-latest)."""
+        store = self.session.store
+        if store is None:
+            return
+        layer = min(store.layers, key=lambda L: abs(L - layer))  # snap (defensive)
+        if layer == self.session.current_layer and self.session.result is not None:
+            return
+        self._pending_layer = layer
+        if not self._busy:
+            self._run_pending()
+
+    def _run_pending(self) -> None:
+        if self._pending_layer is None:
+            return
+        layer = self._pending_layer
+        self._pending_layer = None
+        self.session.begin_load(f"layer {layer}")
+        self._start_query(self.session.store, (layer, layer))
+
     # -- threaded query ------------------------------------------------
     def _begin_query(self, store) -> None:
         first = store.layers[0]
@@ -204,7 +226,7 @@ class AppController(QObject):
     def _start_query(self, store, layers: tuple[int, int]) -> None:
         self._busy = True
         thread = QThread(self)
-        worker = QueryWorker(store, layers, row_cap=STAGE1_ROW_CAP)
+        worker = QueryWorker(store, layers, row_cap=None)  # virtualised grid: no cap
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_query_finished)
@@ -237,7 +259,9 @@ class AppController(QObject):
 
     def _on_query_finished(self, result) -> None:
         self._busy = False
+        self.session.current_layer = result.layers[0]
         self.session.set_result(result)
+        self._run_pending()  # a layer change requested while we were busy
 
     def _on_cache_finished(self, store) -> None:
         # Cache built — now show the first layer.

@@ -15,6 +15,8 @@ actions/toggles/presets live on the toolbar; sliders live in the dock.
 
 from __future__ import annotations
 
+import bisect
+
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -26,6 +28,54 @@ from PyQt6.QtWidgets import (
 )
 
 from . import icons
+
+
+class LayerSpinBox(QSpinBox):
+    """A spinbox constrained to the layers that actually exist.
+
+    Stepping moves to the next/previous available layer; a typed value snaps to
+    the nearest available one on commit. So the control can never land on a
+    missing layer.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._layers: list[int] = []
+        self.editingFinished.connect(self._snap)
+
+    def set_layers(self, layers: list[int], current: int | None = None) -> None:
+        self._layers = sorted(layers)
+        if not self._layers:
+            self.setRange(0, 0)
+            return
+        self.setRange(self._layers[0], self._layers[-1])
+        if current is None or current not in self._layers:
+            current = self._layers[0]
+        self.setValue(current)
+
+    def _index_of(self, value: int) -> int:
+        if not self._layers:
+            return 0
+        i = bisect.bisect_left(self._layers, value)
+        if i < len(self._layers) and self._layers[i] == value:
+            return i
+        return min(
+            range(len(self._layers)), key=lambda k: abs(self._layers[k] - value)
+        )
+
+    def stepBy(self, steps: int) -> None:
+        if not self._layers:
+            return
+        i = self._index_of(self.value())
+        j = max(0, min(len(self._layers) - 1, i + steps))
+        self.setValue(self._layers[j])
+
+    def _snap(self) -> None:
+        if not self._layers:
+            return
+        nearest = self._layers[self._index_of(self.value())]
+        if nearest != self.value():
+            self.setValue(nearest)
 
 
 # -- small builders ----------------------------------------------------
@@ -74,8 +124,11 @@ def populate_data(
     *,
     color: str,
     columns: list[str] | None = None,
+    layers: list[int] | None = None,
+    current_layer: int | None = None,
     sidebar_open: bool = False,
     on_toggle_sidebar=None,
+    on_layer_changed=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -86,12 +139,16 @@ def populate_data(
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
 
-    # Layer — which layer file is shown in the grid.
+    # Layer — which layer file is shown in the grid (constrained to real layers).
     toolbar.addWidget(_muted("Layer"))
-    layer = QSpinBox()
-    layer.setRange(1, 100_000)
-    layer.setValue(1)
-    layer.setFixedWidth(70)
+    layer = LayerSpinBox()
+    layer.setFixedWidth(80)
+    if layers:
+        layer.set_layers(layers, current_layer)
+    else:
+        layer.setEnabled(False)
+    if on_layer_changed is not None:
+        layer.valueChanged.connect(on_layer_changed)
     toolbar.addWidget(layer)
     toolbar.addSeparator()
 

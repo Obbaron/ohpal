@@ -49,6 +49,7 @@ class BuildSession(QObject):
         self.build_name: str = ""
         self.layer_thickness: float = 0.03
         self.result: QueryResult | None = None
+        self.current_layer: int | None = None
 
     # -- writers (controller-only) -------------------------------------
     def begin_load(self, label: str) -> None:
