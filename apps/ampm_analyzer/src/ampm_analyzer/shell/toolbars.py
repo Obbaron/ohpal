@@ -159,6 +159,7 @@ def populate_data(
     on_layer_changed=None,
     on_column_visibility=None,
     on_add_derive=None,
+    on_add_label=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -200,6 +201,9 @@ def populate_data(
     a_derive = add_btn.menu().addAction("Derive column")
     if on_add_derive is not None:
         a_derive.triggered.connect(lambda: on_add_derive())
+    a_label = add_btn.menu().addAction("Group label")
+    if on_add_label is not None:
+        a_label.triggered.connect(lambda: on_add_label())
     a_excel = add_btn.menu().addAction("Add from Excel")
     a_excel.setEnabled(False)  # not wired yet
     a_excel.setToolTip("Not available yet")

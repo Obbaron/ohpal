@@ -435,6 +435,7 @@ class MainWindow(QMainWindow):
                     (lambda n, v: dt.set_column_visible(n, v)) if dt else None
                 ),
                 on_add_derive=self._add_derive_column,
+                on_add_label=self._add_group_label,
                 on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
@@ -460,6 +461,23 @@ class MainWindow(QMainWindow):
         else:
             by = f" by {group}" if group else ""
             self.set_status(f"Added derived column '{name}'{by}.")
+
+    def _add_group_label(self) -> None:
+        dt = self._data_tab
+        if dt is None:
+            return
+        from .label_dialog import GroupLabelDialog
+
+        taken = [d["name"] for d in self.session.derivations]
+        dlg = GroupLabelDialog(dt._columns, self, taken=taken)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, rules, default = dlg.result_values()
+        err = self.controller.add_label_derivation(name, rules, default)
+        if err:
+            self.set_status(f"Group label failed: {err}")
+        else:
+            self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:

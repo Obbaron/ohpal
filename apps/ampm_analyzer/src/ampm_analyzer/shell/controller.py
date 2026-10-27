@@ -292,7 +292,29 @@ class AppController(QObject):
         except derive.DeriveError as exc:
             return str(exc)
         self.session.derivations.append(
-            {"name": name, "expr": expr_text, "group": group}
+            {"kind": "formula", "name": name, "expr": expr_text, "group": group}
+        )
+        self._refresh_derived()
+        return None
+
+    def add_label_derivation(
+        self, name: str, rules: list[dict], default: str = ""
+    ) -> str | None:
+        """Register a label column from if/elif/else rules. Returns error/None."""
+        base = self._base_df
+        names = list(base.columns) if base is not None else []
+        names += [d["name"] for d in self.session.derivations]
+        if name in names:
+            return f"A column named {name!r} already exists."
+        if not rules:
+            return "Add at least one rule."
+        for rule in rules:
+            try:
+                derive.compile_predicate(rule["cond"], names)
+            except derive.DeriveError as exc:
+                return str(exc)
+        self.session.derivations.append(
+            {"kind": "label", "name": name, "rules": rules, "default": default}
         )
         self._refresh_derived()
         return None
