@@ -11,7 +11,7 @@ widget is only the grid surface.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -25,152 +25,53 @@ from .grid_model import DataFrameModel
 
 
 class ReorderHeader(QHeaderView):
-    """Header with our own lightweight column reordering.
+    """Movable header that draws a drop-position indicator while dragging.
 
-    Qt's built-in movable sections composite a translucent ghost of the dragged
-    column on every mouse move, which is the drag lag. Here sections are *not*
-    Qt-movable; we handle the drag ourselves, drawing only a thin drop-position
-    line and highlighting the grabbed header — far cheaper. Auto-scroll near the
-    edges is our own, throttled on a timer, so a column can still be dragged to
-    an off-screen position without the repaint storm.
-
-    A click without a drag falls through to the base class, preserving
-    click-to-select-column.
+    QHeaderView already shows a translucent ghost of the dragged section; this
+    adds a clear accent line at the boundary where it will land on release.
     """
-
-    _DRAG_THRESHOLD = 6   # px of movement before a click becomes a drag
-    _EDGE_MARGIN = 28     # px from an edge that starts auto-scroll
-    _SCROLL_STEP = 28     # px per throttled scroll tick
-    _SCROLL_MS = 40       # auto-scroll tick interval
 
     def __init__(self, parent=None) -> None:
         super().__init__(Qt.Orientation.Horizontal, parent)
-        self.setSectionsMovable(False)   # we handle reordering -> no Qt ghost
+        self.setSectionsMovable(True)
         self.setSectionsClickable(True)
-        self._view = parent              # the QTableView
         self._drop_x: int | None = None
-        self._grab_logical = -1
-        self._press_x: float | None = None
-        self._dragging = False
-        self._last_x = 0
-        self._scroll_dir = 0
-        self._scroll_timer = QTimer(self)
-        self._scroll_timer.setInterval(self._SCROLL_MS)
-        self._scroll_timer.timeout.connect(self._auto_scroll_step)
-
-    # -- mouse ---------------------------------------------------------
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_x = event.position().x()
-            self._grab_logical = self.logicalIndexAt(int(self._press_x))
-            self._dragging = False
-        super().mousePressEvent(event)  # allow click-to-select to start
 
     def mouseMoveEvent(self, event) -> None:
-        if not (event.buttons() & Qt.MouseButton.LeftButton) or self._grab_logical < 0:
-            super().mouseMoveEvent(event)
+        super().mouseMoveEvent(event)  # let Qt do the ghost drag
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
             return
         x = int(event.position().x())
-        self._last_x = x
-        if not self._dragging:
-            if self._press_x is None or abs(x - self._press_x) < self._DRAG_THRESHOLD:
-                super().mouseMoveEvent(event)
-                return
-            self._dragging = True  # begin reorder; stop feeding super (no select-drag)
-        self._update_drop(x)
-        self._update_edge_scroll(x)
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._scroll_timer.stop()
-        self._scroll_dir = 0
-        if self._dragging:
-            self._perform_move(int(event.position().x()))
-            self._dragging = False
-            self._drop_x = None
-            self._grab_logical = -1
-            self.viewport().update()
-            return  # swallow: a drag is not a click/selection
-        self._grab_logical = -1
-        super().mouseReleaseEvent(event)  # plain click -> select column
-
-    # -- drop indicator + reorder --------------------------------------
-    def _drop_x_for(self, x: int) -> int:
         vi = self.visualIndexAt(x)
         if vi == -1:
-            return self.viewport().width()  # past the last column -> far right
+            return
         logical = self.logicalIndex(vi)
         left = self.sectionViewportPosition(logical)
         width = self.sectionSize(logical)
-        return left + width if x > left + width / 2 else left
-
-    def _update_drop(self, x: int) -> None:
-        drop = self._drop_x_for(x)
+        drop = left + width if x > left + width / 2 else left
         if drop == self._drop_x:
-            return
+            return  # line hasn't moved — skip the repaint
         old = self._drop_x
         self._drop_x = drop
         vp = self.viewport()
-        if old is not None:
+        if old is not None:  # clear the old line's strip
             vp.update(old - 2, 0, 5, self.height())
-        vp.update(drop - 2, 0, 5, self.height())
+        vp.update(drop - 2, 0, 5, self.height())  # draw the new one
 
-    def _perform_move(self, x: int) -> None:
-        if self._grab_logical < 0:
-            return
-        from_vis = self.visualIndex(self._grab_logical)
-        vi = self.visualIndexAt(x)
-        if vi == -1:
-            to_vis = self.count() - 1
-        else:
-            logical = self.logicalIndex(vi)
-            left = self.sectionViewportPosition(logical)
-            width = self.sectionSize(logical)
-            to_vis = vi + 1 if x > left + width / 2 else vi
-            if to_vis > from_vis:
-                to_vis -= 1  # removal shifts targets left of the insertion point
-        to_vis = max(0, min(self.count() - 1, to_vis))
-        if to_vis != from_vis:
-            self.moveSection(from_vis, to_vis)
+    def mouseReleaseEvent(self, event) -> None:
+        self._drop_x = None
+        self.viewport().update()
+        super().mouseReleaseEvent(event)
 
-    # -- throttled auto-scroll -----------------------------------------
-    def _update_edge_scroll(self, x: int) -> None:
-        w = self.viewport().width()
-        if x > w - self._EDGE_MARGIN:
-            self._scroll_dir = 1
-        elif x < self._EDGE_MARGIN:
-            self._scroll_dir = -1
-        else:
-            self._scroll_dir = 0
-        if self._scroll_dir and not self._scroll_timer.isActive():
-            self._scroll_timer.start()
-        elif not self._scroll_dir and self._scroll_timer.isActive():
-            self._scroll_timer.stop()
-
-    def _auto_scroll_step(self) -> None:
-        if self._view is None or not self._scroll_dir:
-            return
-        sb = self._view.horizontalScrollBar()
-        new = sb.value() + self._scroll_dir * self._SCROLL_STEP
-        sb.setValue(max(sb.minimum(), min(sb.maximum(), new)))
-        self.viewport().update()  # sections moved under the cursor
-        self._update_drop(self._last_x)
-
-    # -- paint ---------------------------------------------------------
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
+        if self._drop_x is None:
+            return
         painter = QPainter(self.viewport())
-        # Highlight the grabbed column's header while dragging (light "ghost").
-        if self._dragging and self._grab_logical >= 0:
-            left = self.sectionViewportPosition(self._grab_logical)
-            width = self.sectionSize(self._grab_logical)
-            fill = QColor(self.palette().color(self.palette().ColorRole.Highlight))
-            fill.setAlpha(40)
-            painter.fillRect(left, 0, width, self.height(), fill)
-        if self._drop_x is not None:
-            pen = QPen(self.palette().color(self.palette().ColorRole.Highlight))
-            pen.setWidth(3)
-            painter.setPen(pen)
-            painter.drawLine(self._drop_x, 0, self._drop_x, self.height())
+        pen = QPen(self.palette().color(self.palette().ColorRole.Highlight))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.drawLine(self._drop_x, 0, self._drop_x, self.height())
         painter.end()
 
 # Default visual order (left → right) and the columns hidden by default.
