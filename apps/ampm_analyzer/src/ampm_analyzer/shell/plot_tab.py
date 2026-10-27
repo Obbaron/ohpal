@@ -1,17 +1,21 @@
-"""Plot tab — a VisPy 3D canvas.
+"""Plot tab — a dumb VisPy scatter bound to the shared result.
 
-VisPy is imported lazily and guarded: if VisPy (or an OpenGL context) isn't
-available, the tab shows a labelled placeholder instead of crashing, so the
-shell runs anywhere. When VisPy is present, a small random scatter with a
-turntable camera is shown purely to prove the canvas embeds and renders.
+Holds a PlotSpec (which columns map to X/Y/Z/colour) and renders whatever
+dataframe it's handed. The window re-feeds it the shared result whenever the
+span or data changes; the tab never queries or assumes columns.
 
-The plot *toolbar* lives on the main window; this widget is only the canvas.
+VisPy is imported lazily and guarded: without VisPy (or an OpenGL context) the
+tab shows a labelled placeholder instead of crashing, so the shell runs anywhere.
+Render arrays are released on close.
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+
+from . import plotdata
+from .plotspec import PlotSpec
 
 
 def _placeholder(message: str) -> QWidget:
@@ -21,6 +25,7 @@ def _placeholder(message: str) -> QWidget:
     lab = QLabel(message)
     lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lab.setStyleSheet("color:#8b93a1; font-size:14px;")
+    lab.setWordWrap(True)
     lay.addWidget(lab)
     return frame
 
@@ -28,42 +33,107 @@ def _placeholder(message: str) -> QWidget:
 class PlotTab(QWidget):
     _counter = 0
 
-    def __init__(self, title: str | None = None, parent: QWidget | None = None) -> None:
+    def __init__(self, spec: PlotSpec, df=None, title: str | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("tabkind", "plot")
         PlotTab._counter += 1
-        self.title = title or f"Plot {PlotTab._counter}"
+        self.spec = spec
+        self.title = title or f"{spec.kind} {PlotTab._counter}"
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self._build_canvas())
+        self._df = df
+        self._canvas = None
+        self._view = None
+        self._scatter = None
+        self._status: QLabel | None = None
 
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._body = self._build_canvas()
+        self._lay.addWidget(self._body)
+        if df is not None:
+            self.set_dataframe(df)
+
+    # -- canvas --------------------------------------------------------
     def _build_canvas(self) -> QWidget:
         try:
-            import numpy as np
             from vispy import scene
         except Exception:  # noqa: BLE001 - any import/GL issue -> placeholder
             return _placeholder(
-                "3D canvas (VisPy)\n\nVisPy not available in this environment — "
-                "placeholder shown.\nThe real scatter renders here once VisPy is "
-                "installed."
+                "VisPy not available in this environment — the scatter renders "
+                "here once VisPy is installed."
             )
-
         try:
-            canvas = scene.SceneCanvas(keys="interactive", bgcolor="#0f1115")
+            canvas = scene.SceneCanvas(keys="interactive", bgcolor="#0f1115",
+                                       show=False)
             view = canvas.central_widget.add_view()
-            view.camera = scene.cameras.TurntableCamera(fov=45, distance=6)
-
-            n = 2000
-            pts = np.random.normal(size=(n, 3), scale=1.0).astype("float32")
-            colors = np.random.uniform(0.4, 1.0, size=(n, 4)).astype("float32")
-            colors[:, 3] = 0.9
-            scatter = scene.visuals.Markers()
-            scatter.set_data(pts, face_color=colors, size=5)
-            view.add(scatter)
-            scene.visuals.XYZAxis(parent=view.scene)
-
-            self._canvas = canvas  # keep a reference alive
+            if self.spec.is_3d:
+                view.camera = scene.cameras.TurntableCamera(fov=45, distance=6)
+                scene.visuals.XYZAxis(parent=view.scene)
+            else:
+                view.camera = scene.cameras.PanZoomCamera(aspect=None)
+            self._scatter = scene.visuals.Markers()
+            view.add(self._scatter)
+            self._canvas, self._view = canvas, view
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
-            return _placeholder(f"3D canvas (VisPy)\n\nCould not start canvas:\n{exc}")
+            return _placeholder(f"Could not start the 3D canvas:\n{exc}")
+
+    # -- data ----------------------------------------------------------
+    def set_dataframe(self, df) -> None:
+        """(Re)render with a new dataframe, keeping the same spec."""
+        self._df = df
+        self._render()
+
+    def _render(self) -> None:
+        if self._df is None or self._scatter is None:
+            return
+        try:
+            data = plotdata.build(self._df, self.spec)
+        except KeyError as exc:  # a spec column isn't in the data any more
+            self._show_overlay(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._show_overlay(f"Could not plot: {exc}")
+            return
+
+        if data.n_drawn == 0:
+            self._show_overlay("No rows to plot for this selection.")
+            return
+        self._clear_overlay()
+        self._scatter.set_data(data.pos, face_color=data.colors, size=5,
+                               edge_width=0)
+        if self._view is not None:
+            self._view.camera.set_range()
+
+    # -- overlay (errors / empty) on top of the canvas -----------------
+    def _show_overlay(self, text: str) -> None:
+        if self._scatter is not None:
+            import numpy as np
+
+            self._scatter.set_data(np.zeros((0, 3), "float32"))
+        if self._status is None:
+            self._status = QLabel(self)
+            self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._status.setStyleSheet("color:#8b93a1; font-size:13px;")
+            self._status.setWordWrap(True)
+            self._lay.addWidget(self._status)
+        self._status.setText(text)
+        self._status.setVisible(True)
+
+    def _clear_overlay(self) -> None:
+        if self._status is not None:
+            self._status.setVisible(False)
+
+    # -- teardown ------------------------------------------------------
+    def release(self) -> None:
+        """Free render arrays and close the canvas (called on tab close)."""
+        self._df = None
+        self._scatter = None
+        self._view = None
+        if self._canvas is not None:
+            try:
+                self._canvas.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._canvas = None

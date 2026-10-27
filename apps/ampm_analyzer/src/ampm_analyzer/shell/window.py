@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self._add_page(self.backstage, "File", closable=False)
 
         self._data_tab: DataTab | None = None
+        self._plot_tabs: list = []  # open plot tabs, re-fed the shared result
         self._pending_grid_state: bytes | None = None  # per-build column layout
         self._grid_cache_dir = None  # where to persist the layout
         self._last_columns: list[str] | None = None  # to rebuild toolbar on change
@@ -282,6 +283,9 @@ class MainWindow(QMainWindow):
         # toolbar rebuild to refresh the Show/hide list.
         if changed and was_on_data:
             self._sync_toolbar(self.tabbar.currentIndex())
+        # Dumb plots: hand every open plot the (new) shared result.
+        for tab in self._plot_tabs:
+            tab.set_dataframe(result.df)
         lo, hi = result.layers
         where = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
         capped = (
@@ -298,9 +302,25 @@ class MainWindow(QMainWindow):
         self.set_status(f"Load failed: {first_line}")
         self.log_bus.log_line(message)  # full traceback to the log
 
-    def _new_plot_tab(self, title: str | None = None) -> None:
+    def _new_plot(self, kind: str | None = None) -> None:
+        from .plotspec import SCATTER_KINDS
+
+        if self.session.result is None:
+            self.set_status("Load a build before plotting.")
+            return
+        if kind not in SCATTER_KINDS:
+            self.set_status(f"{kind}: not wired yet.")
+            return
+        from .plot_dialog import NewPlotDialog
+
+        columns = list(self.session.result.df.columns)
+        dlg = NewPlotDialog(kind, columns, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        spec = dlg.spec()
         self._ensure_data_tab()
-        tab = PlotTab(title)
+        tab = PlotTab(spec, self.session.result.df)
+        self._plot_tabs.append(tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
 
@@ -309,6 +329,10 @@ class MainWindow(QMainWindow):
         if widget is not None and widget.property("tabkind") == "plot":
             self.tabbar.removeTab(index)
             self.stack.removeWidget(widget)
+            if widget in self._plot_tabs:
+                self._plot_tabs.remove(widget)
+            if hasattr(widget, "release"):
+                widget.release()
             widget.deleteLater()
 
     def _on_tab_changed(self, index: int) -> None:
@@ -451,7 +475,7 @@ class MainWindow(QMainWindow):
                 on_add_label=self._add_group_label,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
-                on_new_plot=lambda name=None: self._new_plot_tab(name),
+                on_new_plot=lambda name=None: self._new_plot(name),
             )
         else:
             toolbars.populate_plot(self.toolbar, color=color)
