@@ -39,15 +39,24 @@ class ReorderHeader(QHeaderView):
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)  # let Qt do the ghost drag
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            x = int(event.position().x())
-            vi = self.visualIndexAt(x)
-            if vi != -1:
-                logical = self.logicalIndex(vi)
-                left = self.sectionViewportPosition(logical)
-                width = self.sectionSize(logical)
-                self._drop_x = left + width if x > left + width / 2 else left
-                self.viewport().update()
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        x = int(event.position().x())
+        vi = self.visualIndexAt(x)
+        if vi == -1:
+            return
+        logical = self.logicalIndex(vi)
+        left = self.sectionViewportPosition(logical)
+        width = self.sectionSize(logical)
+        drop = left + width if x > left + width / 2 else left
+        if drop == self._drop_x:
+            return  # line hasn't moved — skip the repaint
+        old = self._drop_x
+        self._drop_x = drop
+        vp = self.viewport()
+        if old is not None:  # clear the old line's strip
+            vp.update(old - 2, 0, 5, self.height())
+        vp.update(drop - 2, 0, 5, self.height())  # draw the new one
 
     def mouseReleaseEvent(self, event) -> None:
         self._drop_x = None
