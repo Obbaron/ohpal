@@ -32,6 +32,11 @@ class BuildSession(QObject):
     loadStarted = pyqtSignal(str)
     # A DataStore was constructed for a build (payload: the DataStore).
     buildLoaded = pyqtSignal(object)
+    # The build needs setup before it can be shown — show the DataStore page
+    # (payload: (config dict, layers list, exists bool)).
+    setupRequired = pyqtSignal(object)
+    # Per-layer cache-build progress (payload: (done, total, layer)).
+    cacheProgress = pyqtSignal(int, int, int)
     # A query finished (payload: QueryResult).
     queryReady = pyqtSignal(object)
     # A load or query failed (payload: a human-readable message).
@@ -58,6 +63,14 @@ class BuildSession(QObject):
         self.layer_thickness = layer_thickness
         self.result = None
         self.buildLoaded.emit(store)
+
+    def require_setup(
+        self, config: dict, layers: list, columns: list, exists: bool
+    ) -> None:
+        self.setupRequired.emit((config, layers, columns, exists))
+
+    def cache_progress(self, done: int, total: int, layer: int) -> None:
+        self.cacheProgress.emit(done, total, layer)
 
     def set_result(self, result: QueryResult) -> None:
         self.result = result

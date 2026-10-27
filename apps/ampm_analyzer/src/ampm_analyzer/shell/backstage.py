@@ -58,9 +58,10 @@ def _tile(title: str, subtitle: str) -> QPushButton:
 
 
 class Backstage(QWidget):
-    loadRequested = pyqtSignal()
+    newRequested = pyqtSignal()       # prepare a fresh build
+    openRequested = pyqtSignal()      # open a build that already has a cache
     createExcelRequested = pyqtSignal()
-    datastoreCreateRequested = pyqtSignal()
+    datastoreBuildRequested = pyqtSignal()  # Build/Rebuild on the setup page
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -90,21 +91,20 @@ class Backstage(QWidget):
             lay.addWidget(b)
             return b
 
-        self.btn_load = add("Load packet data", primary=True)
+        self.btn_new = add("New", primary=True)
+        self.btn_open = add("Open", primary=True)
         self.btn_excel = add("Create Excel from AMPM", primary=True)
         lay.addSpacing(8)
         # Appears only once a build is loaded.
         self.btn_datastore = add("DataStore")
         self.btn_datastore.setVisible(False)
-        self.btn_open = add("Open")
         self.btn_export = add("Export")
         self.btn_info = add("Info")
         lay.addStretch(1)
         self.btn_close = add("Close")
 
-        # Structural navigation only (lets you move off the backstage).
-        self.btn_load.clicked.connect(self.loadRequested)
-        self.btn_open.clicked.connect(self.loadRequested)
+        self.btn_new.clicked.connect(self.newRequested)
+        self.btn_open.clicked.connect(self.openRequested)
         self.btn_excel.clicked.connect(self.createExcelRequested)
         self.btn_datastore.clicked.connect(self.show_datastore_page)
         return bar
@@ -130,19 +130,24 @@ class Backstage(QWidget):
         heading.setProperty("class", "SectionHeading")
         lay.addWidget(heading)
 
-        # Two primary tiles (where PowerPoint puts templates).
+        # Primary tiles (where PowerPoint puts templates).
         tiles = QHBoxLayout()
         tiles.setSpacing(16)
-        self.tile_load = _tile(
-            "Load packet data", "Open an AMPM packet and explore it in the grid."
+        self.tile_new = _tile(
+            "New", "Prepare a fresh build: detect inputs and build its DataStore."
+        )
+        self.tile_open = _tile(
+            "Open", "Open a build that already has a DataStore and explore it."
         )
         self.tile_excel = _tile(
             "Create Excel from AMPM",
             "Generate samples-template workbooks from a build directory.",
         )
-        self.tile_load.clicked.connect(self.loadRequested)
+        self.tile_new.clicked.connect(self.newRequested)
+        self.tile_open.clicked.connect(self.openRequested)
         self.tile_excel.clicked.connect(self.createExcelRequested)
-        tiles.addWidget(self.tile_load)
+        tiles.addWidget(self.tile_new)
+        tiles.addWidget(self.tile_open)
         tiles.addWidget(self.tile_excel)
         tiles.addStretch(1)
         lay.addLayout(tiles)
@@ -182,8 +187,8 @@ class Backstage(QWidget):
         heading.setProperty("class", "SectionHeading")
         lay.addWidget(heading)
         sub = QLabel(
-            "Define what gets materialised into the parquet cache for this "
-            "build. View filters in the Data tab query this cache on top."
+            "Build the parquet cache for this build. Mask / assign-parts / "
+            "correction are applied later from the Data toolbar."
         )
         sub.setProperty("class", "TileSub")
         sub.setWordWrap(True)
@@ -193,7 +198,7 @@ class Backstage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.ds_form = DataStoreSettings()
-        self.ds_form.createRequested.connect(self.datastoreCreateRequested)
+        self.ds_form.buildRequested.connect(self.datastoreBuildRequested)
         scroll.setWidget(self.ds_form)
         lay.addWidget(scroll, 1)
         return page
@@ -219,18 +224,23 @@ class Backstage(QWidget):
     def set_datastore_exists(self, exists: bool) -> None:
         self.ds_form.set_exists(exists)
 
+    def set_datastore_config(
+        self, config: dict, layers: list[int], columns: list[str] | None = None
+    ) -> None:
+        self.ds_form.set_config(config, layers, columns)
+
     def set_loading(self, loading: bool) -> None:
         """Disable the load entry points while a load is in flight."""
-        for w in (self.btn_load, self.btn_open, self.tile_load):
+        for w in (self.btn_new, self.btn_open, self.tile_new, self.tile_open):
             w.setEnabled(not loading)
 
     def apply_icons(self, color: str) -> None:
         """(Re)tint the sidebar icons for the active theme."""
         mapping = {
-            self.btn_load: "load_packet",
+            self.btn_new: "load_packet",
+            self.btn_open: "open",
             self.btn_excel: "create_excel",
             self.btn_datastore: "datastore",
-            self.btn_open: "open",
             self.btn_export: "export",
             self.btn_info: "info",
             self.btn_close: "close",

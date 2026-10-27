@@ -27,10 +27,6 @@ from PyQt6.QtWidgets import (
 
 from . import icons
 
-# Recipe-button states. "applied" = step is on; "available" = can be turned on;
-# "unavailable" = its input is missing (disabled; the reason is the tooltip).
-RECIPE_STATES = ("applied", "available", "unavailable")
-
 
 # -- small builders ----------------------------------------------------
 def _action(
@@ -58,26 +54,6 @@ def _muted(text: str) -> QLabel:
     return lab
 
 
-def _recipe_action(
-    toolbar: QToolBar, text: str, icon: str, color: str, state: str, reason: str
-) -> QAction:
-    """A three-state recipe toggle (mask / assign parts / correction)."""
-    act = QAction(text, toolbar)
-    act.setIcon(icons.ui(icon, color))
-    act.setCheckable(True)
-    if state == "applied":
-        act.setChecked(True)
-        act.setToolTip(f"{text}: applied — click to remove")
-    elif state == "available":
-        act.setChecked(False)
-        act.setToolTip(f"{text}: available — click to apply")
-    else:  # unavailable
-        act.setEnabled(False)
-        act.setToolTip(f"{text}: unavailable — {reason}")
-    toolbar.addAction(act)
-    return act
-
-
 def _menu_button(toolbar: QToolBar, text: str, icon: str, color: str) -> QToolButton:
     """An icon button that drops a menu (instant popup)."""
     btn = QToolButton()
@@ -98,13 +74,11 @@ def populate_data(
     *,
     color: str,
     columns: list[str] | None = None,
-    recipe_states: dict | None = None,
     sidebar_open: bool = False,
     on_toggle_sidebar=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
-    recipe_states = recipe_states or {}
 
     # Panel toggle — show/hide the side panel.
     panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
@@ -132,20 +106,12 @@ def populate_data(
     _action(toolbar, "Remove column", "remove_column", color)
     toolbar.addSeparator()
 
-    # Filters (query-time; on top of the cache).
+    # Filters (query-time; on top of the cache). Mask / assign-parts /
+    # correction are not here — they're defined with the DataStore in the
+    # backstage setup page.
     _action(toolbar, "Filter", "filter", color)
     _action(toolbar, "Remove filter", "remove_filter", color)
     _action(toolbar, "Reset filters", "reset_filter", color)
-    toolbar.addSeparator()
-
-    # Load recipe (applied on top of the query). Three-state each.
-    for key, label, reason in (
-        ("mask", "Mask", "no STL found to mask with"),
-        ("assign_parts", "Assign parts", "no parts CSV / DHXML found"),
-        ("correction", "Correction", "no correction reference found"),
-    ):
-        state, why = recipe_states.get(key, ("unavailable", reason))
-        _recipe_action(toolbar, label, key, color, state, why)
     toolbar.addSeparator()
 
     # New plot — dropdown of plot types (icon per type).

@@ -68,3 +68,46 @@ class QueryWorker(QObject):
             self.error.emit(f"Load aborted: {exc}")
         except Exception:  # noqa: BLE001 - surface any failure as a message
             self.error.emit(traceback.format_exc())
+
+
+class CacheWorker(QObject):
+    """Builds the parquet cache off-thread, one layer at a time.
+
+    We drive the per-layer loop ourselves (``build_cache([L], force=…)`` each),
+    rather than scraping ``verbose`` output, so progress is real and the build
+    can be cancelled between layers. ``build_cache`` skips up-to-date layers
+    quickly when ``force`` is False, so "build missing" is cheap.
+    """
+
+    progress = pyqtSignal(int, int, int)  # done, total, layer
+    finished = pyqtSignal(int)  # number of layers (re)built
+    error = pyqtSignal(str)
+
+    def __init__(self, store: Any, layers: list[int], *, force: bool) -> None:
+        super().__init__()
+        self._store = store
+        self._layers = list(layers)
+        self._force = force
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            total = len(self._layers)
+            built = 0
+            for i, layer in enumerate(self._layers, start=1):
+                if self._cancelled:
+                    break
+                self._store.build_cache(
+                    layers=[layer], force=self._force, verbose=False
+                )
+                built += 1
+                self.progress.emit(i, total, layer)
+            self.finished.emit(built)
+        except SystemExit as exc:
+            self.error.emit(f"Build aborted: {exc}")
+        except Exception:  # noqa: BLE001
+            self.error.emit(traceback.format_exc())

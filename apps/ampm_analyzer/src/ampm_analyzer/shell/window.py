@@ -124,16 +124,19 @@ class MainWindow(QMainWindow):
         self.controller = AppController(self, self.session)
         self.session.loadStarted.connect(self._on_load_started)
         self.session.buildLoaded.connect(self._on_build_loaded)
+        self.session.setupRequired.connect(self._on_setup_required)
+        self.session.cacheProgress.connect(self._on_cache_progress)
         self.session.queryReady.connect(self._on_query_ready)
         self.session.loadFailed.connect(self._on_load_failed)
 
         # File (backstage) tab — pinned left-most, non-closable.
         self.backstage = Backstage()
-        self.backstage.loadRequested.connect(self.controller.load_build)
+        self.backstage.newRequested.connect(self.controller.new_build)
+        self.backstage.openRequested.connect(self.controller.open_build)
         self.backstage.createExcelRequested.connect(
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
-        self.backstage.datastoreCreateRequested.connect(self._on_datastore_created)
+        self.backstage.datastoreBuildRequested.connect(self._on_build_requested)
         self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
 
@@ -203,16 +206,38 @@ class MainWindow(QMainWindow):
         self.set_status(f"Loading {label}…")
 
     def _on_build_loaded(self, store) -> None:
-        self._ensure_data_tab()
-        self._select_widget(self._data_tab)
+        # Build identified — set the title + reveal the DataStore entry. The
+        # Data tab is only opened once there's a query result (see _on_query_ready),
+        # so New (which goes to setup first) doesn't flash an empty grid.
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self._stats["build"].setText(f"build: {self.session.build_name}")
-        first = store.layers[0]
-        self.set_status(f"Querying layer {first}…")
+        self.backstage.set_build_loaded(True)
+
+    def _on_setup_required(self, payload) -> None:
+        config, layers, columns, exists = payload
+        self.backstage.set_loading(False)
+        self.show_progress(False)
+        self.backstage.set_datastore_config(config, layers, columns)
+        self.backstage.set_datastore_exists(exists)
+        self.backstage.show_datastore_page()
+        self.tabbar.setCurrentIndex(0)  # File tab
+        self.set_status("Set up the DataStore, then Build.")
+
+    def _on_build_requested(self) -> None:
+        scope = self.backstage.ds_form.scope()
+        self.controller.build_datastore(scope)
+
+    def _on_cache_progress(self, done: int, total: int, layer: int) -> None:
+        self._progress.setRange(0, total)
+        self._progress.setValue(done)
+        self._progress.setVisible(True)
+        self.set_status(f"Building cache: layer {layer} ({done}/{total})")
 
     def _on_query_ready(self, result) -> None:
         self.backstage.set_loading(False)
         self.show_progress(False)
+        self._ensure_data_tab()
+        self._select_widget(self._data_tab)
         self._data_tab.set_dataframe(result.df)
         lo, hi = result.layers
         self._stats["points"].setText(f"points: {result.total_rows:,}")
@@ -231,28 +256,6 @@ class MainWindow(QMainWindow):
         self.show_progress(False)
         first_line = message.strip().splitlines()[-1] if message.strip() else message
         self.set_status(f"Load failed: {first_line}")
-
-    def _prompt_datastore(self) -> None:
-        """On first load with no cache, offer to create a DataStore."""
-        from PyQt6.QtWidgets import QMessageBox
-
-        choice = QMessageBox.question(
-            self,
-            "DataStore",
-            "No datastore exists for this build.\n\nWould you like to create one?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if choice == QMessageBox.StandardButton.Yes:
-            self.backstage.show_datastore_page()
-            self.tabbar.setCurrentIndex(0)  # to File, to configure the store
-        else:
-            self.set_status("No datastore — create one from File → DataStore to plot")
-
-    def _on_datastore_created(self) -> None:
-        self.backstage.set_datastore_exists(True)
-        if self._data_tab is not None:
-            self._select_widget(self._data_tab)
-        self.set_status("DataStore created — not wired yet")
 
     def _new_plot_tab(self, title: str | None = None) -> None:
         self._ensure_data_tab()

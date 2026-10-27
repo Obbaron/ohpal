@@ -1,24 +1,25 @@
-"""DataStore settings form (inert).
+"""DataStore setup page (backstage).
 
-The DataStore is the parquet cache materialised from a build with a specific
-configuration — columns to include, layer range, spatial bounds, masking,
-correction, and part-assignment method. This form *is* that configuration. It
-lives in the backstage and appears once a build is loaded; "Create / Rebuild"
-(re)materialises the cache.
+Reached via New (always) or Open-with-no-cache. It shows the build's detected
+*config/inputs* (source dir, STL, parts CSV, layer thickness — read-only here,
+flagged when missing) and the **cache scope** (all layers or a range), and
+drives the parquet build via the Build / Rebuild button.
 
-This is distinct from the Data tab's view filters, which query the existing
-cache cheaply (subregion / sub-range) without rebuilding it.
+This is build-level setup only. The apply-or-not recipe toggles (mask / assign
+parts / correction) live on the Data toolbar, not here; their *availability*
+derives from the inputs shown on this page.
 
-Everything here is inert — no control is connected to the pipeline yet.
+Still inert w.r.t. the pipeline: the controller performs the build; this widget
+only collects scope and emits ``buildRequested``.
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,38 +27,26 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-# Raw packet columns that could be materialised (placeholder set). The first
-# few are always loaded by the pipeline and so are shown checked + disabled.
-_RAW_COLUMNS = [
-    "Demand X", "Demand Y", "Z", "layer", "Start time",
-    "Laser power", "Laser speed", "Focus", "Hatch",
-    "MeltVIEW melt pool (mean)",
-]
-_ALWAYS = {"Demand X", "Demand Y", "Z", "layer", "Start time"}
+_MISSING = "— not found —"
+
+# Always loaded (coordinates + layer/Z + the mask-keep key): locked on.
+_ALWAYS = {"Demand X", "Demand Y", "Start time", "layer", "Z"}
 
 
-def _wrap(layout) -> QWidget:
-    w = QWidget()
-    w.setLayout(layout)
-    return w
-
-
-def _dspin(value: float) -> QDoubleSpinBox:
-    s = QDoubleSpinBox()
-    s.setRange(-100_000, 100_000)
-    s.setDecimals(2)
-    s.setValue(value)
-    s.setFixedWidth(90)
-    return s
+def _value_label(text: str) -> QLabel:
+    lab = QLabel(text)
+    lab.setWordWrap(True)
+    return lab
 
 
 class DataStoreSettings(QWidget):
-    createRequested = pyqtSignal()
+    buildRequested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,95 +54,178 @@ class DataStoreSettings(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
 
-        self.status = QLabel("No datastore exists for this build.")
+        self.status = QLabel("No DataStore for this build yet.")
         self.status.setProperty("class", "PanelHeading")
         lay.addWidget(self.status)
 
+        lay.addWidget(self._config_group())
+        lay.addWidget(self._scope_group())
         lay.addWidget(self._columns_group())
-        lay.addWidget(self._range_group())
-        lay.addWidget(self._pipeline_group())
+        lay.addWidget(self._processing_group())
 
         row = QHBoxLayout()
         row.addStretch(1)
-        self.create_btn = QPushButton("Create DataStore")
-        self.create_btn.setProperty("primary", "true")
-        self.create_btn.clicked.connect(self.createRequested)
-        row.addWidget(self.create_btn)
+        self.build_btn = QPushButton("Build DataStore")
+        self.build_btn.setProperty("primary", "true")
+        self.build_btn.clicked.connect(self.buildRequested)
+        row.addWidget(self.build_btn)
         lay.addLayout(row)
         lay.addStretch(1)
 
     # -- groups --------------------------------------------------------
+    def _config_group(self) -> QGroupBox:
+        box = QGroupBox("Build inputs (detected)")
+        f = QFormLayout(box)
+        self.lbl_source = _value_label(_MISSING)
+        self.lbl_stl = _value_label(_MISSING)
+        self.lbl_csv = _value_label(_MISSING)
+        self.lbl_thickness = _value_label(_MISSING)
+        f.addRow("Packet source", self.lbl_source)
+        f.addRow("STL", self.lbl_stl)
+        f.addRow("Parts CSV", self.lbl_csv)
+        f.addRow("Layer thickness", self.lbl_thickness)
+        return box
+
     def _columns_group(self) -> QGroupBox:
-        box = QGroupBox("Columns to include")
+        """Which columns the store loads. Always-required ones are locked on."""
+        box = QGroupBox("Columns")
         v = QVBoxLayout(box)
-        self.columns = QListWidget()
-        for name in _RAW_COLUMNS:
-            item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            always = name in _ALWAYS
-            item.setCheckState(
-                Qt.CheckState.Checked if always else Qt.CheckState.Unchecked
-            )
-            if always:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self.columns.addItem(item)
-        self.columns.setFixedHeight(160)
-        v.addWidget(self.columns)
+        self.columns_list = QListWidget()
+        self.columns_list.setFixedHeight(150)
+        v.addWidget(self.columns_list)
         return box
 
-    def _range_group(self) -> QGroupBox:
-        box = QGroupBox("Materialisation range")
+    def _processing_group(self) -> QGroupBox:
+        """Recipe defined with the DataStore: mask / assign parts / correction.
+
+        Each control is disabled when its input is missing (reason in tooltip);
+        changing these means reconfiguring + rebuilding the store.
+        """
+        box = QGroupBox("Processing")
         f = QFormLayout(box)
 
-        lr = QHBoxLayout()
+        self.chk_mask = QCheckBox("Apply mask")
+        f.addRow("Masking", self.chk_mask)
+
+        self.cmb_parts = QComboBox()
+        self.cmb_parts.addItems(["None", "Direct", "DHXML", "DBSCAN"])
+        f.addRow("Part assignment", self.cmb_parts)
+
+        self.chk_correction = QCheckBox("Apply correction")
+        f.addRow("Correction", self.chk_correction)
+        return box
+
+    def _scope_group(self) -> QGroupBox:
+        box = QGroupBox("Layers")
+        v = QVBoxLayout(box)
+
+        self.scope_group = QButtonGroup(self)
+        self.radio_all = QRadioButton("All layers")
+        self.radio_all.setChecked(True)
+        self.radio_range = QRadioButton("Range")
+        self.scope_group.addButton(self.radio_all)
+        self.scope_group.addButton(self.radio_range)
+        v.addWidget(self.radio_all)
+
+        rr = QHBoxLayout()
+        rr.addWidget(self.radio_range)
         self.layer_min = QSpinBox()
-        self.layer_min.setRange(0, 100_000)
-        self.layer_min.setValue(1)
         self.layer_max = QSpinBox()
-        self.layer_max.setRange(0, 100_000)
-        self.layer_max.setValue(80)
-        lr.addWidget(self.layer_min)
-        lr.addWidget(QLabel("to"))
-        lr.addWidget(self.layer_max)
-        lr.addStretch(1)
-        f.addRow("Layer range", _wrap(lr))
+        for s in (self.layer_min, self.layer_max):
+            s.setRange(1, 100_000)
+            s.setEnabled(False)
+            s.setFixedWidth(80)
+        rr.addWidget(self.layer_min)
+        rr.addWidget(QLabel("to"))
+        rr.addWidget(self.layer_max)
+        rr.addStretch(1)
+        v.addLayout(rr)
 
-        xr = QHBoxLayout()
-        self.x_min, self.x_max = _dspin(0), _dspin(250)
-        xr.addWidget(self.x_min)
-        xr.addWidget(QLabel("to"))
-        xr.addWidget(self.x_max)
-        xr.addStretch(1)
-        f.addRow("X bounds", _wrap(xr))
-
-        yr = QHBoxLayout()
-        self.y_min, self.y_max = _dspin(0), _dspin(250)
-        yr.addWidget(self.y_min)
-        yr.addWidget(QLabel("to"))
-        yr.addWidget(self.y_max)
-        yr.addStretch(1)
-        f.addRow("Y bounds", _wrap(yr))
-        return box
-
-    def _pipeline_group(self) -> QGroupBox:
-        box = QGroupBox("Pipeline")
-        f = QFormLayout(box)
-        self.mask = QCheckBox("Apply mask")
-        self.mask.setChecked(True)
-        f.addRow("Masking", self.mask)
-        self.correction = QComboBox()
-        self.correction.addItems(["None", "MAIN / MeltVIEW melt pool (mean)"])
-        f.addRow("Correction", self.correction)
-        self.part_method = QComboBox()
-        self.part_method.addItems(["None", "Direct (dhxml)", "DBSCAN"])
-        f.addRow("Part assignment", self.part_method)
+        self.radio_range.toggled.connect(self.layer_min.setEnabled)
+        self.radio_range.toggled.connect(self.layer_max.setEnabled)
         return box
 
     # -- state ---------------------------------------------------------
+    def set_config(
+        self, config: dict, layers: list[int], columns: list[str] | None = None
+    ) -> None:
+        """Populate detected inputs, available columns, and scope bounds."""
+        def shown(value) -> str:
+            return str(value) if value else _MISSING
+
+        # Columns to include.
+        self.columns_list.clear()
+        for name in columns or []:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            if name in _ALWAYS:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            self.columns_list.addItem(item)
+
+        self.lbl_source.setText(shown(config.get("SOURCE")))
+        self.lbl_stl.setText(shown(config.get("STL")))
+        self.lbl_csv.setText(shown(config.get("PARTS_CSV")))
+        lt = config.get("LAYER_THICKNESS")
+        if not lt:
+            self.lbl_thickness.setText("0.0  — set this (mm)")
+        else:
+            self.lbl_thickness.setText(f"{lt} mm")
+
+        if layers:
+            lo, hi = min(layers), max(layers)
+            for s in (self.layer_min, self.layer_max):
+                s.setRange(lo, hi)
+            self.layer_min.setValue(lo)
+            self.layer_max.setValue(hi)
+
+        # Processing availability derives from the detected inputs.
+        has_stl = bool(config.get("STL"))
+        has_parts = bool(config.get("PARTS_CSV"))
+        self.chk_mask.setEnabled(has_stl)
+        self.chk_mask.setChecked(has_stl)
+        self.chk_mask.setToolTip("" if has_stl else "No STL found to mask with")
+
+        self.cmb_parts.setEnabled(has_parts)
+        if has_parts:
+            method = str(config.get("METHOD", "direct")).lower()
+            index = {"direct": 1, "dhxml": 2, "dbscan": 3}.get(method, 1)
+            self.cmb_parts.setCurrentIndex(index)
+            self.cmb_parts.setToolTip("")
+        else:
+            self.cmb_parts.setCurrentIndex(0)  # None
+            self.cmb_parts.setToolTip("No parts CSV / DHXML found")
+
+        self.chk_correction.setChecked(bool(config.get("APPLY_CORRECTION")))
+
     def set_exists(self, exists: bool) -> None:
         if exists:
-            self.status.setText("DataStore ready. Reconfigure and rebuild below.")
-            self.create_btn.setText("Rebuild DataStore")
+            self.status.setText("DataStore exists. Rebuild below if needed.")
+            self.build_btn.setText("Rebuild DataStore")
         else:
-            self.status.setText("No datastore exists for this build.")
-            self.create_btn.setText("Create DataStore")
+            self.status.setText("No DataStore for this build yet.")
+            self.build_btn.setText("Build DataStore")
+
+    def scope(self) -> tuple[int, int] | None:
+        """Selected layer scope: None = all, else inclusive (lo, hi)."""
+        if self.radio_range.isChecked():
+            return (self.layer_min.value(), self.layer_max.value())
+        return None
+
+    def columns(self) -> list[str]:
+        """Checked columns (always-required ones are included)."""
+        out = []
+        for i in range(self.columns_list.count()):
+            item = self.columns_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                out.append(item.text())
+        return out
+
+    def recipe(self) -> dict:
+        """Selected processing recipe (used when the store applies it later)."""
+        return {
+            "columns": self.columns(),
+            "apply_mask": self.chk_mask.isEnabled() and self.chk_mask.isChecked(),
+            "part_method": self.cmb_parts.currentText().lower(),  # none/direct/…
+            "apply_correction": self.chk_correction.isChecked(),
+        }
