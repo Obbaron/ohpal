@@ -105,13 +105,27 @@ def _muted(text: str) -> QLabel:
 
 
 class _StayOpenMenu(QMenu):
-    """A menu that stays open when toggling checkable items (multi-select)."""
+    """A menu that stays open when toggling checkable items (multi-select).
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        action = self.actionAt(event.pos())
-        if action is not None and action.isCheckable() and action.isEnabled():
-            action.setChecked(not action.isChecked())  # emits toggled; keep open
-            return
+    Only intercepts releases once the mouse has moved onto an item. The release
+    from the opening click (InstantPopup opens on press) passes through to the
+    base class untouched, so the menu opens normally instead of closing at once.
+    """
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._armed = False  # don't intercept the opening click's release
+        super().showEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self._armed = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if getattr(self, "_armed", False):
+            action = self.actionAt(event.pos())
+            if action is not None and action.isCheckable() and action.isEnabled():
+                action.setChecked(not action.isChecked())  # toggled; keep open
+                return
         super().mouseReleaseEvent(event)
 
 
