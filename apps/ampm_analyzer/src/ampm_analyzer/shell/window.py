@@ -283,14 +283,13 @@ class MainWindow(QMainWindow):
         if changed and was_on_data:
             self._sync_toolbar(self.tabbar.currentIndex())
         lo, hi = result.layers
+        where = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
         capped = (
             f" (showing first {result.shown_rows:,})"
             if result.shown_rows < result.total_rows
             else ""
         )
-        self.set_status(
-            f"Loaded layer {lo}: {result.total_rows:,} rows{capped}"
-        )
+        self.set_status(f"Loaded {where}: {result.total_rows:,} rows{capped}")
 
     def _on_load_failed(self, message: str) -> None:
         self.backstage.set_loading(False)
@@ -439,10 +438,12 @@ class MainWindow(QMainWindow):
                 hidden_columns=dt.hidden_columns() if dt else None,
                 removed_columns=list(self.session.removed),
                 layers=list(store.layers) if store is not None else None,
-                current_layer=self.session.current_layer,
+                span_mode=self.session.span_mode,
+                span_lo=(self.session.span_range or (self.session.current_layer,))[0],
+                span_hi=(self.session.span_range or (None, self.session.current_layer))[-1],
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
-                on_layer_changed=self._on_layer_changed,
+                on_span_changed=self._on_span_changed,
                 on_column_visibility=(
                     (lambda n, v: dt.set_column_visible(n, v)) if dt else None
                 ),
@@ -455,8 +456,8 @@ class MainWindow(QMainWindow):
         else:
             toolbars.populate_plot(self.toolbar, color=color)
 
-    def _on_layer_changed(self, layer: int) -> None:
-        self.controller.show_layer(layer)
+    def _on_span_changed(self, mode: str, lo: int | None, hi: int | None) -> None:
+        self.controller.set_span(mode, lo, hi)
 
     def _add_derive_column(self) -> None:
         dt = self._data_tab

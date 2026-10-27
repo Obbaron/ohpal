@@ -50,6 +50,10 @@ class BuildSession(QObject):
         self.layer_thickness: float = 0.03
         self.result: QueryResult | None = None
         self.current_layer: int | None = None
+        # The shared working span the grid and all plots see: "single" (one
+        # layer), "range" (lo..hi) or "all". span_range is the resolved (lo, hi).
+        self.span_mode: str = "single"
+        self.span_range: tuple[int, int] | None = None
         # Derived columns, re-applied to every query result (see shell/derive.py).
         # Controller-owned.
         self.derivations: list[dict] = []
@@ -71,6 +75,8 @@ class BuildSession(QObject):
         self.result = None
         self.derivations = []  # derived columns don't carry across builds
         self.removed = []
+        self.span_mode = "single"
+        self.span_range = None
         self.buildLoaded.emit(store)
 
     def require_setup(

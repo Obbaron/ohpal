@@ -47,7 +47,7 @@ class AppController(QObject):
         self._busy = False
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
-        self._pending_layer: int | None = None
+        self._pending_span: tuple[int, int] | None = None
         self._base_df = None  # last raw query output, before derived columns
 
     # -- entry points --------------------------------------------------
@@ -200,30 +200,54 @@ class AppController(QObject):
         if status is not None:
             self.session.fail(status)
 
-    # -- layer navigation ----------------------------------------------
-    def show_layer(self, layer: int) -> None:
-        """Query a single layer for the grid (constrained; pending-latest)."""
+    # -- span navigation (the shared working span) ---------------------
+    def set_span(self, mode: str, lo: int | None = None, hi: int | None = None) -> None:
+        """Set the shared span the grid and all plots see (pending-latest).
+
+        ``mode`` is "single", "range" or "all". Bounds snap to real layers.
+        """
         store = self.session.store
         if store is None:
             return
-        layer = min(store.layers, key=lambda L: abs(L - layer))  # snap (defensive)
-        if layer == self.session.current_layer and self.session.result is not None:
-            return
-        self._pending_layer = layer
+        layers = store.layers
+
+        def _snap(v):
+            return min(layers, key=lambda L: abs(L - v))
+
+        if mode == "all":
+            qlo, qhi = layers[0], layers[-1]
+        elif mode == "range":
+            lo = _snap(lo if lo is not None else layers[0])
+            hi = _snap(hi if hi is not None else layers[-1])
+            qlo, qhi = (lo, hi) if lo <= hi else (hi, lo)
+        else:  # single
+            qlo = qhi = _snap(lo if lo is not None else layers[0])
+
+        self.session.span_mode = mode
+        self.session.span_range = (qlo, qhi)
+        if (
+            self.session.result is not None
+            and self.session.result.layers == (qlo, qhi)
+        ):
+            return  # already showing this span
+        self._pending_span = (qlo, qhi)
         if not self._busy:
             self._run_pending()
 
     def _run_pending(self) -> None:
-        if self._pending_layer is None:
+        if self._pending_span is None:
             return
-        layer = self._pending_layer
-        self._pending_layer = None
-        self.session.begin_load(f"layer {layer}")
-        self._start_query(self.session.store, (layer, layer))
+        lo, hi = self._pending_span
+        self._pending_span = None
+        label = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
+        self.session.begin_load(label)
+        self._start_query(self.session.store, (lo, hi))
 
     # -- threaded query ------------------------------------------------
     def _begin_query(self, store) -> None:
         first = store.layers[0]
+        self.session.span_mode = "single"
+        self.session.span_range = (first, first)
         self._start_query(store, (first, first))
 
     def _start_query(self, store, layers: tuple[int, int]) -> None:
@@ -367,7 +391,10 @@ class AppController(QObject):
 
     def _on_cache_finished(self, store) -> None:
         # Cache built — now show the first layer.
-        self._start_query(store, (store.layers[0], store.layers[0]))
+        first = store.layers[0]
+        self.session.span_mode = "single"
+        self.session.span_range = (first, first)
+        self._start_query(store, (first, first))
 
     def _on_worker_error(self, message: str) -> None:
         self._busy = False
