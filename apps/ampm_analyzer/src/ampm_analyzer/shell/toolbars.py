@@ -104,7 +104,20 @@ def _muted(text: str) -> QLabel:
     return lab
 
 
-def _menu_button(toolbar: QToolBar, text: str, icon: str, color: str) -> QToolButton:
+class _StayOpenMenu(QMenu):
+    """A menu that stays open when toggling checkable items (multi-select)."""
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        action = self.actionAt(event.pos())
+        if action is not None and action.isCheckable() and action.isEnabled():
+            action.setChecked(not action.isChecked())  # emits toggled; keep open
+            return
+        super().mouseReleaseEvent(event)
+
+
+def _menu_button(
+    toolbar: QToolBar, text: str, icon: str, color: str, *, stay_open: bool = False
+) -> QToolButton:
     """An icon button that drops a menu (instant popup)."""
     btn = QToolButton()
     btn.setText(text)
@@ -112,7 +125,7 @@ def _menu_button(toolbar: QToolBar, text: str, icon: str, color: str) -> QToolBu
     btn.setIcon(icons.ui(icon, color))
     btn.setAutoRaise(True)
     btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-    menu = QMenu(btn)
+    menu = _StayOpenMenu(btn) if stay_open else QMenu(btn)
     btn.setMenu(menu)
     toolbar.addWidget(btn)
     return btn
@@ -155,7 +168,9 @@ def populate_data(
     toolbar.addSeparator()
 
     # Columns — show/hide reflects the grid's current hidden set.
-    cols_btn = _menu_button(toolbar, "Show/hide columns", "show_hide", color)
+    cols_btn = _menu_button(
+        toolbar, "Show/hide columns", "show_hide", color, stay_open=True
+    )
     hidden = hidden_columns or set()
     for name in columns:
         a = cols_btn.menu().addAction(name)
