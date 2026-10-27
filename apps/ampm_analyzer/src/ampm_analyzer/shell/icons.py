@@ -36,10 +36,18 @@ UI = {
     "datastore": "datastore", "recent": "recently-viewed",
     "favourites": "favorite", "shared": "share", "search": "search",
     # data toolbar
+    "sidebar": "side-panel--open", "sidebar_close": "side-panel--close",
     "layer": "layers", "new_plot": "chart--custom",
+    "rename_column": "edit",
     "add_column": "column--insert", "remove_column": "column--delete",
-    "show_hide": "view", "xy_bounds": "crop", "filter": "filter",
-    "clear_filters": "filter--reset", "export_excel": "XLS",
+    "show_hide": "view", "xy_bounds": "crop",
+    # load-recipe steps (applied on top of the query)
+    "mask": "shape--intersect", "assign_parts": "assembly--cluster",
+    "correction": "calibrate",
+    # filters
+    "filter": "filter", "remove_filter": "filter--remove",
+    "reset_filter": "filter--reset", "clear_filters": "filter--reset",
+    "export_excel": "XLS",
     # plot toolbar
     "reset_view": "fit-to-screen", "axes": "x-axis", "grid": "grid",
     "bbox": "cube", "legend": "legend", "select": "select--01",

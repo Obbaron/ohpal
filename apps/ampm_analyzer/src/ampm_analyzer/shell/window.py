@@ -361,14 +361,16 @@ class MainWindow(QMainWindow):
         widget: QWidget | None = self.stack.widget(index)
         kind = widget.property("tabkind") if widget is not None else "file"
 
-        # Panel: hidden by default, auto-opens only where there's relevant
-        # content (currently the Plot tab). Switching tabs re-evaluates it, so
-        # a panel the user closed reopens when they return to a plot.
-        if self.panel.has_content_for(kind):
+        # Panel: Plot auto-opens it; Data leaves it user-controlled (via the
+        # toolbar toggle); File hides it.
+        if kind == "plot":
             self.panel.show_for(kind)
             self.panel.setVisible(True)
-        else:
+        elif kind == "file":
             self.panel.setVisible(False)
+        else:  # data — keep whatever the user set; just sync the page
+            if self.panel.isVisible():
+                self.panel.show_for(kind)
 
         self.toolbar.clear()
         if kind == "file":
@@ -379,10 +381,23 @@ class MainWindow(QMainWindow):
         color = self._icon_color()
         if kind == "data":
             toolbars.populate_data(
-                self.toolbar, color=color, on_new_plot=lambda: self._new_plot_tab()
+                self.toolbar,
+                color=color,
+                columns=self._data_tab._columns if self._data_tab else None,
+                sidebar_open=self.panel.isVisible(),
+                on_toggle_sidebar=self._toggle_sidebar,
+                on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
             toolbars.populate_plot(self.toolbar, color=color)
+
+    def _toggle_sidebar(self, checked: bool) -> None:
+        if checked:
+            kind = self.stack.currentWidget().property("tabkind")
+            self.panel.show_for(kind)
+            self.panel.setVisible(True)
+        else:
+            self.panel.setVisible(False)
 
     # -- shutdown ------------------------------------------------------
     def closeEvent(self, event) -> None:
