@@ -18,7 +18,8 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from .state import BuildSession
+from . import derive
+from .state import BuildSession, QueryResult
 from .workers import CacheWorker, QueryWorker
 
 # Same packet-filename shape the DataStore expects.
@@ -46,6 +47,7 @@ class AppController(QObject):
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
         self._pending_layer: int | None = None
+        self._base_df = None  # last raw query output, before derived columns
 
     # -- entry points --------------------------------------------------
     def new_build(self) -> None:
@@ -260,8 +262,48 @@ class AppController(QObject):
     def _on_query_finished(self, result) -> None:
         self._busy = False
         self.session.current_layer = result.layers[0]
-        self.session.set_result(result)
+        self._base_df = result.df  # keep the raw output for re-deriving
+        self.session.set_result(self._derive(result))
         self._run_pending()  # a layer change requested while we were busy
+
+    # -- derived columns -----------------------------------------------
+    def _derive(self, result: QueryResult) -> QueryResult:
+        """Return a result with the session's derived columns applied."""
+        if not self.session.derivations:
+            return result
+        df = derive.apply(result.df, self.session.derivations)
+        return QueryResult(df, result.total_rows, result.shown_rows, result.layers)
+
+    def add_derivation(self, name: str, expr_text: str) -> str | None:
+        """Register a derived column and refresh the grid.
+
+        Returns an error message, or None on success.
+        """
+        base = self._base_df
+        names = list(base.columns) if base is not None else []
+        names += [d["name"] for d in self.session.derivations]
+        if name in names:
+            return f"A column named {name!r} already exists."
+        try:
+            derive.compile_expr(expr_text, names)
+        except derive.DeriveError as exc:
+            return str(exc)
+        self.session.derivations.append({"name": name, "expr": expr_text})
+        self._refresh_derived()
+        return None
+
+    def remove_derivation(self, name: str) -> None:
+        self.session.derivations = [
+            d for d in self.session.derivations if d["name"] != name
+        ]
+        self._refresh_derived()
+
+    def _refresh_derived(self) -> None:
+        if self._base_df is None or self.session.result is None:
+            return
+        r = self.session.result
+        df = derive.apply(self._base_df, self.session.derivations)
+        self.session.set_result(QueryResult(df, r.total_rows, r.shown_rows, r.layers))
 
     def _on_cache_finished(self, store) -> None:
         # Cache built — now show the first layer.

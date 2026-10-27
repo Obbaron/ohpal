@@ -16,6 +16,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -147,6 +148,7 @@ class MainWindow(QMainWindow):
         self._data_tab: DataTab | None = None
         self._pending_grid_state: bytes | None = None  # per-build column layout
         self._grid_cache_dir = None  # where to persist the layout
+        self._last_columns: list[str] | None = None  # to rebuild toolbar on change
 
         # Theme: "auto" follows the OS (and keeps following live), or a fixed
         # "light" / "dark". The launch scheme was applied in app.py.
@@ -258,8 +260,17 @@ class MainWindow(QMainWindow):
         # Populate the model BEFORE selecting the tab: switching tabs rebuilds
         # the toolbar (incl. the Show/hide columns menu), which must see the
         # real columns, not an empty model.
+        cols = list(result.df.columns)
+        changed = cols != self._last_columns
+        self._last_columns = cols
+        was_on_data = self.stack.currentWidget() is self._data_tab
         self._data_tab.set_dataframe(result.df)
         self._select_widget(self._data_tab)
+        # If we were already on the Data tab the selection is a no-op, so a
+        # changed column set (e.g. a new derived column) needs an explicit
+        # toolbar rebuild to refresh the Show/hide list.
+        if changed and was_on_data:
+            self._sync_toolbar(self.tabbar.currentIndex())
         lo, hi = result.layers
         capped = (
             f" (showing first {result.shown_rows:,})"
@@ -423,6 +434,7 @@ class MainWindow(QMainWindow):
                 on_column_visibility=(
                     (lambda n, v: dt.set_column_visible(n, v)) if dt else None
                 ),
+                on_add_derive=self._add_derive_column,
                 on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
@@ -430,6 +442,23 @@ class MainWindow(QMainWindow):
 
     def _on_layer_changed(self, layer: int) -> None:
         self.controller.show_layer(layer)
+
+    def _add_derive_column(self) -> None:
+        dt = self._data_tab
+        if dt is None:
+            return
+        from .derive_dialog import DeriveColumnDialog
+
+        taken = [d["name"] for d in self.session.derivations]
+        dlg = DeriveColumnDialog(dt._columns, self, taken=taken)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, expr = dlg.result_values()
+        err = self.controller.add_derivation(name, expr)
+        if err:
+            self.set_status(f"Derive column failed: {err}")
+        else:
+            self.set_status(f"Added derived column '{name}'.")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:

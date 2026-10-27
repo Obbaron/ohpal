@@ -158,6 +158,7 @@ def populate_data(
     on_toggle_sidebar=None,
     on_layer_changed=None,
     on_column_visibility=None,
+    on_add_derive=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -193,7 +194,15 @@ def populate_data(
         if on_column_visibility is not None:
             a.toggled.connect(lambda vis, n=name: on_column_visibility(n, vis))
     _action(toolbar, "Rename column", "rename_column", color)
-    _action(toolbar, "Add column", "add_column", color)
+    # Add column — a menu of sources. "Derive column" is a row-wise formula over
+    # existing columns; "Add from Excel" is stubbed for now.
+    add_btn = _menu_button(toolbar, "Add column", "add_column", color)
+    a_derive = add_btn.menu().addAction("Derive column")
+    if on_add_derive is not None:
+        a_derive.triggered.connect(lambda: on_add_derive())
+    a_excel = add_btn.menu().addAction("Add from Excel")
+    a_excel.setEnabled(False)  # not wired yet
+    a_excel.setToolTip("Not available yet")
     _action(toolbar, "Remove column", "remove_column", color)
     toolbar.addSeparator()
 
