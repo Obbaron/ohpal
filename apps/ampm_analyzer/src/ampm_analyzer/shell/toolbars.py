@@ -132,6 +132,12 @@ def populate_data(
     _action(toolbar, "Remove column", "remove_column", color)
     toolbar.addSeparator()
 
+    # Filters (query-time; on top of the cache).
+    _action(toolbar, "Filter", "filter", color)
+    _action(toolbar, "Remove filter", "remove_filter", color)
+    _action(toolbar, "Reset filters", "reset_filter", color)
+    toolbar.addSeparator()
+
     # Load recipe (applied on top of the query). Three-state each.
     for key, label, reason in (
         ("mask", "Mask", "no STL found to mask with"),
@@ -140,12 +146,6 @@ def populate_data(
     ):
         state, why = recipe_states.get(key, ("unavailable", reason))
         _recipe_action(toolbar, label, key, color, state, why)
-    toolbar.addSeparator()
-
-    # Filters (query-time; on top of the cache).
-    _action(toolbar, "Filter", "filter", color)
-    _action(toolbar, "Remove filter", "remove_filter", color)
-    _action(toolbar, "Reset filters", "reset_filter", color)
     toolbar.addSeparator()
 
     # New plot — dropdown of plot types (icon per type).
