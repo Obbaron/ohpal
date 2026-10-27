@@ -11,7 +11,8 @@ widget is only the grid surface.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, pyqtSignal
+from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -21,6 +22,48 @@ from PyQt6.QtWidgets import (
 )
 
 from .grid_model import DataFrameModel
+
+
+class ReorderHeader(QHeaderView):
+    """Movable header that draws a drop-position indicator while dragging.
+
+    QHeaderView already shows a translucent ghost of the dragged section; this
+    adds a clear accent line at the boundary where it will land on release.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setSectionsMovable(True)
+        self.setSectionsClickable(True)
+        self._drop_x: int | None = None
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)  # let Qt do the ghost drag
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            x = int(event.position().x())
+            vi = self.visualIndexAt(x)
+            if vi != -1:
+                logical = self.logicalIndex(vi)
+                left = self.sectionViewportPosition(logical)
+                width = self.sectionSize(logical)
+                self._drop_x = left + width if x > left + width / 2 else left
+                self.viewport().update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drop_x = None
+        self.viewport().update()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._drop_x is None:
+            return
+        painter = QPainter(self.viewport())
+        pen = QPen(self.palette().color(self.palette().ColorRole.Highlight))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.drawLine(self._drop_x, 0, self._drop_x, self.height())
+        painter.end()
 
 # Default visual order (left → right) and the columns hidden by default.
 DEFAULT_ORDER = [
@@ -61,8 +104,8 @@ class DataTab(QWidget):
         )
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
-        header = self.table.horizontalHeader()
-        header.setSectionsMovable(True)  # drag to reorder
+        header = ReorderHeader(self.table)  # movable + drop-position indicator
+        self.table.setHorizontalHeader(header)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.sectionMoved.connect(self._on_header_changed)
         header.sectionResized.connect(lambda *_: self._on_header_changed())
