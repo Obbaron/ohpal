@@ -19,6 +19,7 @@ from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from . import derive
+from .datastore_settings import REQUIRED_COLUMNS
 from .state import BuildSession, QueryResult
 from .workers import CacheWorker, QueryWorker
 
@@ -263,16 +264,21 @@ class AppController(QObject):
         self._busy = False
         self.session.current_layer = result.layers[0]
         self._base_df = result.df  # keep the raw output for re-deriving
-        self.session.set_result(self._derive(result))
+        self.session.set_result(self._pipeline(result))
         self._run_pending()  # a layer change requested while we were busy
 
-    # -- derived columns -----------------------------------------------
-    def _derive(self, result: QueryResult) -> QueryResult:
-        """Return a result with the session's derived columns applied."""
-        if not self.session.derivations:
-            return result
-        df = derive.apply(result.df, self.session.derivations)
-        return QueryResult(df, result.total_rows, result.shown_rows, result.layers)
+    # -- column pipeline (derive, then drop removed) -------------------
+    def _pipeline(self, template: QueryResult) -> QueryResult:
+        """Build the display frame from the raw base: add derived columns, then
+        project out removed source columns. ``template`` supplies the row/layer
+        metadata (unaffected by column changes)."""
+        df = self._base_df
+        if self.session.derivations:
+            df = derive.apply(df, self.session.derivations)
+        drop = [c for c in self.session.removed if c in df.columns]
+        if drop:
+            df = df.drop(drop)  # derived cols that used them are already computed
+        return QueryResult(df, template.total_rows, template.shown_rows, template.layers)
 
     def add_derivation(
         self, name: str, expr_text: str, group: str = ""
@@ -325,12 +331,39 @@ class AppController(QObject):
         ]
         self._refresh_derived()
 
+    # -- remove / restore columns --------------------------------------
+    def remove_columns(self, names: list[str]) -> list[str]:
+        """Remove columns from the view. A derived/label column has its
+        derivation deleted; a source column is projected out of every result.
+        Required columns can't be removed. Returns the names that were blocked.
+        """
+        deriv_names = {d["name"] for d in self.session.derivations}
+        base_cols = set(self._base_df.columns) if self._base_df is not None else set()
+        blocked, changed = [], False
+        for n in names:
+            if n in deriv_names:
+                self.session.derivations = [
+                    d for d in self.session.derivations if d["name"] != n
+                ]
+                changed = True
+            elif n in REQUIRED_COLUMNS:
+                blocked.append(n)
+            elif n in base_cols and n not in self.session.removed:
+                self.session.removed.append(n)
+                changed = True
+        if changed:
+            self._refresh_derived()
+        return blocked
+
+    def restore_column(self, name: str) -> None:
+        if name in self.session.removed:
+            self.session.removed.remove(name)
+            self._refresh_derived()
+
     def _refresh_derived(self) -> None:
         if self._base_df is None or self.session.result is None:
             return
-        r = self.session.result
-        df = derive.apply(self._base_df, self.session.derivations)
-        self.session.set_result(QueryResult(df, r.total_rows, r.shown_rows, r.layers))
+        self.session.set_result(self._pipeline(self.session.result))
 
     def _on_cache_finished(self, store) -> None:
         # Cache built — now show the first layer.

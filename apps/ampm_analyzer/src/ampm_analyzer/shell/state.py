@@ -50,9 +50,12 @@ class BuildSession(QObject):
         self.layer_thickness: float = 0.03
         self.result: QueryResult | None = None
         self.current_layer: int | None = None
-        # Row-wise derived columns, re-applied to every query result. Each is a
-        # {"name", "expr"} dict (see shell/derive.py). Controller-owned.
+        # Derived columns, re-applied to every query result (see shell/derive.py).
+        # Controller-owned.
         self.derivations: list[dict] = []
+        # Source columns removed from the view — projected out of every result
+        # (distinct from hiding, which keeps them in the data). Controller-owned.
+        self.removed: list[str] = []
 
     # -- writers (controller-only) -------------------------------------
     def begin_load(self, label: str) -> None:
@@ -67,6 +70,7 @@ class BuildSession(QObject):
         self.layer_thickness = layer_thickness
         self.result = None
         self.derivations = []  # derived columns don't carry across builds
+        self.removed = []
         self.buildLoaded.emit(store)
 
     def require_setup(

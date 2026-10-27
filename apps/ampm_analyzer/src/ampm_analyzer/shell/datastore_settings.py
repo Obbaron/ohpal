@@ -35,8 +35,10 @@ from PyQt6.QtWidgets import (
 
 _MISSING = "— not found —"
 
-# Always loaded (coordinates + layer/Z + the mask-keep key): locked on.
-_ALWAYS = {"Demand X", "Demand Y", "Start time", "layer", "Z"}
+# Always loaded (coordinates + layer/Z + the mask-keep key): locked on, and
+# never removable from the grid (see controller.remove_columns).
+REQUIRED_COLUMNS = {"Demand X", "Demand Y", "Start time", "layer", "Z"}
+_ALWAYS = REQUIRED_COLUMNS
 
 
 def _value_label(text: str) -> QLabel:

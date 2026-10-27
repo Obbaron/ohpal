@@ -152,6 +152,7 @@ def populate_data(
     color: str,
     columns: list[str] | None = None,
     hidden_columns: set | None = None,
+    removed_columns: list[str] | None = None,
     layers: list[int] | None = None,
     current_layer: int | None = None,
     sidebar_open: bool = False,
@@ -160,6 +161,8 @@ def populate_data(
     on_column_visibility=None,
     on_add_derive=None,
     on_add_label=None,
+    on_remove_column=None,
+    on_restore_column=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -207,7 +210,19 @@ def populate_data(
     a_excel = add_btn.menu().addAction("Add from Excel")
     a_excel.setEnabled(False)  # not wired yet
     a_excel.setToolTip("Not available yet")
-    _action(toolbar, "Remove column", "remove_column", color)
+    # Restore a previously removed source column (only shown when there are any).
+    removed = removed_columns or []
+    if removed:
+        restore = add_btn.menu().addMenu("Restore column")
+        for name in removed:
+            act = restore.addAction(name)
+            if on_restore_column is not None:
+                act.triggered.connect(lambda _c=False, n=name: on_restore_column(n))
+    # Remove acts on the grid's selected column(s); removal differs from hiding
+    # (the column leaves the data, not just the view).
+    remove = _action(toolbar, "Remove column", "remove_column", color)
+    if on_remove_column is not None:
+        remove.triggered.connect(lambda: on_remove_column())
     toolbar.addSeparator()
 
     # Filters (query-time; on top of the cache). Mask / assign-parts /

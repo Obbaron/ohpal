@@ -426,6 +426,7 @@ class MainWindow(QMainWindow):
                 color=color,
                 columns=dt._columns if dt else None,
                 hidden_columns=dt.hidden_columns() if dt else None,
+                removed_columns=list(self.session.removed),
                 layers=list(store.layers) if store is not None else None,
                 current_layer=self.session.current_layer,
                 sidebar_open=self.panel.isVisible(),
@@ -436,6 +437,8 @@ class MainWindow(QMainWindow):
                 ),
                 on_add_derive=self._add_derive_column,
                 on_add_label=self._add_group_label,
+                on_remove_column=self._remove_columns,
+                on_restore_column=self._restore_column,
                 on_new_plot=lambda name=None: self._new_plot_tab(name),
             )
         else:
@@ -478,6 +481,25 @@ class MainWindow(QMainWindow):
             self.set_status(f"Group label failed: {err}")
         else:
             self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
+
+    def _remove_columns(self) -> None:
+        dt = self._data_tab
+        if dt is None:
+            return
+        names = dt.selected_columns()
+        if not names:
+            self.set_status("Select a column (click its header) to remove.")
+            return
+        blocked = self.controller.remove_columns(names)
+        done = [n for n in names if n not in blocked]
+        if done:
+            self.set_status(f"Removed {len(done)} column(s): {', '.join(done)}.")
+        if blocked:
+            self.set_status(f"Can't remove required column(s): {', '.join(blocked)}.")
+
+    def _restore_column(self, name: str) -> None:
+        self.controller.restore_column(name)
+        self.set_status(f"Restored column '{name}'.")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         if checked:
