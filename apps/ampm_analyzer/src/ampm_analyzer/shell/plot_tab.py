@@ -58,10 +58,11 @@ class PlotTab(QWidget):
     def _build_canvas(self) -> QWidget:
         try:
             from vispy import scene
-        except Exception:  # noqa: BLE001 - any import/GL issue -> placeholder
+        except Exception as exc:  # noqa: BLE001 - import failure -> placeholder
             return _placeholder(
-                "VisPy not available in this environment — the scatter renders "
-                "here once VisPy is installed."
+                "3D plotting needs VisPy, which isn't installed in this Python.\n\n"
+                "Install it, then reopen the plot:\n    pip install vispy\n\n"
+                f"(import error: {exc})"
             )
         try:
             canvas = scene.SceneCanvas(keys="interactive", bgcolor="#0f1115",
