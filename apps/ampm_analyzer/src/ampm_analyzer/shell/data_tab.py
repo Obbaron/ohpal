@@ -36,6 +36,17 @@ class ReorderHeader(QHeaderView):
         self.setSectionsMovable(True)
         self.setSectionsClickable(True)
         self._drop_x: int | None = None
+        self._view = parent  # the QTableView
+        self._prev_autoscroll = True
+
+    def mousePressEvent(self, event) -> None:
+        # Disable the view's auto-scroll during a drag: near the right edge it
+        # otherwise scrolls continuously and repaints the whole (wide) body,
+        # which is what makes dragging over the right columns feel laggy.
+        if self._view is not None and hasattr(self._view, "setAutoScroll"):
+            self._prev_autoscroll = self._view.hasAutoScroll()
+            self._view.setAutoScroll(False)
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)  # let Qt do the ghost drag
@@ -62,6 +73,8 @@ class ReorderHeader(QHeaderView):
         self._drop_x = None
         self.viewport().update()
         super().mouseReleaseEvent(event)
+        if self._view is not None and hasattr(self._view, "setAutoScroll"):
+            self._view.setAutoScroll(self._prev_autoscroll)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
