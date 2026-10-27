@@ -42,10 +42,14 @@ APP_TITLE = "AMPM Analyzer"
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, log_bus=None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
         self.resize(1300, 820)
+
+        from .logconsole import LogBus
+
+        self.log_bus = log_bus if log_bus is not None else LogBus()
 
         # Central area, stacked vertically: tab strip, then toolbar, then the
         # active tab's content.
@@ -210,7 +214,6 @@ class MainWindow(QMainWindow):
         # Data tab is only opened once there's a query result (see _on_query_ready),
         # so New (which goes to setup first) doesn't flash an empty grid.
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
-        self._stats["build"].setText(f"build: {self.session.build_name}")
         self.backstage.set_build_loaded(True)
 
     def _on_setup_required(self, payload) -> None:
@@ -240,8 +243,6 @@ class MainWindow(QMainWindow):
         self._select_widget(self._data_tab)
         self._data_tab.set_dataframe(result.df)
         lo, hi = result.layers
-        self._stats["points"].setText(f"points: {result.total_rows:,}")
-        self._stats["drawn"].setText(f"drawn: {result.shown_rows:,}")
         capped = (
             f" (showing first {result.shown_rows:,})"
             if result.shown_rows < result.total_rows
@@ -256,6 +257,7 @@ class MainWindow(QMainWindow):
         self.show_progress(False)
         first_line = message.strip().splitlines()[-1] if message.strip() else message
         self.set_status(f"Load failed: {first_line}")
+        self.log_bus.log_line(message)  # full traceback to the log
 
     def _new_plot_tab(self, title: str | None = None) -> None:
         self._ensure_data_tab()
@@ -289,20 +291,25 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         sb.addWidget(self._progress)
 
-        self._stats: dict[str, QLabel] = {}
-        for key, text in (
-            ("build", "build: —"),
-            ("points", "points: —"),
-            ("drawn", "drawn: —"),
-            ("selected", "sel: 0"),
-        ):
-            lab = QLabel(text)
-            lab.setProperty("class", "StatChip")
-            sb.addPermanentWidget(lab)
-            self._stats[key] = lab
+        self._log_btn = QToolButton()
+        self._log_btn.setText("Show log")
+        self._log_btn.setAutoRaise(True)
+        self._log_btn.clicked.connect(self._open_log)
+        sb.addPermanentWidget(self._log_btn)
+        self._log_window = None
 
     def set_status(self, text: str) -> None:
         self._log.setText(text)
+        self.log_bus.log_line(text)
+
+    def _open_log(self) -> None:
+        from .logconsole import LogWindow
+
+        if self._log_window is None:
+            self._log_window = LogWindow(self.log_bus, self)
+        self._log_window.show()
+        self._log_window.raise_()
+        self._log_window.activateWindow()
 
     def show_progress(self, on: bool, *, busy: bool = True) -> None:
         if on and busy:

@@ -12,6 +12,7 @@ from importlib.resources import files
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication
 
+from .logconsole import LogBus, StreamTee
 from .theme import apply_theme, initial_scheme
 from .window import MainWindow
 
@@ -32,7 +33,12 @@ def main() -> None:
     app.setApplicationName("AMPM Analyzer")
     apply_theme(app, initial_scheme(app))  # follow the OS light/dark at launch
 
-    window = MainWindow()
+    # Capture console output (incl. ohpal's prints) into the in-app log.
+    log_bus = LogBus()
+    sys.stdout = StreamTee(log_bus, sys.stdout)
+    sys.stderr = StreamTee(log_bus, sys.stderr)
+
+    window = MainWindow(log_bus=log_bus)
     window.setWindowIcon(_app_icon())
     window.show()
 
