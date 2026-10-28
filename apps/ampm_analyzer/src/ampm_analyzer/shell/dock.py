@@ -119,7 +119,7 @@ class SidePanel(QWidget):
         colour = QGroupBox("Colour")
         cf = QFormLayout(colour)
         cmap = QComboBox()
-        cmap.addItems(["viridis", "plasma", "magma", "turbo"])
+        cmap.addItems(["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo"])
         cf.addRow("Map", cmap)
         scale = QComboBox()
         scale.addItems(["Linear", "Log"])

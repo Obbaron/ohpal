@@ -15,16 +15,19 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import plotdata
+from .plotdata import DEFAULT_COLORMAP
 from .plotspec import PlotSpec
+
+_BG = "white"  # plot canvas background
 
 
 def _placeholder(message: str) -> QWidget:
     frame = QFrame()
-    frame.setStyleSheet("background:#0f1115;")
+    frame.setStyleSheet("background:#f4f5f7;")
     lay = QVBoxLayout(frame)
     lab = QLabel(message)
     lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    lab.setStyleSheet("color:#8b93a1; font-size:14px;")
+    lab.setStyleSheet("color:#5a6472; font-size:14px;")
     lab.setWordWrap(True)
     lay.addWidget(lab)
     return frame
@@ -44,6 +47,10 @@ class PlotTab(QWidget):
 
         self._df = None
         self.raw = None  # the plot's own raw span query (for re-shaping)
+        self.cmap = DEFAULT_COLORMAP
+        self.scale = "linear"
+        self.crange = None  # auto-detected on first render; sliders then tweak
+        self._rendered_once = False
         self._canvas = None
         self._view = None
         self._scatter = None
@@ -73,11 +80,11 @@ class PlotTab(QWidget):
                 f"(import error: {exc})"
             )
         try:
-            canvas = scene.SceneCanvas(keys="interactive", bgcolor="#0f1115",
+            canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG,
                                        show=False)
             view = canvas.central_widget.add_view()
             if self.spec.is_3d:
-                view.camera = scene.cameras.TurntableCamera(fov=45, distance=6)
+                view.camera = scene.cameras.TurntableCamera(fov=45)
                 scene.visuals.XYZAxis(parent=view.scene)
             else:
                 view.camera = scene.cameras.PanZoomCamera(aspect=None)
@@ -98,7 +105,8 @@ class PlotTab(QWidget):
         if self._df is None or self._scatter is None:
             return
         try:
-            data = plotdata.build(self._df, self.spec)
+            data = plotdata.build(self._df, self.spec, cmap=self.cmap,
+                                  scale=self.scale, crange=self.crange)
         except KeyError as exc:  # a spec column isn't in the data any more
             self._show_overlay(str(exc))
             return
@@ -110,10 +118,15 @@ class PlotTab(QWidget):
             self._show_overlay("No rows to plot for this selection.")
             return
         self._clear_overlay()
+        # Auto-detect the colour range on the first render; sliders tweak after.
+        if self.crange is None and data.crange is not None:
+            self.crange = data.crange
+        first = not self._rendered_once
+        self._rendered_once = True
         self._scatter.set_data(data.pos, face_color=data.colors, size=5,
                                edge_width=0)
-        if self._view is not None:
-            self._view.camera.set_range()
+        if self._view is not None and first:
+            self._view.camera.set_range(margin=0.12)  # fit all data + buffer
 
     # -- overlay (errors / empty) on top of the canvas -----------------
     def _show_overlay(self, text: str) -> None:

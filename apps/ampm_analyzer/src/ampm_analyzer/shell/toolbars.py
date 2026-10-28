@@ -246,7 +246,16 @@ def populate_data(
 
 
 # -- Plot toolset ------------------------------------------------------
-def populate_plot(toolbar: QToolBar, *, color: str) -> None:
+def populate_plot(
+    toolbar: QToolBar, *, color: str, sidebar_open: bool = False,
+    on_toggle_sidebar=None,
+) -> None:
+    # Panel toggle — same control as the Data toolbar.
+    panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
+    panel.setChecked(sidebar_open)
+    if on_toggle_sidebar is not None:
+        panel.toggled.connect(on_toggle_sidebar)
+    toolbar.addSeparator()
     # View
     _action(toolbar, "Reset view", "reset_view", color)
     _combo(toolbar, "View", ["Iso", "Top", "Front", "Side"], width=80)

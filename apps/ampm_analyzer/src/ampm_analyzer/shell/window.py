@@ -112,13 +112,13 @@ class MainWindow(QMainWindow):
         self.panel.setVisible(False)  # hidden by default; opens when relevant
 
         content = QSplitter(Qt.Orientation.Horizontal)
+        content.addWidget(self.panel)  # panel on the left
         content.addWidget(self.stack)
-        content.addWidget(self.panel)
-        content.setStretchFactor(0, 1)
-        content.setStretchFactor(1, 0)
-        content.setCollapsible(0, False)
-        content.setCollapsible(1, True)
-        content.setSizes([1040, 260])
+        content.setStretchFactor(0, 0)
+        content.setStretchFactor(1, 1)
+        content.setCollapsible(0, True)
+        content.setCollapsible(1, False)
+        content.setSizes([260, 1040])
         root.addWidget(content, 1)
 
         self._init_statusbar()
@@ -491,7 +491,12 @@ class MainWindow(QMainWindow):
                 on_new_plot=lambda name=None: self._new_plot(name),
             )
         else:
-            toolbars.populate_plot(self.toolbar, color=color)
+            toolbars.populate_plot(
+                self.toolbar,
+                color=color,
+                sidebar_open=self.panel.isVisible(),
+                on_toggle_sidebar=self._toggle_sidebar,
+            )
 
     def _on_layer_changed(self, layer: int) -> None:
         self.controller.show_layer(layer)

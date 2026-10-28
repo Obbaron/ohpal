@@ -19,15 +19,33 @@ from typing import Any
 
 import numpy as np
 
-# 8-stop viridis approximation (RGB 0..1); linearly interpolated for numeric colour.
-_VIRIDIS = np.array(
-    [
+# Colormap stops (RGB 0..1), linearly interpolated for numeric colour. The
+# diverging BlueRed / RedBlue (a coolwarm) are the defaults for signal data.
+_COLORMAPS = {
+    "BlueRed": [[0.230, 0.299, 0.754], [0.865, 0.865, 0.865], [0.706, 0.016, 0.150]],
+    "RedBlue": [[0.706, 0.016, 0.150], [0.865, 0.865, 0.865], [0.230, 0.299, 0.754]],
+    "viridis": [
         [0.267, 0.005, 0.329], [0.283, 0.141, 0.458], [0.254, 0.265, 0.530],
         [0.207, 0.372, 0.553], [0.164, 0.471, 0.558], [0.128, 0.567, 0.551],
-        [0.135, 0.659, 0.518], [0.267, 0.749, 0.441],
+        [0.135, 0.659, 0.518], [0.267, 0.749, 0.441], [0.741, 0.873, 0.150],
     ],
-    dtype="float32",
-)
+    "plasma": [
+        [0.050, 0.030, 0.528], [0.417, 0.000, 0.658], [0.692, 0.165, 0.564],
+        [0.881, 0.392, 0.383], [0.988, 0.652, 0.211], [0.940, 0.975, 0.131],
+    ],
+    "magma": [
+        [0.001, 0.000, 0.014], [0.232, 0.059, 0.437], [0.550, 0.161, 0.506],
+        [0.868, 0.288, 0.409], [0.994, 0.624, 0.427], [0.987, 0.991, 0.749],
+    ],
+    "turbo": [
+        [0.190, 0.072, 0.232], [0.275, 0.408, 0.859], [0.149, 0.740, 0.757],
+        [0.531, 0.941, 0.293], [0.912, 0.755, 0.180], [0.890, 0.267, 0.079],
+        [0.479, 0.012, 0.011],
+    ],
+}
+COLORMAP_NAMES = tuple(_COLORMAPS)
+DEFAULT_COLORMAP = "BlueRed"
+_LUTS = {name: np.array(stops, dtype="float32") for name, stops in _COLORMAPS.items()}
 # Discrete palette for categorical colour (Okabe–Ito, colour-blind-safe).
 _CATEGORICAL = np.array(
     [
@@ -50,16 +68,18 @@ class RenderData:
     legend: Any                # None | [(label, (r,g,b,a))] | ("colorbar", lo, hi, name)
     n_total: int               # rows after null-drop, before decimation
     n_drawn: int               # rows actually in pos
+    crange: tuple | None = None  # (lo, hi) used for numeric colour, for the sliders
 
 
-def _viridis(t: np.ndarray) -> np.ndarray:
-    """Map t in [0,1] to rgba via the viridis stops."""
+def _apply_cmap(t: np.ndarray, name: str) -> np.ndarray:
+    """Map t in [0,1] to rgba via the named colormap's stops."""
+    lut = _LUTS.get(name, _LUTS[DEFAULT_COLORMAP])
     t = np.clip(t, 0.0, 1.0)
-    pos = t * (len(_VIRIDIS) - 1)
+    pos = t * (len(lut) - 1)
     lo = np.floor(pos).astype(int)
-    hi = np.minimum(lo + 1, len(_VIRIDIS) - 1)
+    hi = np.minimum(lo + 1, len(lut) - 1)
     frac = (pos - lo).reshape(-1, 1)
-    rgb = _VIRIDIS[lo] * (1 - frac) + _VIRIDIS[hi] * frac
+    rgb = lut[lo] * (1 - frac) + lut[hi] * frac
     out = np.ones((len(t), 4), dtype="float32")
     out[:, :3] = rgb
     return out
@@ -75,7 +95,9 @@ def _axis_array(df, name: str) -> np.ndarray:
     return s.cast(pl.Categorical).to_physical().to_numpy().astype("float32")
 
 
-def build(df, spec, max_points: int = 150_000, seed: int = 0) -> RenderData:
+def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
+          cmap: str = DEFAULT_COLORMAP, scale: str = "linear",
+          crange: tuple | None = None) -> RenderData:
     import polars as pl
 
     cols = df.columns
@@ -110,28 +132,41 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0) -> RenderData:
     pos_cols = [take(_axis_array(sub, a)) for a in spec.axes]
     pos = np.column_stack(pos_cols).astype("float32")
 
-    colors, legend = _colors(sub, spec, idx, take, len(pos))
+    colors, legend, eff_range = _colors(sub, spec, idx, take, len(pos),
+                                         cmap, scale, crange)
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
-                      n_total, len(pos))
+                      n_total, len(pos), eff_range)
 
 
-def _colors(sub, spec, idx, take, n):
+def _colors(sub, spec, idx, take, n, cmap, scale, crange):
     if not spec.color:
         colors = np.tile(np.array(_SOLID, dtype="float32"), (n, 1))
-        return colors, None
+        return colors, None, None
 
     s = sub[spec.color]
     if s.dtype.is_numeric():
         vals = take(s.to_numpy().astype("float32"))
+        if scale == "log":  # map on log10 of positive values
+            vals = np.where(vals > 0, np.log10(np.maximum(vals, 1e-12)), np.nan)
         finite = np.isfinite(vals)
-        lo = float(np.min(vals[finite])) if finite.any() else 0.0
-        hi = float(np.max(vals[finite])) if finite.any() else 1.0
+        if crange is not None:
+            lo, hi = float(crange[0]), float(crange[1])
+            if scale == "log":
+                lo = np.log10(lo) if lo > 0 else (np.min(vals[finite]) if finite.any() else 0.0)
+                hi = np.log10(hi) if hi > 0 else (np.max(vals[finite]) if finite.any() else 1.0)
+        else:
+            lo = float(np.min(vals[finite])) if finite.any() else 0.0
+            hi = float(np.max(vals[finite])) if finite.any() else 1.0
         span = (hi - lo) or 1.0
         t = np.where(finite, (vals - lo) / span, 0.0)
-        colors = _viridis(t)
+        colors = _apply_cmap(t, cmap)
         colors[~finite] = _NULL_RGBA  # nulls shown neutral, not dropped
         colors[:, 3] = 0.9
-        return colors, ("colorbar", lo, hi, spec.color)
+        # Report the effective range in the original (non-log) units for sliders.
+        rng = crange if crange is not None else (
+            (10 ** lo, 10 ** hi) if scale == "log" else (lo, hi)
+        )
+        return colors, ("colorbar", rng[0], rng[1], spec.color), (rng[0], rng[1])
 
     # Categorical: stable codes -> palette, with a legend of the categories.
     import polars as pl
@@ -149,4 +184,4 @@ def _colors(sub, spec, idx, take, n):
         (str(v), tuple(pal[i % len(pal)]) + (0.9,))
         for i, v in enumerate(uniques)
     ]
-    return colors, legend
+    return colors, legend, None
