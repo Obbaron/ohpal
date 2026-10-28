@@ -187,8 +187,8 @@ class Backstage(QWidget):
         heading.setProperty("class", "SectionHeading")
         lay.addWidget(heading)
         sub = QLabel(
-            "Build the parquet cache for this build. Mask / assign-parts / "
-            "correction are applied later from the Data toolbar."
+            "Load this build into a dataset you can sort, shape, and plot. "
+            "Set the layer range, thickness, and columns, then build."
         )
         sub.setProperty("class", "TileSub")
         sub.setWordWrap(True)
