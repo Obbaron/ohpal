@@ -157,21 +157,21 @@ class DataTab(QWidget):
         self._layout_done = False
 
     def _apply_layout(self, first: bool) -> None:
-        # On the first population, restore the saved blob or apply defaults.
-        # Later populations (layer changes) re-assert the same layout so a model
-        # reset can't drop it.
         self._applying = True
         try:
             header = self.table.horizontalHeader()
-            if self._persisted is not None:
-                header.restoreState(QByteArray(self._persisted))
-            elif first:
-                self._apply_defaults()
-            else:
-                # no saved state, but keep the current (user/default) order by
-                # re-applying what we have captured so far
-                if self._last_state is not None:
-                    header.restoreState(QByteArray(self._last_state))
+            if first:
+                # Build load: restore the saved per-build blob, else defaults.
+                if self._persisted is not None:
+                    header.restoreState(QByteArray(self._persisted))
+                else:
+                    self._apply_defaults()
+            elif self._last_state is not None:
+                # Later populations (layer change, column add/remove): re-assert
+                # the CURRENT layout — which includes the user's mid-session
+                # hides/reorders — so a model reset can't drop them. (Restoring
+                # the load-time blob here would revert those changes.)
+                header.restoreState(QByteArray(self._last_state))
         finally:
             self._applying = False
             self._last_state = bytes(header.saveState())
