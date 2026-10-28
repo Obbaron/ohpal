@@ -74,6 +74,7 @@ class RenderData:
     n_total: int               # rows after null-drop, before decimation
     n_drawn: int               # rows actually in pos
     crange: tuple | None = None  # (lo, hi) used for numeric colour, for the sliders
+    rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
 
 
 def _apply_cmap(t: np.ndarray, name: str) -> np.ndarray:
@@ -139,8 +140,9 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
 
     colors, legend, eff_range = _colors(sub, spec, idx, take, len(pos),
                                          cmap, scale, crange)
+    drawn = sub if idx is None else sub[idx]  # rows actually plotted, for hover
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
-                      n_total, len(pos), eff_range)
+                      n_total, len(pos), eff_range, rows=drawn)
 
 
 def _colors(sub, spec, idx, take, n, cmap, scale, crange):

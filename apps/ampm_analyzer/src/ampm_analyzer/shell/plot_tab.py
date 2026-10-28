@@ -49,6 +49,13 @@ def _grid_range(a0: float, a1: float, step: float) -> np.ndarray:
 _FLOOR_PAD = 0.5
 
 
+def _fmt(v) -> str:
+    """Compact value formatting for the hover tooltip."""
+    if isinstance(v, float):
+        return f"{v:.4g}"
+    return str(v)
+
+
 def _placeholder(message: str) -> QWidget:
     frame = QFrame()
     frame.setStyleSheet("background:#f4f5f7;")
@@ -99,6 +106,13 @@ class PlotTab(QWidget):
         self._bbox = None
         self._axis_labels: list = []
         self._status: QLabel | None = None
+
+        # Hover tooltip (2D only): a KDTree over the drawn points + the rows
+        # behind them, and a floating label shown near the cursor.
+        self._hover_tree = None
+        self._hover_xy = None
+        self._hover_rows = None
+        self._tooltip: QLabel | None = None
 
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
@@ -162,6 +176,7 @@ class PlotTab(QWidget):
             self._scatter = scene.visuals.Markers()
             view.add(self._scatter)
             self._canvas, self._view = canvas, view
+            canvas.events.mouse_move.connect(self._on_mouse_move)
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
             return _placeholder(f"Could not start the canvas:\n{exc}")
@@ -195,6 +210,7 @@ class PlotTab(QWidget):
         self._rendered_once = True
         self._scatter.set_data(data.pos, face_color=data.colors, size=5,
                                edge_width=0, edge_color=None)
+        self._build_hover_index(data)
         self._update_decor(data)
         self._apply_visibility()
         if self._view is not None and first:
@@ -367,6 +383,89 @@ class PlotTab(QWidget):
         if self._status is not None:
             self._status.setVisible(False)
 
+    # -- hover tooltip (2D) --------------------------------------------
+    def _build_hover_index(self, data) -> None:
+        """Spatial index over the drawn points for nearest-point hover (2D)."""
+        if self.spec.is_3d or data.rows is None or data.n_drawn == 0:
+            self._hover_tree = self._hover_rows = self._hover_xy = None
+            self._hide_tooltip()
+            return
+        try:
+            from scipy.spatial import cKDTree
+
+            self._hover_xy = np.ascontiguousarray(data.pos[:, :2], dtype="float64")
+            self._hover_tree = cKDTree(self._hover_xy)
+            self._hover_rows = data.rows
+        except Exception:  # noqa: BLE001 - hover is a nicety; never break render
+            self._hover_tree = self._hover_rows = self._hover_xy = None
+
+    def _on_mouse_move(self, event) -> None:
+        if (
+            self._hover_tree is None
+            or self._scatter is None
+            or getattr(event, "pos", None) is None
+        ):
+            return
+        if getattr(event, "buttons", None):  # a drag (pan/zoom) — not a hover
+            self._hide_tooltip()
+            return
+        try:
+            to_data = self._scatter.get_transform("canvas", "visual")
+            dx, dy = to_data.map(event.pos)[:2]
+            _, i = self._hover_tree.query([dx, dy])
+            # Accept only within a few pixels of the point (zoom-independent).
+            to_canvas = self._scatter.get_transform("visual", "canvas")
+            px, py = to_canvas.map(
+                [self._hover_xy[i][0], self._hover_xy[i][1]]
+            )[:2]
+            if (px - event.pos[0]) ** 2 + (py - event.pos[1]) ** 2 > 12 ** 2:
+                self._hide_tooltip()
+                return
+            self._show_tooltip(int(i))
+        except Exception:  # noqa: BLE001
+            self._hide_tooltip()
+
+    def _hover_text(self, i: int) -> str:
+        rows = self._hover_rows
+        if rows is None or i < 0 or i >= rows.height:
+            return ""
+        cols = list(dict.fromkeys(
+            [*self.spec.axes]
+            + ([self.spec.color] if self.spec.color else [])
+            + [c for c in ("part_id", "layer") if c in rows.columns]
+        ))
+        row = rows.row(i, named=True)
+        return "\n".join(f"{c}: {_fmt(row.get(c))}" for c in cols)
+
+    def _show_tooltip(self, i: int) -> None:
+        text = self._hover_text(i)
+        if not text or self._canvas is None:
+            self._hide_tooltip()
+            return
+        from PyQt6.QtGui import QCursor
+
+        if self._tooltip is None:
+            self._tooltip = QLabel(self._canvas.native)
+            self._tooltip.setStyleSheet(
+                "background: rgba(28,32,38,0.92); color: #f2f4f7;"
+                " border-radius: 4px; padding: 5px 7px; font-size: 11px;"
+            )
+            self._tooltip.setTextFormat(Qt.TextFormat.PlainText)
+        self._tooltip.setText(text)
+        self._tooltip.adjustSize()
+        native = self._canvas.native
+        p = native.mapFromGlobal(QCursor.pos())
+        w, h = self._tooltip.width(), self._tooltip.height()
+        x = min(p.x() + 14, native.width() - w - 4)
+        y = min(p.y() + 14, native.height() - h - 4)
+        self._tooltip.move(max(0, x), max(0, y))
+        self._tooltip.show()
+        self._tooltip.raise_()
+
+    def _hide_tooltip(self) -> None:
+        if self._tooltip is not None:
+            self._tooltip.hide()
+
     # -- teardown ------------------------------------------------------
     def release(self) -> None:
         """Free render arrays and close the canvas (called on tab close)."""
@@ -374,6 +473,8 @@ class PlotTab(QWidget):
         self.raw = None
         self._scatter = None
         self._view = None
+        self._hover_tree = self._hover_rows = self._hover_xy = None
+        self._hide_tooltip()
         if self._canvas is not None:
             try:
                 self._canvas.close()
