@@ -16,7 +16,7 @@ shows a labelled placeholder. Render arrays are released on close.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import plotdata
@@ -69,6 +69,7 @@ class PlotTab(QWidget):
         self._view = None
         self._scatter = None
         self._grid = None
+        self._cbar_col = 2
         self._xaxis = self._yaxis = None
         self._gridlines = None
         self._cbar = None
@@ -103,11 +104,17 @@ class PlotTab(QWidget):
             canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
             grid = canvas.central_widget.add_grid(margin=6)
             self._grid = grid
-            view = grid.add_view(row=0, col=1)
             if self.spec.is_3d:
+                # No left axis column in 3D — an empty grid column would take an
+                # equal stretch and shove the view into the right half. View at
+                # col 0, colourbar at col 1.
+                view = grid.add_view(row=0, col=0)
                 view.camera = scene.cameras.TurntableCamera(fov=45)
+                self._cbar_col = 1
             else:
+                view = grid.add_view(row=0, col=1)
                 view.camera = scene.cameras.PanZoomCamera(aspect=None)
+                self._cbar_col = 2
                 self._yaxis = scene.AxisWidget(
                     orientation="left", axis_label=self.spec.y,
                     axis_font_size=9, tick_label_margin=12,
@@ -165,7 +172,9 @@ class PlotTab(QWidget):
         self._update_decor(data)
         self._apply_visibility()
         if self._view is not None and first:
-            self._view.camera.set_range(margin=0.12)  # fit all data + buffer
+            # Defer the fit so the grid (incl. the just-added colourbar) has
+            # settled and the view has its real size before framing.
+            QTimer.singleShot(0, self.reset_view)
 
     # -- decorations ---------------------------------------------------
     def _update_decor(self, data) -> None:
@@ -222,7 +231,7 @@ class PlotTab(QWidget):
                 border_color="#888888",
             )
             self._cbar.width_max = 80
-            self._grid.add_widget(self._cbar, row=0, col=2)
+            self._grid.add_widget(self._cbar, row=0, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
             self._cbar.clim = (float(lo), float(hi))

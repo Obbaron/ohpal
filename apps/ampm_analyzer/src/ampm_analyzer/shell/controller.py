@@ -239,17 +239,20 @@ class AppController(QObject):
             return
         qlo, qhi = self._resolve_span(mode, lo, hi)
         label = f"plot layer {qlo}" if qlo == qhi else f"plot layers {qlo}–{qhi}"
+        # quiet: no global loading UI — the plot tab shows its own overlay.
         self._request(
-            (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False
+            (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False, quiet=True
         )
 
     # -- query queue (serialized worker) -------------------------------
-    def _request(self, span, dest, label: str, coalesce: bool) -> None:
+    def _request(self, span, dest, label: str, coalesce: bool,
+                 quiet: bool = False) -> None:
         if coalesce:  # drop any still-queued grid request; keep the latest
             self._queue = [r for r in self._queue if not r["coalesce"]]
-        self._queue.append(
-            {"span": span, "dest": dest, "label": label, "coalesce": coalesce}
-        )
+        self._queue.append({
+            "span": span, "dest": dest, "label": label,
+            "coalesce": coalesce, "quiet": quiet,
+        })
         if not self._busy:
             self._start_next()
 
@@ -259,7 +262,8 @@ class AppController(QObject):
         req = self._queue.pop(0)
         self._current = req
         self._busy = True
-        self.session.begin_load(req["label"])
+        if not req["quiet"]:
+            self.session.begin_load(req["label"])
         self._start_query(self.session.store, req["span"])
 
     def _begin_query(self, store) -> None:
