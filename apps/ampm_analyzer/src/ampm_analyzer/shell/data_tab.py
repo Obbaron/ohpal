@@ -144,6 +144,11 @@ class DataTab(QWidget):
         first = not self._layout_done
         self.model.set_dataframe(df)
         self._apply_layout(first)
+        # A column added mid-session (e.g. a new derived column, often off-screen
+        # to the right) can leave the view's geometry stale and paint blank until
+        # a reload. Force a re-layout + repaint so it shows immediately.
+        self.table.doItemsLayout()
+        self.table.viewport().update()
 
     # -- layout / persistence ------------------------------------------
     def set_persisted_state(self, state: bytes | None) -> None:
