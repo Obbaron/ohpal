@@ -13,7 +13,7 @@ toolbar. Inert: no control is connected yet.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QSlider,
     QStackedWidget,
+    QStyle,
+    QStyleOptionSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -30,8 +32,54 @@ from PyQt6.QtWidgets import (
 _TITLES = {"plot": "Plot", "data": "Data"}
 
 
-def _slider(lo: int, hi: int, val: int) -> QSlider:
-    s = QSlider(Qt.Orientation.Horizontal)
+class ValueSlider(QSlider):
+    """Horizontal slider that pops a small value bubble above the handle while
+    it's being changed, then hides it shortly after."""
+
+    def __init__(self, suffix: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._suffix = suffix
+        self._bubble: QLabel | None = None
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(900)
+        self._hide_timer.timeout.connect(self._hide_bubble)
+        self.valueChanged.connect(self._on_value)
+
+    def _on_value(self, _v: int) -> None:
+        self._show_bubble()
+        self._hide_timer.start()
+
+    def _show_bubble(self) -> None:
+        if self._bubble is None:
+            self._bubble = QLabel(self)
+            self._bubble.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._bubble.setStyleSheet(
+                "background: rgba(28,32,38,0.92); color: #f2f4f7;"
+                " border-radius: 3px; padding: 1px 5px; font-size: 11px;"
+            )
+        self._bubble.setText(f"{self.value()}{self._suffix}")
+        self._bubble.adjustSize()
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        handle = self.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt,
+            QStyle.SubControl.SC_SliderHandle, self,
+        )
+        x = handle.center().x() - self._bubble.width() // 2
+        y = handle.top() - self._bubble.height() - 2
+        x = max(0, min(x, self.width() - self._bubble.width()))
+        self._bubble.move(x, max(0, y))
+        self._bubble.show()
+        self._bubble.raise_()
+
+    def _hide_bubble(self) -> None:
+        if self._bubble is not None:
+            self._bubble.hide()
+
+
+def _slider(lo: int, hi: int, val: int, suffix: str = "") -> ValueSlider:
+    s = ValueSlider(suffix)
     s.setRange(lo, hi)
     s.setValue(val)
     return s
@@ -145,10 +193,10 @@ class SidePanel(QWidget):
         self.marker_combo.addItems(["disc", "square", "ring", "cross"])
         self.marker_combo.currentTextChanged.connect(self.markerSymbolChanged)
         pf.addRow("Marker", self.marker_combo)
-        self.size_slider = _slider(1, 20, 7)
+        self.size_slider = _slider(1, 20, 7, " px")
         self.size_slider.valueChanged.connect(self.markerSizeChanged)
         pf.addRow("Size", self.size_slider)
-        self.opacity_slider = _slider(0, 100, 100)
+        self.opacity_slider = _slider(0, 100, 100, "%")
         self.opacity_slider.valueChanged.connect(self.opacityChanged)
         pf.addRow("Opacity", self.opacity_slider)
         lay.addWidget(points)
@@ -165,10 +213,10 @@ class SidePanel(QWidget):
         self.scale_combo.addItems(["Linear", "Log"])
         self.scale_combo.currentTextChanged.connect(self.scaleChanged)
         cf.addRow("Scale", self.scale_combo)
-        self.min_slider = _slider(0, 100, 0)
+        self.min_slider = _slider(0, 100, 0, "%")
         self.min_slider.valueChanged.connect(self.colorMinChanged)
         cf.addRow("Min", self.min_slider)
-        self.max_slider = _slider(0, 100, 100)
+        self.max_slider = _slider(0, 100, 100, "%")
         self.max_slider.valueChanged.connect(self.colorMaxChanged)
         cf.addRow("Max", self.max_slider)
         lay.addWidget(self.colour_box)
