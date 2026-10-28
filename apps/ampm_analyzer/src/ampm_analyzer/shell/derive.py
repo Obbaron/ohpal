@@ -129,19 +129,34 @@ _COMPARE_OPS = {
 }
 
 
-def _build_value(node, mapping, funcs):
+def _contains_agg(node) -> bool:
+    """True if the AST subtree calls any aggregate function."""
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id in _AGGREGATE):
+            return True
+    return False
+
+
+def _build_value(node, mapping, funcs, ctx=None):
     """Compile an AST node to a Polars expression.
 
     Handles arithmetic and functions *and* comparisons (< <= > >= == !=) with
     boolean ``and`` / ``or`` / ``not`` — so a derived column can be a number or a
     condition (a boolean column). Comparisons chain: ``0 < [x] < 10``.
+
+    ``ctx`` (a dict with "stages" and "n") enables nested aggregation: when an
+    aggregate's argument itself contains an aggregate, the inner part is
+    materialised to a temp column first (its ``.over`` broadcast to rows), and
+    the outer aggregate reduces that column. Inner materialisations are appended
+    before outer ones, so the stages come out in dependency order.
     """
     import polars as pl
 
     if isinstance(node, ast.Expression):
-        return _build_value(node.body, mapping, funcs)
+        return _build_value(node.body, mapping, funcs, ctx)
     if isinstance(node, ast.BoolOp):
-        parts = [_build_value(v, mapping, funcs) for v in node.values]
+        parts = [_build_value(v, mapping, funcs, ctx) for v in node.values]
         out = parts[0]
         for p in parts[1:]:
             out = (out & p) if isinstance(node.op, ast.And) else (out | p)
@@ -153,15 +168,15 @@ def _build_value(node, mapping, funcs):
             builder = _COMPARE_OPS.get(type(op))
             if builder is None:
                 raise DeriveError("Unsupported comparison.")
-            terms.append(builder(_build_value(operands[i], mapping, funcs),
-                                 _build_value(operands[i + 1], mapping, funcs)))
+            terms.append(builder(_build_value(operands[i], mapping, funcs, ctx),
+                                 _build_value(operands[i + 1], mapping, funcs, ctx)))
         out = terms[0]
         for t in terms[1:]:
             out = out & t
         return out
     if isinstance(node, ast.BinOp):
-        left = _build_value(node.left, mapping, funcs)
-        right = _build_value(node.right, mapping, funcs)
+        left = _build_value(node.left, mapping, funcs, ctx)
+        right = _build_value(node.right, mapping, funcs, ctx)
         op = node.op
         if isinstance(op, ast.Add):
             return left + right
@@ -178,16 +193,16 @@ def _build_value(node, mapping, funcs):
         raise DeriveError("Unsupported operator.")
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.Not):
-            return ~_build_value(node.operand, mapping, funcs)
+            return ~_build_value(node.operand, mapping, funcs, ctx)
         if isinstance(node.op, ast.USub):
-            return -_build_value(node.operand, mapping, funcs)
+            return -_build_value(node.operand, mapping, funcs, ctx)
         if isinstance(node.op, ast.UAdd):
-            return _build_value(node.operand, mapping, funcs)
+            return _build_value(node.operand, mapping, funcs, ctx)
         raise DeriveError("Unsupported unary operator.")
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute) and node.func.attr == "__over__":
             # `expr by [a, b]` -> expr.over([a, b]) — per-aggregate grouping.
-            base = _build_value(node.func.value, mapping, funcs)
+            base = _build_value(node.func.value, mapping, funcs, ctx)
             cols = [a.value for a in node.args
                     if isinstance(a, ast.Constant) and isinstance(a.value, str)]
             if not cols:
@@ -195,10 +210,21 @@ def _build_value(node, mapping, funcs):
             return base.over(cols)
         if not isinstance(node.func, ast.Name) or node.func.id not in funcs:
             raise DeriveError("Unknown function.")
-        arity, fn = funcs[node.func.id]
+        fname = node.func.id
+        arity, fn = funcs[fname]
         if len(node.args) != arity or node.keywords:
-            raise DeriveError(f"{node.func.id}() takes {arity} argument(s).")
-        return fn(*[_build_value(a, mapping, funcs) for a in node.args])
+            raise DeriveError(f"{fname}() takes {arity} argument(s).")
+        # Nested aggregation: an aggregate over an argument that itself
+        # aggregates. Materialise the inner argument first so this reduction
+        # operates on a plain column (Polars can't nest .over() correctly).
+        if (ctx is not None and fname in _AGGREGATE
+                and _contains_agg(node.args[0])):
+            inner = _build_value(node.args[0], mapping, funcs, ctx)
+            tmp = f"__agg{ctx['n']}"
+            ctx["n"] += 1
+            ctx["stages"].append((tmp, inner))
+            return fn(pl.col(tmp))
+        return fn(*[_build_value(a, mapping, funcs, ctx) for a in node.args])
     if isinstance(node, ast.Name):
         if node.id in mapping:
             return pl.col(mapping[node.id])
@@ -229,10 +255,22 @@ def _build_predicate(node, mapping, funcs):
 
 
 # -- public compile -----------------------------------------------------
+def _compile_formula(text: str, columns):
+    """Compile a formula to (stages, final_expr).
+
+    ``stages`` are (temp_name, expr) materialisations to apply in order (for
+    nested aggregation); empty for ordinary formulas. ``final_expr`` is the
+    column expression, which may reference the staged temp columns.
+    """
+    tree, mapping = _parse(text, columns, "Expression")
+    ctx = {"stages": [], "n": 0}
+    expr = _build_value(tree, mapping, _functions(), ctx)
+    return ctx["stages"], expr
+
+
 def compile_expr(text: str, columns) -> Any:
     """Compile a formula (numeric or condition) to a Polars expression."""
-    tree, mapping = _parse(text, columns, "Expression")
-    return _build_value(tree, mapping, _functions())
+    return _compile_formula(text, columns)[1]
 
 
 def compile_predicate(text: str, columns) -> Any:
@@ -242,15 +280,22 @@ def compile_predicate(text: str, columns) -> Any:
 
 
 # -- application --------------------------------------------------------
-def _formula_expr(d, columns):
+def _apply_formula(out, d):
+    """Add a formula column to ``out``, running any staged materialisations
+    (for nested aggregation) first and cleaning up the temp columns after."""
     text = d["expr"]
-    expr = compile_expr(text, columns)
+    stages, expr = _compile_formula(text, out.columns)
     group = d.get("group")
     # The dropdown wraps the whole formula; skip it when the formula already
     # scopes grouping per-aggregate with inline `by [...]`.
-    if group and group in columns and not _BY_RE.search(text or ""):
+    if group and group in out.columns and not _BY_RE.search(text or ""):
         expr = expr.over(group)
-    return expr
+    for tmp, stage_expr in stages:
+        out = out.with_columns(stage_expr.alias(tmp))
+    out = out.with_columns(expr.alias(d["name"]))
+    if stages:
+        out = out.drop([tmp for tmp, _ in stages])
+    return out
 
 
 def _label_expr(d, columns):
@@ -276,12 +321,10 @@ def apply(df, derivations):
     out = df
     for d in derivations or []:
         try:
-            kind = d.get("kind", "formula")
-            if kind == "label":
-                expr = _label_expr(d, out.columns)
+            if d.get("kind", "formula") == "label":
+                out = out.with_columns(_label_expr(d, out.columns).alias(d["name"]))
             else:
-                expr = _formula_expr(d, out.columns)
-            out = out.with_columns(expr.alias(d["name"]))
+                out = _apply_formula(out, d)
         except Exception:  # noqa: BLE001 — skip a bad derivation, keep the rest
             continue
     return out
