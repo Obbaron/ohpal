@@ -16,7 +16,17 @@ shows a labelled placeholder. Render arrays are released on close.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import plotdata
@@ -33,6 +43,20 @@ _AXIS_RGB = ((0.80, 0.12, 0.12, 1), (0.10, 0.55, 0.12, 1), (0.12, 0.30, 0.85, 1)
 _DEFAULT_MARKER_PX = 7
 _SIZE_FIT_MULT = 1.6
 _SIZE_MAX_MULT = 3.0
+
+# Axis decoration colours: the domain line blends into the bg, ticks/labels
+# stay faintly legible.
+_AXIS_LINE = _BG
+_AXIS_TICK = "#8a94a6"
+_AXIS_TEXT = "#5a6472"
+
+
+def _sig(x: float, n: int = 4) -> float:
+    """Round to n significant figures (for compact colourbar labels)."""
+    try:
+        return float(f"{float(x):.{n}g}")
+    except (ValueError, TypeError):
+        return x
 
 
 def _nice_step(span: float, target: int = 10) -> float:
@@ -61,6 +85,94 @@ def _fmt(v) -> str:
     if isinstance(v, float):
         return f"{v:.4g}"
     return str(v)
+
+
+class PlotTooltip(QWidget):
+    """Plotly-style hover bubble: filled with the hovered point's colour, with
+    a triangle tail that points at the data point."""
+
+    _PAD = 6
+    _RADIUS = 5
+    _TAIL = 9       # tail length (px)
+    _TAILW = 12     # tail base width (px)
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._lines: list[str] = []
+        self._fill = QColor(40, 44, 52)
+        self._text = QColor(245, 245, 245)
+        self._below = False
+        self._tipx = 0.0
+        self._bubble = QRectF()
+        self._font = QFont()
+        self._font.setPointSize(9)
+        self.hide()
+
+    def show_at(self, tip, lines, rgba, host) -> None:
+        self._lines = lines
+        r, g, b = float(rgba[0]), float(rgba[1]), float(rgba[2])
+        self._fill = QColor(int(max(0.0, min(1.0, r)) * 255),
+                            int(max(0.0, min(1.0, g)) * 255),
+                            int(max(0.0, min(1.0, b)) * 255))
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        self._text = QColor(20, 20, 20) if lum > 0.6 else QColor(245, 245, 245)
+
+        fm = QFontMetrics(self._font)
+        tw = max((fm.horizontalAdvance(s) for s in lines), default=10)
+        lh = fm.height()
+        bw = tw + 2 * self._PAD
+        bh = lh * len(lines) + 2 * self._PAD
+        hw, hh = host
+        tipx, tipy = tip
+
+        W, H = int(bw), int(bh + self._TAIL)
+        self._below = (tipy - self._TAIL - bh) < 4  # flip below if no room above
+        if self._below:
+            top = tipy + self._TAIL
+            self._bubble = QRectF(0, self._TAIL, bw, bh)
+        else:
+            top = tipy - self._TAIL - bh
+            self._bubble = QRectF(0, 0, bw, bh)
+        left = max(4, min(int(tipx - 0.25 * bw), hw - W - 4))
+        top = max(4, min(int(top), hh - H - 4))
+        # tail tip x in local coords, clamped so its base stays on the bubble
+        lo = self._RADIUS + self._TAILW / 2
+        hi = bw - self._RADIUS - self._TAILW / 2
+        self._tipx = max(lo, min(tipx - left, hi))
+
+        self.setGeometry(left, top, W, H)
+        self.update()
+        self.show()
+        self.raise_()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        path = QPainterPath()
+        path.addRoundedRect(self._bubble, self._RADIUS, self._RADIUS)
+        if self._below:
+            apex, base_y = QPointF(self._tipx, 0.0), float(self._TAIL)
+        else:
+            apex, base_y = QPointF(self._tipx, float(self.height())), self._bubble.bottom()
+        path.addPolygon(QPolygonF([
+            apex,
+            QPointF(self._tipx - self._TAILW / 2, base_y),
+            QPointF(self._tipx + self._TAILW / 2, base_y),
+        ]))
+        p.setPen(QPen(self._fill.darker(120), 1))
+        p.setBrush(QBrush(self._fill))
+        p.drawPath(path.simplified())
+
+        p.setPen(self._text)
+        p.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        x = int(self._bubble.left()) + self._PAD
+        y = int(self._bubble.top()) + self._PAD + fm.ascent()
+        for line in self._lines:
+            p.drawText(x, y, line)
+            y += fm.height()
+        p.end()
 
 
 def _placeholder(message: str) -> QWidget:
@@ -120,7 +232,7 @@ class PlotTab(QWidget):
         self._hover_tree = None
         self._hover_xy = None
         self._hover_rows = None
-        self._tooltip: QLabel | None = None
+        self._tooltip: PlotTooltip | None = None
 
         # Marker sizing / zoom-adaptive state.
         self._base_size = _DEFAULT_MARKER_PX   # slider-driven base px
@@ -178,12 +290,16 @@ class PlotTab(QWidget):
                 self._yaxis = scene.AxisWidget(
                     orientation="left", axis_label=self.spec.y,
                     axis_font_size=9, tick_label_margin=12,
+                    axis_color=_AXIS_LINE, tick_color=_AXIS_TICK,
+                    text_color=_AXIS_TEXT,
                 )
                 self._yaxis.width_max = 62
                 grid.add_widget(self._yaxis, row=0, col=0)
                 self._xaxis = scene.AxisWidget(
                     orientation="bottom", axis_label=self.spec.x,
                     axis_font_size=9, tick_label_margin=12,
+                    axis_color=_AXIS_LINE, tick_color=_AXIS_TICK,
+                    text_color=_AXIS_TEXT,
                 )
                 self._xaxis.height_max = 42
                 grid.add_widget(self._xaxis, row=1, col=1)
@@ -328,15 +444,15 @@ class PlotTab(QWidget):
             # numbers at the ends — and nothing runs off the right edge.
             self._cbar = scene.ColorBarWidget(
                 cmap=cm, orientation="left", label=str(name),
-                clim=(float(lo), float(hi)), border_width=1,
+                clim=(_sig(lo), _sig(hi)), border_width=1,
                 border_color="#888888",
             )
-            self._cbar.width_max = 105  # room for label + numbers, no clipping
+            self._cbar.width_max = 120  # room for label + 4-sig numbers, no clip
             self._cbar.bgcolor = _BG
             self._grid.add_widget(self._cbar, row=0, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
-            self._cbar.clim = (float(lo), float(hi))
+            self._cbar.clim = (_sig(lo), _sig(hi))
             self._cbar.label.text = str(name)
         self._cbar.visible = self._show_legend
 
@@ -570,7 +686,7 @@ class PlotTab(QWidget):
             if (px - event.pos[0]) ** 2 + (py - event.pos[1]) ** 2 > 12 ** 2:
                 self._hide_tooltip()
                 return
-            self._show_tooltip(int(i))
+            self._show_tooltip(int(i), float(px), float(py))
         except Exception:  # noqa: BLE001
             self._hide_tooltip()
 
@@ -586,30 +702,19 @@ class PlotTab(QWidget):
         row = rows.row(i, named=True)
         return "\n".join(f"{c}: {_fmt(row.get(c))}" for c in cols)
 
-    def _show_tooltip(self, i: int) -> None:
+    def _show_tooltip(self, i: int, tipx: float, tipy: float) -> None:
         text = self._hover_text(i)
         if not text or self._canvas is None:
             self._hide_tooltip()
             return
-        from PyQt6.QtGui import QCursor
-
         if self._tooltip is None:
-            self._tooltip = QLabel(self._canvas.native)
-            self._tooltip.setStyleSheet(
-                "background: rgba(28,32,38,0.92); color: #f2f4f7;"
-                " border-radius: 4px; padding: 5px 7px; font-size: 11px;"
-            )
-            self._tooltip.setTextFormat(Qt.TextFormat.PlainText)
-        self._tooltip.setText(text)
-        self._tooltip.adjustSize()
+            self._tooltip = PlotTooltip(self._canvas.native)
+        rgba = (0.2, 0.22, 0.26, 1.0)
+        if self._last_colors is not None and 0 <= i < len(self._last_colors):
+            rgba = self._last_colors[i]
         native = self._canvas.native
-        p = native.mapFromGlobal(QCursor.pos())
-        w, h = self._tooltip.width(), self._tooltip.height()
-        x = min(p.x() + 14, native.width() - w - 4)
-        y = min(p.y() + 14, native.height() - h - 4)
-        self._tooltip.move(max(0, x), max(0, y))
-        self._tooltip.show()
-        self._tooltip.raise_()
+        self._tooltip.show_at((tipx, tipy), text.split("\n"), rgba,
+                              (native.width(), native.height()))
 
     def _hide_tooltip(self) -> None:
         if self._tooltip is not None:
