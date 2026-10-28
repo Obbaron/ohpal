@@ -110,6 +110,8 @@ QTabBar::tab:selected { background: palette(base); color: palette(window-text); 
 /* File tab, pinned left-most, distinguished by a subtle tint only. */
 QTabBar::tab:first { background: palette(alternate-base); color: palette(window-text); font-weight: 600; }
 QTabBar::tab:first:selected { background: palette(base); }
+/* Close button sits inside the tab (left of the label), inset from the border. */
+QTabBar::close-button { subcontrol-position: left; margin: 2px 5px 2px 7px; }
 
 /* --- Toolbar --- */
 QToolBar { background: palette(base); border-bottom: 1px solid palette(mid); spacing: 3px; padding: 3px; }

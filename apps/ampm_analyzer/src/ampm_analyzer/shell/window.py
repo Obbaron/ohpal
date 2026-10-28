@@ -67,11 +67,6 @@ class MainWindow(QMainWindow):
         self.tabbar.setDocumentMode(True)
         self.tabbar.setTabsClosable(True)
         self.tabbar.setMovable(False)
-        # Pull the close button leftward (snug to the label, off the far edge).
-        self.tabbar.setStyleSheet(
-            self.tabbar.styleSheet()
-            + "QTabBar::close-button { subcontrol-position: left; margin-left: 4px; }"
-        )
 
         # No "+" new-plot shortcut: creating a plot needs setup, so plots are
         # created from the Data toolbar's "New plot" button instead.
