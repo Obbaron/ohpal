@@ -41,14 +41,6 @@ class DeriveColumnDialog(QDialog):
             "e.g. cov([LaserVIEW (mean)])   or   [A] / [B]"
         )
         form.addRow("Formula", self.expr_edit)
-
-        # Group by — aggregates (mean, std, cov, …) compute within each value of
-        # this column and map back to the rows. "none" = over the whole frame.
-        self.group_combo = QComboBox()
-        self.group_combo.addItem("— none —", "")
-        for name in self._columns:
-            self.group_combo.addItem(name, name)
-        form.addRow("Group by", self.group_combo)
         lay.addLayout(form)
 
         pick = QHBoxLayout()
@@ -69,7 +61,7 @@ class DeriveColumnDialog(QDialog):
             "column (e.g. [Demand X] > 30 and [Demand Y] < 0).\n"
             "where(cond, a, b) → a where cond is true, else b "
             "(e.g. where([Z] > 0.5, \"high\", \"low\")).\n"
-            "Group an aggregate inline with by [cols] (overrides Group by): "
+            "Group an aggregate inline with by [cols]: "
             "cov([mp]) by [part, layer] / cov([mp]) by [part].\n"
             "Masked aggregate: mean([mp] where [side] == \"A\") by [part] "
             "(reduces only the matching rows)."
@@ -119,8 +111,5 @@ class DeriveColumnDialog(QDialog):
         self.error.setVisible(True)
 
     def result_values(self) -> tuple[str, str, str]:
-        return (
-            self.name_edit.text().strip(),
-            self.expr_edit.text().strip(),
-            self.group_combo.currentData() or "",
-        )
+        # group is always "" now — scope aggregates inline with `by [cols]`.
+        return (self.name_edit.text().strip(), self.expr_edit.text().strip(), "")
