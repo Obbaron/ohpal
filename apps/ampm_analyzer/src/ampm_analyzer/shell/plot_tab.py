@@ -39,11 +39,14 @@ def _nice_step(span: float, target: int = 10) -> float:
     return step * mag
 
 
-def _grid_vals(a0: float, a1: float) -> np.ndarray:
-    """Grid-line positions on a nice step within [a0, a1]."""
-    step = _nice_step(a1 - a0)
+def _grid_range(a0: float, a1: float, step: float) -> np.ndarray:
+    """Grid-line positions on `step` within [a0, a1]."""
     start = np.ceil(a0 / step) * step
     return np.arange(start, a1 + step * 0.5, step)
+
+
+# How far the 3D floor grid extends past the data, as a fraction of each span.
+_FLOOR_PAD = 0.5
 
 
 def _placeholder(message: str) -> QWidget:
@@ -76,6 +79,7 @@ class PlotTab(QWidget):
         self.scale = "linear"
         self.crange = None  # auto-detected on first render; sliders then tweak
         self._rendered_once = False
+        self._data_bounds = None  # (lo, hi) of the data, for framing the camera
 
         # Decoration toggles (bbox + floor grid on by default for 3D).
         self._show_axes = True
@@ -197,8 +201,11 @@ class PlotTab(QWidget):
 
     # -- decorations ---------------------------------------------------
     def _update_decor(self, data) -> None:
-        if self.spec.is_3d and data.n_drawn:
-            self._build_3d_axes(data.pos.min(axis=0), data.pos.max(axis=0))
+        if data.n_drawn:
+            lo, hi = data.pos.min(axis=0), data.pos.max(axis=0)
+            self._data_bounds = (lo, hi)
+            if self.spec.is_3d:
+                self._build_3d_axes(lo, hi)
         self._update_legend(data)
 
     def _build_3d_axes(self, lo, hi) -> None:
@@ -233,16 +240,24 @@ class PlotTab(QWidget):
             self._axis_labels.append(t)
 
     def _build_floor(self, x0, x1, y0, y1, z0):
-        """A grid on the X-Y plane at z=z0, at nice-stepped intervals."""
+        """A grid on the X-Y plane at z=z0 extending past the data.
+
+        Cell size follows the data span (nice 1/2/5 step), but the grid is
+        padded out by ``_FLOOR_PAD`` of each span so it reads as a ground plane.
+        """
         from vispy import scene
 
-        xs = _grid_vals(x0, x1)
-        ys = _grid_vals(y0, y1)
+        xspan, yspan = (x1 - x0) or 1.0, (y1 - y0) or 1.0
+        ex0, ex1 = x0 - _FLOOR_PAD * xspan, x1 + _FLOOR_PAD * xspan
+        ey0, ey1 = y0 - _FLOOR_PAD * yspan, y1 + _FLOOR_PAD * yspan
+        stepx, stepy = _nice_step(xspan), _nice_step(yspan)
+        xs = _grid_range(ex0, ex1, stepx)
+        ys = _grid_range(ey0, ey1, stepy)
         segs = []
         for gx in xs:
-            segs += [(gx, y0, z0), (gx, y1, z0)]
+            segs += [(gx, ey0, z0), (gx, ey1, z0)]
         for gy in ys:
-            segs += [(x0, gy, z0), (x1, gy, z0)]
+            segs += [(ex0, gy, z0), (ex1, gy, z0)]
         if not segs:
             return None
         line = scene.visuals.Line(np.array(segs, dtype="float32"),
@@ -311,8 +326,19 @@ class PlotTab(QWidget):
         self._apply_visibility()
 
     def reset_view(self) -> None:
-        if self._view is not None:
+        if self._view is None:
+            return
+        b = self._data_bounds
+        if b is None:  # fall back to the whole scene
             self._view.camera.set_range(margin=0.12)
+            return
+        lo, hi = b  # frame the data, not the padded floor grid
+        if self.spec.is_3d:
+            self._view.camera.set_range(x=(lo[0], hi[0]), y=(lo[1], hi[1]),
+                                        z=(lo[2], hi[2]), margin=0.12)
+        else:
+            self._view.camera.set_range(x=(lo[0], hi[0]), y=(lo[1], hi[1]),
+                                        margin=0.12)
 
     def toggle_states(self) -> dict:
         return {
