@@ -65,7 +65,12 @@ def _functions() -> dict[str, tuple[int, Any]]:
         "sin": lambda a: a.sin(),
         "cos": lambda a: a.cos(),
     }
-    return {name: (1, fn) for name, fn in {**agg, **elem}.items()}
+    funcs = {name: (1, fn) for name, fn in {**agg, **elem}.items()}
+    # Multi-arg: where(cond, a, b) -> a where cond is true, else b.
+    import polars as pl
+
+    funcs["where"] = (3, lambda c, a, b: pl.when(c).then(a).otherwise(b))
+    return funcs
 
 
 # -- parsing ------------------------------------------------------------
@@ -97,12 +102,46 @@ def _parse(text: str, columns, what: str):
     return tree, mapping
 
 
+_COMPARE_OPS = {
+    ast.Lt: lambda a, b: a < b,
+    ast.Gt: lambda a, b: a > b,
+    ast.LtE: lambda a, b: a <= b,
+    ast.GtE: lambda a, b: a >= b,
+    ast.Eq: lambda a, b: a == b,
+    ast.NotEq: lambda a, b: a != b,
+}
+
+
 def _build_value(node, mapping, funcs):
-    """Compile a numeric/value AST node to a Polars expression."""
+    """Compile an AST node to a Polars expression.
+
+    Handles arithmetic and functions *and* comparisons (< <= > >= == !=) with
+    boolean ``and`` / ``or`` / ``not`` — so a derived column can be a number or a
+    condition (a boolean column). Comparisons chain: ``0 < [x] < 10``.
+    """
     import polars as pl
 
     if isinstance(node, ast.Expression):
         return _build_value(node.body, mapping, funcs)
+    if isinstance(node, ast.BoolOp):
+        parts = [_build_value(v, mapping, funcs) for v in node.values]
+        out = parts[0]
+        for p in parts[1:]:
+            out = (out & p) if isinstance(node.op, ast.And) else (out | p)
+        return out
+    if isinstance(node, ast.Compare):
+        operands = [node.left, *node.comparators]
+        terms = []
+        for i, op in enumerate(node.ops):
+            builder = _COMPARE_OPS.get(type(op))
+            if builder is None:
+                raise DeriveError("Unsupported comparison.")
+            terms.append(builder(_build_value(operands[i], mapping, funcs),
+                                 _build_value(operands[i + 1], mapping, funcs)))
+        out = terms[0]
+        for t in terms[1:]:
+            out = out & t
+        return out
     if isinstance(node, ast.BinOp):
         left = _build_value(node.left, mapping, funcs)
         right = _build_value(node.right, mapping, funcs)
@@ -121,6 +160,8 @@ def _build_value(node, mapping, funcs):
             return left ** right
         raise DeriveError("Unsupported operator.")
     if isinstance(node, ast.UnaryOp):
+        if isinstance(node.op, ast.Not):
+            return ~_build_value(node.operand, mapping, funcs)
         if isinstance(node.op, ast.USub):
             return -_build_value(node.operand, mapping, funcs)
         if isinstance(node.op, ast.UAdd):
@@ -148,49 +189,23 @@ def _build_value(node, mapping, funcs):
     raise DeriveError("Unsupported expression.")
 
 
-_COMPARE_OPS = {
-    ast.Lt: lambda a, b: a < b,
-    ast.Gt: lambda a, b: a > b,
-    ast.LtE: lambda a, b: a <= b,
-    ast.GtE: lambda a, b: a >= b,
-    ast.Eq: lambda a, b: a == b,
-    ast.NotEq: lambda a, b: a != b,
-}
-
-
 def _build_predicate(node, mapping, funcs):
-    """Compile a boolean-condition AST node to a Polars expression."""
-    if isinstance(node, ast.Expression):
-        return _build_predicate(node.body, mapping, funcs)
-    if isinstance(node, ast.BoolOp):
-        parts = [_build_predicate(v, mapping, funcs) for v in node.values]
-        combined = parts[0]
-        for p in parts[1:]:
-            combined = (combined & p) if isinstance(node.op, ast.And) else (combined | p)
-        return combined
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return ~_build_predicate(node.operand, mapping, funcs)
-    if isinstance(node, ast.Compare):
-        # Supports chaining: ``0 < [x] < 10`` -> (0 < x) & (x < 10).
-        operands = [node.left, *node.comparators]
-        terms = []
-        for i, op in enumerate(node.ops):
-            builder = _COMPARE_OPS.get(type(op))
-            if builder is None:
-                raise DeriveError("Unsupported comparison.")
-            left = _build_value(operands[i], mapping, funcs)
-            right = _build_value(operands[i + 1], mapping, funcs)
-            terms.append(builder(left, right))
-        combined = terms[0]
-        for t in terms[1:]:
-            combined = combined & t
-        return combined
-    raise DeriveError("Condition must be a comparison (use <, >, ==, and, or).")
+    """Compile a condition — like _build_value, but the top level must be a
+    boolean (a comparison / and / or / not), as a Group-label rule requires."""
+    body = node.body if isinstance(node, ast.Expression) else node
+    is_bool = isinstance(body, (ast.Compare, ast.BoolOp)) or (
+        isinstance(body, ast.UnaryOp) and isinstance(body.op, ast.Not)
+    )
+    if not is_bool:
+        raise DeriveError(
+            "Condition must be a comparison (use <, >, ==, and, or)."
+        )
+    return _build_value(node, mapping, funcs)
 
 
 # -- public compile -----------------------------------------------------
 def compile_expr(text: str, columns) -> Any:
-    """Compile a numeric formula to a Polars expression. Raises DeriveError."""
+    """Compile a formula (numeric or condition) to a Polars expression."""
     tree, mapping = _parse(text, columns, "Expression")
     return _build_value(tree, mapping, _functions())
 

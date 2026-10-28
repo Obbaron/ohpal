@@ -64,7 +64,11 @@ class DeriveColumnDialog(QDialog):
             "Reference columns in [brackets]. Operators: +  −  *  /  %  ** .\n"
             "Element-wise: abs, sqrt, log, log10, exp, sin, cos.\n"
             "Aggregate: mean, std, var, median, sum, min, max, count, "
-            "n_unique, first, last, cov (=std/mean)."
+            "n_unique, first, last, cov (=std/mean).\n"
+            "Conditions: < <= > >= == != with and / or / not → a true/false "
+            "column (e.g. [Demand X] > 30 and [Demand Y] < 0).\n"
+            "where(cond, a, b) → a where cond is true, else b "
+            "(e.g. where([Z] > 0.5, \"high\", \"low\"))."
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
