@@ -135,10 +135,22 @@ class AppController(QObject):
             self.session.require_setup(config, store.layers, store.columns, False)
 
     # -- build the cache (from the setup page) -------------------------
-    def build_datastore(self, scope: tuple[int, int] | None) -> None:
+    def build_datastore(
+        self, scope: tuple[int, int] | None, thickness: float | None = None
+    ) -> None:
         store = self.session.store
         if store is None or self._busy:
             return
+        # Apply an edited layer thickness: reconstruct the store so the build
+        # (and later queries, where Z = layer × thickness) use it.
+        if (
+            thickness
+            and self.session.source_dir is not None
+            and abs(thickness - self.session.layer_thickness) > 1e-9
+        ):
+            store = self._construct_store(self.session.source_dir, thickness)
+            self.session.store = store
+            self.session.layer_thickness = thickness
         if scope is None:
             layers = list(store.layers)
         else:

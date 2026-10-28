@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -32,6 +33,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_DEFAULT_THICKNESS = 0.03  # mm — fallback when a build has nothing to detect from
 
 _MISSING = "— not found —"
 
@@ -81,11 +84,9 @@ class DataStoreSettings(QWidget):
         self.lbl_source = _value_label(_MISSING)
         self.lbl_stl = _value_label(_MISSING)
         self.lbl_csv = _value_label(_MISSING)
-        self.lbl_thickness = _value_label(_MISSING)
         f.addRow("Packet source", self.lbl_source)
         f.addRow("STL", self.lbl_stl)
         f.addRow("Parts CSV", self.lbl_csv)
-        f.addRow("Layer thickness", self.lbl_thickness)
         return box
 
     def _columns_group(self) -> QGroupBox:
@@ -127,9 +128,11 @@ class DataStoreSettings(QWidget):
         self.radio_range = QRadioButton("Range")
         self.scope_group.addButton(self.radio_all)
         self.scope_group.addButton(self.radio_range)
-        v.addWidget(self.radio_all)
 
+        # All layers / Range inline on one row.
         rr = QHBoxLayout()
+        rr.addWidget(self.radio_all)
+        rr.addSpacing(18)
         rr.addWidget(self.radio_range)
         self.layer_min = QSpinBox()
         self.layer_max = QSpinBox()
@@ -142,6 +145,21 @@ class DataStoreSettings(QWidget):
         rr.addWidget(self.layer_max)
         rr.addStretch(1)
         v.addLayout(rr)
+
+        # Thickness (mm) — autodetected into the value, editable (so a build
+        # with nothing to detect from can still be given a thickness).
+        tr = QHBoxLayout()
+        tr.addWidget(QLabel("Thickness"))
+        self.thickness_spin = QDoubleSpinBox()
+        self.thickness_spin.setDecimals(3)
+        self.thickness_spin.setRange(0.001, 5.0)
+        self.thickness_spin.setSingleStep(0.005)
+        self.thickness_spin.setValue(_DEFAULT_THICKNESS)
+        self.thickness_spin.setSuffix(" mm")
+        self.thickness_spin.setFixedWidth(110)
+        tr.addWidget(self.thickness_spin)
+        tr.addStretch(1)
+        v.addLayout(tr)
 
         self.radio_range.toggled.connect(self.layer_min.setEnabled)
         self.radio_range.toggled.connect(self.layer_max.setEnabled)
@@ -173,10 +191,7 @@ class DataStoreSettings(QWidget):
         self.lbl_stl.setText(shown(config.get("STL")))
         self.lbl_csv.setText(shown(config.get("PARTS_CSV")))
         lt = config.get("LAYER_THICKNESS")
-        if not lt:
-            self.lbl_thickness.setText("0.0  — set this (mm)")
-        else:
-            self.lbl_thickness.setText(f"{lt} mm")
+        self.thickness_spin.setValue(float(lt) if lt else _DEFAULT_THICKNESS)
 
         if layers:
             lo, hi = min(layers), max(layers)
@@ -217,6 +232,10 @@ class DataStoreSettings(QWidget):
         if self.radio_range.isChecked():
             return (self.layer_min.value(), self.layer_max.value())
         return None
+
+    def thickness(self) -> float:
+        """Layer thickness (mm) to build with."""
+        return self.thickness_spin.value()
 
     def columns(self) -> list[str]:
         """Checked columns (always-required ones are included)."""
