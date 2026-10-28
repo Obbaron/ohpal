@@ -44,7 +44,7 @@ _COLORMAPS = {
     ],
 }
 COLORMAP_NAMES = tuple(_COLORMAPS)
-DEFAULT_COLORMAP = "BlueRed"
+DEFAULT_COLORMAP = "turbo"  # no white midpoint → data stays visible on white bg
 _LUTS = {name: np.array(stops, dtype="float32") for name, stops in _COLORMAPS.items()}
 
 
@@ -159,9 +159,17 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
             if scale == "log":
                 lo = np.log10(lo) if lo > 0 else (np.min(vals[finite]) if finite.any() else 0.0)
                 hi = np.log10(hi) if hi > 0 else (np.max(vals[finite]) if finite.any() else 1.0)
+        elif finite.any():
+            # Robust auto-range: clip to the 2nd–98th percentile so a few
+            # outliers don't stretch the scale and wash the bulk into one
+            # colour. Sliders can widen back to the full extent.
+            lo = float(np.percentile(vals[finite], 2.0))
+            hi = float(np.percentile(vals[finite], 98.0))
+            if hi <= lo:  # flat / too few distinct values → full extent
+                lo = float(np.min(vals[finite]))
+                hi = float(np.max(vals[finite]))
         else:
-            lo = float(np.min(vals[finite])) if finite.any() else 0.0
-            hi = float(np.max(vals[finite])) if finite.any() else 1.0
+            lo, hi = 0.0, 1.0
         span = (hi - lo) or 1.0
         t = np.where(finite, (vals - lo) / span, 0.0)
         colors = _apply_cmap(t, cmap)
