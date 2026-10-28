@@ -60,7 +60,7 @@ _CATEGORICAL = np.array(
     ],
     dtype="float32",
 )
-_SOLID = (0.35, 0.60, 0.95, 0.90)  # default single colour
+_SOLID = (0.35, 0.60, 0.95, 1.0)  # default single colour (opaque)
 _NULL_RGBA = (0.45, 0.47, 0.52, 0.55)  # colour for null values in a colour column
 
 
@@ -165,8 +165,8 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
         span = (hi - lo) or 1.0
         t = np.where(finite, (vals - lo) / span, 0.0)
         colors = _apply_cmap(t, cmap)
-        colors[~finite] = _NULL_RGBA  # nulls shown neutral, not dropped
-        colors[:, 3] = 0.9
+        colors[:, 3] = 1.0  # opaque fill (no washed-out look on a light bg)
+        colors[~finite] = _NULL_RGBA  # nulls shown neutral + faded, not dropped
         # Report the effective range in the original (non-log) units for sliders.
         rng = crange if crange is not None else (
             (10 ** lo, 10 ** hi) if scale == "log" else (lo, hi)
@@ -184,9 +184,9 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
     pal = _CATEGORICAL
     colors = np.ones((len(codes), 4), dtype="float32")
     colors[:, :3] = pal[codes % len(pal)]
-    colors[:, 3] = 0.9
+    colors[:, 3] = 1.0
     legend = [
-        (str(v), tuple(pal[i % len(pal)]) + (0.9,))
+        (str(v), tuple(pal[i % len(pal)]) + (1.0,))
         for i, v in enumerate(uniques)
     ]
     return colors, legend, None

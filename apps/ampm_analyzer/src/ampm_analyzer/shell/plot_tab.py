@@ -194,7 +194,7 @@ class PlotTab(QWidget):
         first = not self._rendered_once
         self._rendered_once = True
         self._scatter.set_data(data.pos, face_color=data.colors, size=5,
-                               edge_width=0)
+                               edge_width=0, edge_color=None)
         self._update_decor(data)
         self._apply_visibility()
         if self._view is not None and first:
