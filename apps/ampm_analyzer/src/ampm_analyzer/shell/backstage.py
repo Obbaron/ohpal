@@ -12,6 +12,8 @@ Inert except for *structural* navigation signals the main window uses:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -20,23 +22,41 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from . import icons
 from .datastore_settings import DataStoreSettings
+from .recents import RecentStore
 
-# Placeholder recent items, purely so the strip looks real while unwired.
-_RECENT = [
-    "JR299  ·  packet  ·  just now",
-    "JR295  ·  packet  ·  2h ago",
-    "JR324  ·  packet  ·  yesterday",
-    "Untitled  ·  CSV only  ·  3 days ago",
-]
+
+def _humanize(iso: str) -> str:
+    """Compact relative time: 'just now', '2h ago', '3d ago', else a date."""
+    try:
+        then = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return ""
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    secs = (datetime.now(timezone.utc) - then).total_seconds()
+    if secs < 90:
+        return "just now"
+    if secs < 90 * 60:
+        return f"{round(secs / 60)}m ago"
+    if secs < 36 * 3600:
+        return f"{round(secs / 3600)}h ago"
+    if secs < 14 * 86400:
+        return f"{round(secs / 86400)}d ago"
+    if secs < 9 * 7 * 86400:
+        return f"{round(secs / (7 * 86400))}w ago"
+    return then.strftime("%Y-%m-%d")
+
 
 
 def _tile(title: str, subtitle: str) -> QPushButton:
@@ -62,11 +82,15 @@ class Backstage(QWidget):
     openRequested = pyqtSignal()      # open a build that already has a cache
     createExcelRequested = pyqtSignal()
     datastoreBuildRequested = pyqtSignal()  # Build/Rebuild on the setup page
+    openRecentRequested = pyqtSignal(str)   # open a build chosen from Recent
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Backstage")
         self.setProperty("tabkind", "file")
+
+        self._recents = RecentStore()
+        self._recent_filter = "recent"  # "recent" | "favourites" | "shared"
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -74,6 +98,8 @@ class Backstage(QWidget):
 
         root.addWidget(self._build_sidebar())
         root.addWidget(self._build_main(), 1)
+
+        self.refresh_recents()
 
     # -- left sidebar --------------------------------------------------
     def _build_sidebar(self) -> QWidget:
@@ -158,24 +184,87 @@ class Backstage(QWidget):
         strip = QHBoxLayout()
         strip.setSpacing(8)
         self.grp = QButtonGroup(self)
-        for i, name in enumerate(("Recent", "Favourites", "Shared with Me")):
+        for i, (name, key) in enumerate(
+            (("Recent", "recent"), ("Favourites", "favourites"),
+             ("Shared with Me", "shared"))
+        ):
             b = QPushButton(name)
             b.setCheckable(True)
             if i == 0:
                 b.setChecked(True)
+            b.clicked.connect(lambda _c, k=key: self._set_recent_filter(k))
             self.grp.addButton(b)
             strip.addWidget(b)
         strip.addStretch(1)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search for a file")
         self.search.setFixedWidth(280)
+        self.search.textChanged.connect(lambda _t: self.refresh_recents())
         strip.addWidget(self.search)
         lay.addLayout(strip)
 
         self.recent = QListWidget()
-        self.recent.addItems(_RECENT)
+        self.recent.itemDoubleClicked.connect(self._on_recent_activated)
         lay.addWidget(self.recent, 1)
         return page
+
+    # -- recents -------------------------------------------------------
+    def _set_recent_filter(self, key: str) -> None:
+        self._recent_filter = key
+        self.refresh_recents()
+
+    def refresh_recents(self) -> None:
+        """Repopulate the Recent list from the store (pruning missing folders)."""
+        if not hasattr(self, "recent"):
+            return
+        self.recent.clear()
+        query = self.search.text().strip().lower() if hasattr(self, "search") else ""
+        for e in self._recents.load():  # newest-first, already pruned
+            if self._recent_filter == "favourites" and not e.favourite:
+                continue
+            if self._recent_filter == "shared":
+                continue  # not wired yet
+            if query and query not in e.name.lower():
+                continue
+            self._add_recent_row(e)
+
+    def _add_recent_row(self, entry) -> None:
+        item = QListWidgetItem(self.recent)
+        item.setData(Qt.ItemDataRole.UserRole, entry.path)
+
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(10, 4, 8, 4)
+        h.setSpacing(8)
+        status = "ready" if entry.has_cache else "needs build"
+        label = QLabel(f"{entry.name}  ·  {status}  ·  {_humanize(entry.last_opened)}")
+        label.setToolTip(entry.path)
+        h.addWidget(label, 1)
+
+        star = QToolButton()
+        star.setCheckable(True)
+        star.setChecked(entry.favourite)
+        star.setText("★" if entry.favourite else "☆")
+        star.setToolTip("Remove from Favourites" if entry.favourite
+                        else "Add to Favourites")
+        star.setAutoRaise(True)
+        star.setCursor(Qt.CursorShape.PointingHandCursor)
+        star.clicked.connect(
+            lambda checked, p=entry.path: self._on_star_toggled(p, checked)
+        )
+        h.addWidget(star, 0)
+
+        item.setSizeHint(row.sizeHint())
+        self.recent.setItemWidget(item, row)
+
+    def _on_recent_activated(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            self.openRecentRequested.emit(path)
+
+    def _on_star_toggled(self, path: str, favourite: bool) -> None:
+        self._recents.set_favourite(path, favourite)
+        self.refresh_recents()
 
     def _datastore_page(self) -> QWidget:
         page = QWidget()

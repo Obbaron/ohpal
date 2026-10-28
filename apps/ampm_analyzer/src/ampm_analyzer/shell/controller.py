@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from . import derive
 from .datastore_settings import REQUIRED_COLUMNS
+from .recents import RecentStore
 from .state import BuildSession, QueryResult
 from .workers import CacheWorker, QueryWorker
 
@@ -54,6 +55,7 @@ class AppController(QObject):
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
         self._queue: list[dict] = []
         self._current: dict | None = None
+        self._recents = RecentStore()
 
     # -- entry points --------------------------------------------------
     def new_build(self) -> None:
@@ -62,13 +64,24 @@ class AppController(QObject):
     def open_build(self) -> None:
         self._start("open")
 
+    def open_recent(self, path: str) -> None:
+        """Open a build chosen from the Recent list (treated like Open)."""
+        if self._busy:
+            return
+        self._load(Path(path), "open")
+
     def _start(self, mode: str) -> None:
         if self._busy:
             return
         title = "Prepare a new build" if mode == "new" else "Open a prepared build"
-        chosen = QFileDialog.getExistingDirectory(self._window, title)
+        chosen = QFileDialog.getExistingDirectory(
+            self._window, title, self._recents.start_dir()
+        )
         if not chosen:
             return
+        # Remember where they were browsing (the picked folder's parent) so the
+        # dialog can fall back to it next time even with no recents.
+        self._recents.set_last_browse_dir(str(Path(chosen).parent))
         self._load(Path(chosen), mode)
 
     # -- load/prepare --------------------------------------------------
@@ -100,6 +113,10 @@ class AppController(QObject):
 
         self._config = config
         self._columns = None  # default to all; the setup page's build may narrow it
+        # Record this build in the recents list (before set_store so the
+        # backstage refresh triggered by the load already sees it).
+        cached_now, _ = self._cache_status(store)
+        self._recents.record(build_root, has_cache=cached_now > 0)
         self.session.set_store(store, source_dir, build_root.name, thickness)
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.

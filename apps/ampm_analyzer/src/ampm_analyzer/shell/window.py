@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         self.backstage = Backstage()
         self.backstage.newRequested.connect(self.controller.new_build)
         self.backstage.openRequested.connect(self.controller.open_build)
+        self.backstage.openRecentRequested.connect(self.controller.open_recent)
         self.backstage.createExcelRequested.connect(
             lambda: self.set_status("Create Excel from AMPM — not wired yet")
         )
@@ -235,6 +236,7 @@ class MainWindow(QMainWindow):
         # so New (which goes to setup first) doesn't flash an empty grid.
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
+        self.backstage.refresh_recents()  # the just-loaded build is now recent
         # Restore this build's saved UI state. set_store has just cleared the
         # session's derivations/removed; put the saved ones back before the first
         # query, so the controller's pipeline applies them to the first result.
