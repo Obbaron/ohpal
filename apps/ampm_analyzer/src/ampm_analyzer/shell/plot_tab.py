@@ -414,9 +414,13 @@ class PlotTab(QWidget):
         if self._opacity < 1.0 and colors is not None:
             colors = colors.copy()
             colors[:, 3] = colors[:, 3] * self._opacity
+        # antialias=0: hard-edged discs tile into solid colour under heavy
+        # overlap instead of each blending a semi-transparent rim toward the
+        # light background (the zoomed-out "whitening").
         self._scatter.set_data(self._last_pos, face_color=colors,
                                size=px, edge_width=0, edge_color=None,
                                symbol=self._symbol)
+        self._scatter.antialias = 0
         self._applied_size = px
 
     def _resize_markers(self) -> None:
