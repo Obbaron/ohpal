@@ -248,6 +248,16 @@ class MainWindow(QMainWindow):
 
     def _on_setup_required(self, payload) -> None:
         config, layers, columns, exists = payload
+        # (Re)building a DataStore via setup = a fresh start: drop any per-build
+        # UI state loaded from this cache dir (derived/removed columns, grid
+        # layout) and delete its file, so a stale layout isn't restored.
+        self.session.derivations = []
+        self.session.removed = []
+        self._pending_grid_state = None
+        if self._data_tab is not None:
+            self._data_tab.set_persisted_state(None)
+        if self._grid_cache_dir is not None:
+            uistate.clear(self._grid_cache_dir)
         self.backstage.set_loading(False)
         self.show_progress(False)
         self.backstage.set_datastore_config(config, layers, columns)

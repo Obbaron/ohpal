@@ -44,6 +44,14 @@ def load_state(cache_dir: Path) -> dict:
         return _empty()
 
 
+def clear(cache_dir: Path) -> None:
+    """Delete the per-build UI state (used when a build is rebuilt fresh)."""
+    try:
+        _path(Path(cache_dir)).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def save_state(
     cache_dir: Path,
     *,
