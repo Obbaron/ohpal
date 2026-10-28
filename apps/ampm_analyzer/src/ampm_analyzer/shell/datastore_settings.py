@@ -152,10 +152,10 @@ class DataStoreSettings(QWidget):
         self.thickness_spin.setRange(0.001, 5.0)
         self.thickness_spin.setSingleStep(0.005)
         self.thickness_spin.setValue(_DEFAULT_THICKNESS)
-        self.thickness_spin.setSuffix(" mm")
         self.thickness_spin.setFixedWidth(90)
         grid.addWidget(QLabel("Thickness"), 1, 0)
         grid.addWidget(self.thickness_spin, 1, 1)
+        grid.addWidget(QLabel("mm"), 1, 2)  # units outside the box
 
         grid.setColumnStretch(4, 1)  # keep everything left
         return box
