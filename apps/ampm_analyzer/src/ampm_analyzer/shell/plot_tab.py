@@ -88,9 +88,10 @@ class PlotTab(QWidget):
         self._rendered_once = False
         self._data_bounds = None  # (lo, hi) of the data, for framing the camera
 
-        # Decoration toggles (bbox + floor grid on by default for 3D).
+        # Decoration toggles. Grid on by default for both (2D gridlines / 3D
+        # floor); the bounding box is 3D-only.
         self._show_axes = True
-        self._show_grid = spec.is_3d
+        self._show_grid = True
         self._show_bbox = spec.is_3d
         self._show_legend = True
 
