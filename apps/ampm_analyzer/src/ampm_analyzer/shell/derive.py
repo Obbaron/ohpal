@@ -154,6 +154,9 @@ def _parse(text: str, columns, what: str):
     text = (text or "").strip()
     if not text:
         raise DeriveError(f"{what} is empty.")
+    # Multi-line formulas: treat line breaks as whitespace so a formula can be
+    # split across lines anywhere (not only inside parentheses).
+    text = text.replace("\r", " ").replace("\n", " ")
 
     known = set(columns)
 

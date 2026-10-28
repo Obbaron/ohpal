@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
 )
@@ -36,12 +37,18 @@ class DeriveColumnDialog(QDialog):
         self.name_edit.setPlaceholderText("new column name")
         form.addRow("Name", self.name_edit)
 
-        self.expr_edit = QLineEdit()
-        self.expr_edit.setPlaceholderText(
-            "e.g. cov([LaserVIEW (mean)])   or   [A] / [B]"
-        )
-        form.addRow("Formula", self.expr_edit)
         lay.addLayout(form)
+
+        # Multi-line formula box (supports long / nested formulas).
+        lay.addWidget(QLabel("Formula"))
+        self.expr_edit = QPlainTextEdit()
+        self.expr_edit.setPlaceholderText(
+            "e.g. cov([LaserVIEW (mean)])\n"
+            "     where([Z] > 0.5, \"high\", \"low\")\n"
+            "     mean([mp] where [side] == \"A\") by [part]"
+        )
+        self.expr_edit.setMinimumHeight(150)
+        lay.addWidget(self.expr_edit, 1)
 
         pick = QHBoxLayout()
         self.col_combo = QComboBox()
@@ -51,23 +58,6 @@ class DeriveColumnDialog(QDialog):
         pick.addWidget(self.col_combo, 1)
         pick.addWidget(insert)
         lay.addLayout(pick)
-
-        hint = QLabel(
-            "Reference columns in [brackets]. Operators: +  −  *  /  %  ** .\n"
-            "Element-wise: abs, sqrt, log, log10, exp, sin, cos.\n"
-            "Aggregate: mean, std, var, median, sum, min, max, count, "
-            "n_unique, first, last, cov (=std/mean).\n"
-            "Conditions: < <= > >= == != with and / or / not → a true/false "
-            "column (e.g. [Demand X] > 30 and [Demand Y] < 0).\n"
-            "where(cond, a, b) → a where cond is true, else b "
-            "(e.g. where([Z] > 0.5, \"high\", \"low\")).\n"
-            "Group an aggregate inline with by [cols]: "
-            "cov([mp]) by [part, layer] / cov([mp]) by [part].\n"
-            "Masked aggregate: mean([mp] where [side] == \"A\") by [part] "
-            "(reduces only the matching rows)."
-        )
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
 
         self.error = QLabel("")
         self.error.setWordWrap(True)
@@ -83,12 +73,12 @@ class DeriveColumnDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
 
-        self.resize(480, self.sizeHint().height())
+        self.resize(520, 360)
 
     def _insert_column(self) -> None:
         name = self.col_combo.currentText()
         if name:
-            self.expr_edit.insert(f"[{name}]")
+            self.expr_edit.insertPlainText(f"[{name}]")
             self.expr_edit.setFocus()
 
     def _accept(self) -> None:
@@ -100,7 +90,7 @@ class DeriveColumnDialog(QDialog):
             self._show_error(f"A column named {name!r} already exists.")
             return
         try:
-            compile_expr(self.expr_edit.text(), self._columns)
+            compile_expr(self.expr_edit.toPlainText(), self._columns)
         except DeriveError as exc:
             self._show_error(str(exc))
             return
@@ -112,4 +102,5 @@ class DeriveColumnDialog(QDialog):
 
     def result_values(self) -> tuple[str, str, str]:
         # group is always "" now — scope aggregates inline with `by [cols]`.
-        return (self.name_edit.text().strip(), self.expr_edit.text().strip(), "")
+        return (self.name_edit.text().strip(),
+                self.expr_edit.toPlainText().strip(), "")
