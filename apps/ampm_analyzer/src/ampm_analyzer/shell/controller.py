@@ -47,6 +47,7 @@ class AppController(QObject):
         self._busy = False
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
+        self._columns: list[str] | None = None  # selected load columns (None = all)
         self._base_df = None  # last raw grid query output, before shaping
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
@@ -98,6 +99,7 @@ class AppController(QObject):
             return
 
         self._config = config
+        self._columns = None  # default to all; the setup page's build may narrow it
         self.session.set_store(store, source_dir, build_root.name, thickness)
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
@@ -160,6 +162,8 @@ class AppController(QObject):
         # Part assignment (dhxml → part_id) per the chosen recipe, else config.
         method = (recipe or {}).get("part_method") or self._config.get("METHOD")
         self._apply_part_assignment(store, method)
+        # Restrict later queries to the columns the user kept (None = all).
+        self._columns = (recipe or {}).get("columns") or None
         if scope is None:
             layers = list(store.layers)
         else:
@@ -313,9 +317,21 @@ class AppController(QObject):
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)
 
+    def _query_columns(self, store) -> list[str] | None:
+        """Columns to request: the user's kept set, plus part_id when the
+        store has an active assignment (it's virtual, not in the kept set)."""
+        if self._columns is None:
+            return None
+        cols = list(self._columns)
+        if "part_id" in store.columns and "part_id" not in cols:
+            cols.append("part_id")
+        return cols
+
     def _start_query(self, store, layers: tuple[int, int]) -> None:
         thread = QThread(self)
-        worker = QueryWorker(store, layers, row_cap=None)  # virtualised grid: no cap
+        worker = QueryWorker(
+            store, layers, columns=self._query_columns(store), row_cap=None
+        )  # virtualised grid: no cap
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_query_finished)
