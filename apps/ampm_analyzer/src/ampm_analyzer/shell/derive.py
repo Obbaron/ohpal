@@ -30,6 +30,10 @@ _TOKEN_RE = re.compile(r"\[([^\[\]]+)\]")
 # Inline per-aggregate grouping: `mean([mp]) by [part, side]`. Rewritten to a
 # method call `.__over__('part', 'side')` so it binds to the preceding aggregate.
 _BY_RE = re.compile(r"\bby\s*\[([^\[\]]+)\]")
+# Masked value: `[x] where [cond]` -> __mask__([x], [cond]). The negative
+# lookahead keeps the where(cond, a, b) ternary (where immediately before "(")
+# separate from this infix mask.
+_WHERE_RE = re.compile(r"\bwhere\b(?!\s*\()")
 
 # Element-wise (per-row) functions.
 _ELEMENTWISE = ("abs", "sqrt", "log", "log10", "exp", "sin", "cos")
@@ -76,6 +80,67 @@ def _functions() -> dict[str, tuple[int, Any]]:
     return funcs
 
 
+def _apply_where(text: str) -> str:
+    """Rewrite each infix `VALUE where COND` to `__mask__(VALUE, COND)`.
+
+    VALUE is the bracketed/parenthesised primary just before `where`; COND runs
+    from after `where` to the enclosing `)`/`]`/`,` (bracket-depth aware). Applied
+    left-to-right so nested masks resolve on later passes.
+    """
+    for _ in range(100):  # bounded; each pass removes one `where`
+        m = _WHERE_RE.search(text)
+        if not m:
+            return text
+        i = m.start() - 1
+        while i >= 0 and text[i] == " ":
+            i -= 1
+        if i < 0:
+            raise DeriveError("'where' needs a value on its left.")
+        if text[i] in "])":
+            close, openc = text[i], ("[" if text[i] == "]" else "(")
+            depth, j = 0, i
+            while j >= 0:
+                if text[j] == close:
+                    depth += 1
+                elif text[j] == openc:
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j -= 1
+            if j < 0:
+                raise DeriveError("Unbalanced brackets before 'where'.")
+            left_start = j
+        else:
+            j = i
+            while j >= 0 and (text[j].isalnum() or text[j] in "._"):
+                j -= 1
+            left_start = j + 1
+        left = text[left_start:i + 1].strip()
+
+        k = m.end()
+        while k < len(text) and text[k] == " ":
+            k += 1
+        right_start, depth = k, 0
+        while k < len(text):
+            c = text[k]
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c == "," and depth == 0:
+                break
+            k += 1
+        right = text[right_start:k].strip()
+        if not left:
+            raise DeriveError("'where' needs a value on its left.")
+        if not right:
+            raise DeriveError("'where' needs a condition on its right.")
+        text = text[:left_start] + f"__mask__({left}, {right})" + text[k:]
+    raise DeriveError("Too many 'where' clauses.")
+
+
 # -- parsing ------------------------------------------------------------
 def _parse(text: str, columns, what: str):
     """Bracket-substitute, parse to an AST, return (tree, mapping)."""
@@ -84,6 +149,9 @@ def _parse(text: str, columns, what: str):
         raise DeriveError(f"{what} is empty.")
 
     known = set(columns)
+
+    # 0. Masked values `… where …` -> __mask__(value, cond) (before anything).
+    text = _apply_where(text)
 
     # 1. Inline grouping `… by [a, b]` -> `.__over__('a', 'b')` (validate names).
     def _by_sub(m: re.Match) -> str:
@@ -208,6 +276,12 @@ def _build_value(node, mapping, funcs, ctx=None):
             if not cols:
                 raise DeriveError("'by' needs at least one column.")
             return base.over(cols)
+        if isinstance(node.func, ast.Name) and node.func.id == "__mask__":
+            # `[x] where [cond]` -> keep x where cond, else null (so a reducer
+            # like mean()/std() aggregates only the masked rows).
+            val = _build_value(node.args[0], mapping, funcs, ctx)
+            cond = _build_value(node.args[1], mapping, funcs, ctx)
+            return pl.when(cond).then(val).otherwise(None)
         if not isinstance(node.func, ast.Name) or node.func.id not in funcs:
             raise DeriveError("Unknown function.")
         fname = node.func.id

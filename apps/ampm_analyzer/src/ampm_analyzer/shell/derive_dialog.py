@@ -70,7 +70,9 @@ class DeriveColumnDialog(QDialog):
             "where(cond, a, b) → a where cond is true, else b "
             "(e.g. where([Z] > 0.5, \"high\", \"low\")).\n"
             "Group an aggregate inline with by [cols] (overrides Group by): "
-            "cov([mp]) by [part, layer] / cov([mp]) by [part]."
+            "cov([mp]) by [part, layer] / cov([mp]) by [part].\n"
+            "Masked aggregate: mean([mp] where [side] == \"A\") by [part] "
+            "(reduces only the matching rows)."
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
