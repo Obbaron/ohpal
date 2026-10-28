@@ -28,6 +28,24 @@ _BG = "white"
 _AXIS_RGB = ((0.80, 0.12, 0.12, 1), (0.10, 0.55, 0.12, 1), (0.12, 0.30, 0.85, 1))
 
 
+def _nice_step(span: float, target: int = 10) -> float:
+    """A round grid step (1/2/5 × 10ⁿ) giving roughly `target` divisions."""
+    if span <= 0:
+        return 1.0
+    raw = span / target
+    mag = 10 ** np.floor(np.log10(raw))
+    norm = raw / mag
+    step = 1 if norm < 1.5 else 2 if norm < 3 else 5 if norm < 7 else 10
+    return step * mag
+
+
+def _grid_vals(a0: float, a1: float) -> np.ndarray:
+    """Grid-line positions on a nice step within [a0, a1]."""
+    step = _nice_step(a1 - a0)
+    start = np.ceil(a0 / step) * step
+    return np.arange(start, a1 + step * 0.5, step)
+
+
 def _placeholder(message: str) -> QWidget:
     frame = QFrame()
     frame.setStyleSheet("background:#f4f5f7;")
@@ -59,9 +77,9 @@ class PlotTab(QWidget):
         self.crange = None  # auto-detected on first render; sliders then tweak
         self._rendered_once = False
 
-        # Decoration toggles (bbox on by default for 3D).
+        # Decoration toggles (bbox + floor grid on by default for 3D).
         self._show_axes = True
-        self._show_grid = False
+        self._show_grid = spec.is_3d
         self._show_bbox = spec.is_3d
         self._show_legend = True
 
@@ -71,7 +89,8 @@ class PlotTab(QWidget):
         self._grid = None
         self._cbar_col = 2
         self._xaxis = self._yaxis = None
-        self._gridlines = None
+        self._gridlines = None  # 2D screen-aligned gridlines
+        self._floor = None      # 3D grid on the X-Y plane
         self._cbar = None
         self._bbox = None
         self._axis_labels: list = []
@@ -185,10 +204,11 @@ class PlotTab(QWidget):
     def _build_3d_axes(self, lo, hi) -> None:
         from vispy import scene
 
-        for old in [self._bbox, *self._axis_labels]:
+        for old in [self._bbox, self._floor, *self._axis_labels]:
             if old is not None:
                 old.parent = None
         self._axis_labels = []
+        self._floor = None
 
         x0, y0, z0 = (float(v) for v in lo)
         x1, y1, z1 = (float(v) for v in hi)
@@ -200,6 +220,7 @@ class PlotTab(QWidget):
         self._bbox = scene.visuals.Line(segs, connect="segments",
                                         color=(0, 0, 0, 0.30),
                                         parent=self._view.scene)
+        self._floor = self._build_floor(x0, x1, y0, y1, z0)
         labels = [
             (self.spec.x, ((x0 + x1) / 2, y0, z0)),
             (self.spec.y, (x0, (y0 + y1) / 2, z0)),
@@ -210,6 +231,25 @@ class PlotTab(QWidget):
                                    font_size=10, bold=True,
                                    parent=self._view.scene)
             self._axis_labels.append(t)
+
+    def _build_floor(self, x0, x1, y0, y1, z0):
+        """A grid on the X-Y plane at z=z0, at nice-stepped intervals."""
+        from vispy import scene
+
+        xs = _grid_vals(x0, x1)
+        ys = _grid_vals(y0, y1)
+        segs = []
+        for gx in xs:
+            segs += [(gx, y0, z0), (gx, y1, z0)]
+        for gy in ys:
+            segs += [(x0, gy, z0), (x1, gy, z0)]
+        if not segs:
+            return None
+        line = scene.visuals.Line(np.array(segs, dtype="float32"),
+                                  connect="segments", color=(0, 0, 0, 0.14),
+                                  parent=self._view.scene)
+        line.visible = self._show_grid
+        return line
 
     def _update_legend(self, data) -> None:
         leg = data.legend
@@ -244,6 +284,8 @@ class PlotTab(QWidget):
                 w.visible = self._show_axes
         if self._gridlines is not None:
             self._gridlines.visible = self._show_grid
+        if self._floor is not None:
+            self._floor.visible = self._show_grid
         if self._bbox is not None:
             self._bbox.visible = self._show_bbox
         for t in self._axis_labels:
