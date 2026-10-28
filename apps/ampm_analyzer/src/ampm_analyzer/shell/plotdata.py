@@ -74,6 +74,7 @@ class RenderData:
     n_total: int               # rows after null-drop, before decimation
     n_drawn: int               # rows actually in pos
     crange: tuple | None = None  # (lo, hi) used for numeric colour, for the sliders
+    full_range: tuple | None = None  # (min, max) of the colour column, for Min/Max
     rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
 
 
@@ -138,21 +139,28 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
     pos_cols = [take(_axis_array(sub, a)) for a in spec.axes]
     pos = np.column_stack(pos_cols).astype("float32")
 
-    colors, legend, eff_range = _colors(sub, spec, idx, take, len(pos),
-                                         cmap, scale, crange)
+    colors, legend, eff_range, full_range = _colors(
+        sub, spec, idx, take, len(pos), cmap, scale, crange)
     drawn = sub if idx is None else sub[idx]  # rows actually plotted, for hover
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
-                      n_total, len(pos), eff_range, rows=drawn)
+                      n_total, len(pos), eff_range, full_range, rows=drawn)
 
 
 def _colors(sub, spec, idx, take, n, cmap, scale, crange):
     if not spec.color:
         colors = np.tile(np.array(_SOLID, dtype="float32"), (n, 1))
-        return colors, None, None
+        return colors, None, None, None
 
     s = sub[spec.color]
     if s.dtype.is_numeric():
         vals = take(s.to_numpy().astype("float32"))
+        # Full extent in original units (before any log transform) — what the
+        # Min/Max sliders map their 0–100% against.
+        raw_ok = np.isfinite(vals)
+        full_range = (
+            (float(np.min(vals[raw_ok])), float(np.max(vals[raw_ok])))
+            if raw_ok.any() else None
+        )
         if scale == "log":  # map on log10 of positive values
             vals = np.where(vals > 0, np.log10(np.maximum(vals, 1e-12)), np.nan)
         finite = np.isfinite(vals)
@@ -181,7 +189,8 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
         rng = crange if crange is not None else (
             (10 ** lo, 10 ** hi) if scale == "log" else (lo, hi)
         )
-        return colors, ("colorbar", rng[0], rng[1], spec.color), (rng[0], rng[1])
+        return (colors, ("colorbar", rng[0], rng[1], spec.color),
+                (rng[0], rng[1]), full_range)
 
     # Categorical: stable codes -> palette, with a legend of the categories.
     import polars as pl
@@ -199,4 +208,4 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
         (str(v), tuple(pal[i % len(pal)]) + (1.0,))
         for i, v in enumerate(uniques)
     ]
-    return colors, legend, None
+    return colors, legend, None, None

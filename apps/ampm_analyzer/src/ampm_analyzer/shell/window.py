@@ -109,9 +109,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.panel = SidePanel()
         self.panel.closed.connect(self._close_panel)
-        self.panel.markerSizeChanged.connect(
-            lambda px: self._active_plot and self._active_plot.set_marker_size(px)
-        )
+        self._wire_panel_controls()
         self.panel.setVisible(False)  # hidden by default; opens when relevant
 
         content = QSplitter(Qt.Orientation.Horizontal)
@@ -350,6 +348,8 @@ class MainWindow(QMainWindow):
             return  # closed before the query returned
         tab.raw = raw_df
         tab.set_dataframe(self.controller.shape(raw_df))
+        if tab is self._active_plot:  # data just arrived — refresh Min/Max etc.
+            self.panel.sync_plot(tab.panel_state())
 
     def _reshape_plots(self) -> None:
         """Re-shape open plots from their raw span after a column change."""
@@ -368,13 +368,28 @@ class MainWindow(QMainWindow):
                 widget.release()
             widget.deleteLater()
 
+    def _wire_panel_controls(self) -> None:
+        """Route side-panel controls to whichever plot is active."""
+        p = self.panel
+
+        def to_plot(fn):
+            return lambda v: self._active_plot and fn(self._active_plot, v)
+
+        p.markerSizeChanged.connect(to_plot(lambda t, v: t.set_marker_size(v)))
+        p.markerSymbolChanged.connect(to_plot(lambda t, v: t.set_marker_symbol(v)))
+        p.opacityChanged.connect(to_plot(lambda t, v: t.set_opacity(v)))
+        p.colormapChanged.connect(to_plot(lambda t, v: t.set_colormap(v)))
+        p.scaleChanged.connect(to_plot(lambda t, v: t.set_scale(v)))
+        p.colorMinChanged.connect(to_plot(lambda t, v: t.set_color_min(v)))
+        p.colorMaxChanged.connect(to_plot(lambda t, v: t.set_color_max(v)))
+
     def _on_tab_changed(self, index: int) -> None:
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
         widget = self.stack.widget(index)
         self._active_plot = widget if widget in self._plot_tabs else None
         if self._active_plot is not None:
-            self.panel.set_marker_size_value(self._active_plot.marker_size())
+            self.panel.sync_plot(self._active_plot.panel_state())
         self._sync_toolbar(index)
 
     # -- status bar ----------------------------------------------------

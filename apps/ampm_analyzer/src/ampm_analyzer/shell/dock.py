@@ -39,7 +39,14 @@ def _slider(lo: int, hi: int, val: int) -> QSlider:
 
 class SidePanel(QWidget):
     closed = pyqtSignal()
-    markerSizeChanged = pyqtSignal(int)  # Size slider → active plot
+    # Plot-panel controls → active plot.
+    markerSizeChanged = pyqtSignal(int)
+    markerSymbolChanged = pyqtSignal(str)
+    opacityChanged = pyqtSignal(int)
+    colormapChanged = pyqtSignal(str)
+    scaleChanged = pyqtSignal(str)
+    colorMinChanged = pyqtSignal(int)
+    colorMaxChanged = pyqtSignal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -80,11 +87,29 @@ class SidePanel(QWidget):
         for page in self._pages.values():
             self.stack.addWidget(page)
 
-    def set_marker_size_value(self, px: int) -> None:
-        """Reflect a plot's size on the slider without re-emitting."""
-        self.size_slider.blockSignals(True)
-        self.size_slider.setValue(int(px))
-        self.size_slider.blockSignals(False)
+    def sync_plot(self, state: dict) -> None:
+        """Reflect an active plot's appearance on the controls (no re-emit)."""
+        def set_slider(sl, v):
+            sl.blockSignals(True)
+            sl.setValue(int(v))
+            sl.blockSignals(False)
+
+        def set_combo(cb, text):
+            cb.blockSignals(True)
+            i = cb.findText(str(text))
+            if i >= 0:
+                cb.setCurrentIndex(i)
+            cb.blockSignals(False)
+
+        set_slider(self.size_slider, state.get("size", 7))
+        set_slider(self.opacity_slider, state.get("opacity", 100))
+        set_combo(self.marker_combo, state.get("symbol", "disc"))
+        set_combo(self.map_combo, state.get("cmap", "turbo"))
+        set_combo(self.scale_combo, state.get("scale", "Linear"))
+        set_slider(self.min_slider, state.get("cmin", 0))
+        set_slider(self.max_slider, state.get("cmax", 100))
+        # Colour controls are meaningful only with a numeric colour column.
+        self.colour_box.setEnabled(bool(state.get("has_color", False)))
 
     def show_for(self, kind: str) -> None:
         page = self._pages.get(kind)
@@ -116,26 +141,37 @@ class SidePanel(QWidget):
 
         points = QGroupBox("Points")
         pf = QFormLayout(points)
-        marker = QComboBox()
-        marker.addItems(["disc", "square", "ring", "cross"])
-        pf.addRow("Marker", marker)
+        self.marker_combo = QComboBox()
+        self.marker_combo.addItems(["disc", "square", "ring", "cross"])
+        self.marker_combo.currentTextChanged.connect(self.markerSymbolChanged)
+        pf.addRow("Marker", self.marker_combo)
         self.size_slider = _slider(1, 20, 7)
         self.size_slider.valueChanged.connect(self.markerSizeChanged)
         pf.addRow("Size", self.size_slider)
-        pf.addRow("Opacity", _slider(0, 100, 90))
+        self.opacity_slider = _slider(0, 100, 100)
+        self.opacity_slider.valueChanged.connect(self.opacityChanged)
+        pf.addRow("Opacity", self.opacity_slider)
         lay.addWidget(points)
 
-        colour = QGroupBox("Colour")
-        cf = QFormLayout(colour)
-        cmap = QComboBox()
-        cmap.addItems(["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo"])
-        cf.addRow("Map", cmap)
-        scale = QComboBox()
-        scale.addItems(["Linear", "Log"])
-        cf.addRow("Scale", scale)
-        cf.addRow("Min", _slider(0, 100, 0))
-        cf.addRow("Max", _slider(0, 100, 100))
-        lay.addWidget(colour)
+        self.colour_box = QGroupBox("Colour")
+        cf = QFormLayout(self.colour_box)
+        self.map_combo = QComboBox()
+        self.map_combo.addItems(
+            ["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo"]
+        )
+        self.map_combo.currentTextChanged.connect(self.colormapChanged)
+        cf.addRow("Map", self.map_combo)
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems(["Linear", "Log"])
+        self.scale_combo.currentTextChanged.connect(self.scaleChanged)
+        cf.addRow("Scale", self.scale_combo)
+        self.min_slider = _slider(0, 100, 0)
+        self.min_slider.valueChanged.connect(self.colorMinChanged)
+        cf.addRow("Min", self.min_slider)
+        self.max_slider = _slider(0, 100, 100)
+        self.max_slider.valueChanged.connect(self.colorMaxChanged)
+        cf.addRow("Max", self.max_slider)
+        lay.addWidget(self.colour_box)
 
         selected = QGroupBox("Selected part")
         sf = QVBoxLayout(selected)

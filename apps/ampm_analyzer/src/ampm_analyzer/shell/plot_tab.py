@@ -129,6 +129,11 @@ class PlotTab(QWidget):
         self._last_pos = None                   # drawn positions (for re-sizing)
         self._last_colors = None
 
+        # Panel-driven appearance.
+        self._symbol = "disc"
+        self._opacity = 1.0                     # 0..1 multiplier on marker alpha
+        self._full_range: tuple | None = None   # colour column extent, for Min/Max
+
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._body = self._build_canvas()
@@ -225,6 +230,7 @@ class PlotTab(QWidget):
         first = not self._rendered_once
         self._rendered_once = True
         self._last_pos, self._last_colors = data.pos, data.colors
+        self._full_range = data.full_range
         self._set_scatter(self._effective_size())
         self._build_hover_index(data)
         self._update_decor(data)
@@ -398,8 +404,13 @@ class PlotTab(QWidget):
     def _set_scatter(self, px: float) -> None:
         if self._scatter is None or self._last_pos is None:
             return
-        self._scatter.set_data(self._last_pos, face_color=self._last_colors,
-                               size=px, edge_width=0, edge_color=None)
+        colors = self._last_colors
+        if self._opacity < 1.0 and colors is not None:
+            colors = colors.copy()
+            colors[:, 3] = colors[:, 3] * self._opacity
+        self._scatter.set_data(self._last_pos, face_color=colors,
+                               size=px, edge_width=0, edge_color=None,
+                               symbol=self._symbol)
         self._applied_size = px
 
     def _resize_markers(self) -> None:
@@ -419,6 +430,72 @@ class PlotTab(QWidget):
 
     def marker_size(self) -> int:
         return self._base_size
+
+    # -- panel-driven appearance ---------------------------------------
+    def set_marker_symbol(self, symbol: str) -> None:
+        self._symbol = symbol or "disc"
+        self._set_scatter(self._effective_size())
+
+    def set_opacity(self, pct: int) -> None:
+        self._opacity = max(0.0, min(1.0, pct / 100.0))
+        self._set_scatter(self._effective_size())
+
+    def set_colormap(self, name: str) -> None:
+        self.cmap = name
+        self._render()  # recompute colours + colourbar; keeps current crange
+
+    def set_scale(self, label: str) -> None:
+        self.scale = "log" if str(label).lower().startswith("log") else "linear"
+        self._render()
+
+    def _range_from_pct(self, p_lo: float, p_hi: float) -> tuple | None:
+        if not self._full_range:
+            return None
+        fmin, fmax = self._full_range
+        span = (fmax - fmin) or 1.0
+        lo = fmin + (p_lo / 100.0) * span
+        hi = fmin + (p_hi / 100.0) * span
+        if hi < lo:
+            lo, hi = hi, lo
+        return (lo, hi)
+
+    def set_color_min(self, pct: int) -> None:
+        if not self._full_range:
+            return
+        _, cur_hi = self.crange or self._full_range
+        fmin, fmax = self._full_range
+        p_hi = 100.0 * (cur_hi - fmin) / ((fmax - fmin) or 1.0)
+        self.crange = self._range_from_pct(pct, p_hi)
+        self._render()
+
+    def set_color_max(self, pct: int) -> None:
+        if not self._full_range:
+            return
+        cur_lo, _ = self.crange or self._full_range
+        fmin, fmax = self._full_range
+        p_lo = 100.0 * (cur_lo - fmin) / ((fmax - fmin) or 1.0)
+        self.crange = self._range_from_pct(p_lo, pct)
+        self._render()
+
+    def panel_state(self) -> dict:
+        """Current appearance, for syncing the side panel to this plot."""
+        has_color = self._full_range is not None
+        cmin = cmax = None
+        if has_color and self.crange is not None:
+            fmin, fmax = self._full_range
+            span = (fmax - fmin) or 1.0
+            cmin = int(round(100.0 * (self.crange[0] - fmin) / span))
+            cmax = int(round(100.0 * (self.crange[1] - fmin) / span))
+        return {
+            "size": self._base_size,
+            "symbol": self._symbol,
+            "opacity": int(round(self._opacity * 100)),
+            "cmap": self.cmap,
+            "scale": "Log" if self.scale == "log" else "Linear",
+            "has_color": has_color,
+            "cmin": cmin if cmin is not None else 0,
+            "cmax": cmax if cmax is not None else 100,
+        }
 
     def toggle_states(self) -> dict:
         return {
