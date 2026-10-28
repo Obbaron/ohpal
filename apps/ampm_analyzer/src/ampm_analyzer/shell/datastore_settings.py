@@ -17,18 +17,17 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -120,49 +119,33 @@ class DataStoreSettings(QWidget):
 
     def _scope_group(self) -> QGroupBox:
         box = QGroupBox("Layers")
-        v = QVBoxLayout(box)
+        grid = QGridLayout(box)
+        grid.setHorizontalSpacing(8)
 
-        self.scope_group = QButtonGroup(self)
-        self.radio_all = QRadioButton("All layers")
-        self.radio_all.setChecked(True)
-        self.radio_range = QRadioButton("Range")
-        self.scope_group.addButton(self.radio_all)
-        self.scope_group.addButton(self.radio_range)
-
-        # All layers / Range inline on one row.
-        rr = QHBoxLayout()
-        rr.addWidget(self.radio_all)
-        rr.addSpacing(18)
-        rr.addWidget(self.radio_range)
+        # Range — defaults to the full extent, so it effectively *is* all layers.
         self.layer_min = QSpinBox()
         self.layer_max = QSpinBox()
         for s in (self.layer_min, self.layer_max):
             s.setRange(1, 100_000)
-            s.setEnabled(False)
-            s.setFixedWidth(80)
-        rr.addWidget(self.layer_min)
-        rr.addWidget(QLabel("to"))
-        rr.addWidget(self.layer_max)
-        rr.addStretch(1)
-        v.addLayout(rr)
+            s.setFixedWidth(90)
+        grid.addWidget(QLabel("Range"), 0, 0)
+        grid.addWidget(self.layer_min, 0, 1)
+        grid.addWidget(QLabel("to"), 0, 2)
+        grid.addWidget(self.layer_max, 0, 3)
 
         # Thickness (mm) — autodetected into the value, editable (so a build
         # with nothing to detect from can still be given a thickness).
-        tr = QHBoxLayout()
-        tr.addWidget(QLabel("Thickness"))
         self.thickness_spin = QDoubleSpinBox()
         self.thickness_spin.setDecimals(3)
         self.thickness_spin.setRange(0.001, 5.0)
         self.thickness_spin.setSingleStep(0.005)
         self.thickness_spin.setValue(_DEFAULT_THICKNESS)
         self.thickness_spin.setSuffix(" mm")
-        self.thickness_spin.setFixedWidth(110)
-        tr.addWidget(self.thickness_spin)
-        tr.addStretch(1)
-        v.addLayout(tr)
+        self.thickness_spin.setFixedWidth(90)
+        grid.addWidget(QLabel("Thickness"), 1, 0)
+        grid.addWidget(self.thickness_spin, 1, 1)
 
-        self.radio_range.toggled.connect(self.layer_min.setEnabled)
-        self.radio_range.toggled.connect(self.layer_max.setEnabled)
+        grid.setColumnStretch(4, 1)  # keep everything left
         return box
 
     # -- state ---------------------------------------------------------
@@ -227,11 +210,10 @@ class DataStoreSettings(QWidget):
             self.status.setText("No DataStore for this build yet.")
             self.build_btn.setText("Build DataStore")
 
-    def scope(self) -> tuple[int, int] | None:
-        """Selected layer scope: None = all, else inclusive (lo, hi)."""
-        if self.radio_range.isChecked():
-            return (self.layer_min.value(), self.layer_max.value())
-        return None
+    def scope(self) -> tuple[int, int]:
+        """Selected layer range (inclusive); defaults to the full extent."""
+        lo, hi = self.layer_min.value(), self.layer_max.value()
+        return (lo, hi) if lo <= hi else (hi, lo)
 
     def thickness(self) -> float:
         """Layer thickness (mm) to build with."""
