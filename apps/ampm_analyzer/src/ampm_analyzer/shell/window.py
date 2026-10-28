@@ -147,6 +147,7 @@ class MainWindow(QMainWindow):
 
         self._data_tab: DataTab | None = None
         self._plot_tabs: list = []  # open plot tabs, re-fed the shared result
+        self._active_plot = None  # the plot tab the toolbar/panel controls drive
         self._pending_grid_state: bytes | None = None  # per-build column layout
         self._grid_cache_dir = None  # where to persist the layout
         self._last_columns: list[str] | None = None  # to rebuild toolbar on change
@@ -353,6 +354,8 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
+        widget = self.stack.widget(index)
+        self._active_plot = widget if widget in self._plot_tabs else None
         self._sync_toolbar(index)
 
     # -- status bar ----------------------------------------------------
@@ -491,11 +494,18 @@ class MainWindow(QMainWindow):
                 on_new_plot=lambda name=None: self._new_plot(name),
             )
         else:
+            p = self._active_plot
             toolbars.populate_plot(
                 self.toolbar,
                 color=color,
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
+                states=p.toggle_states() if p is not None else None,
+                on_reset_view=lambda: p and p.reset_view(),
+                on_axes=lambda v: p and p.set_axes_visible(v),
+                on_grid=lambda v: p and p.set_grid_visible(v),
+                on_bbox=lambda v: p and p.set_bbox_visible(v),
+                on_legend=lambda v: p and p.set_legend_visible(v),
             )
 
     def _on_layer_changed(self, layer: int) -> None:

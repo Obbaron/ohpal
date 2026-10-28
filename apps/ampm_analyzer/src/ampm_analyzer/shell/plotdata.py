@@ -46,6 +46,11 @@ _COLORMAPS = {
 COLORMAP_NAMES = tuple(_COLORMAPS)
 DEFAULT_COLORMAP = "BlueRed"
 _LUTS = {name: np.array(stops, dtype="float32") for name, stops in _COLORMAPS.items()}
+
+
+def colormap_stops(name: str) -> list:
+    """The RGB control points for a colormap (for building a VisPy Colormap)."""
+    return _COLORMAPS.get(name, _COLORMAPS[DEFAULT_COLORMAP])
 # Discrete palette for categorical colour (Okabe–Ito, colour-blind-safe).
 _CATEGORICAL = np.array(
     [

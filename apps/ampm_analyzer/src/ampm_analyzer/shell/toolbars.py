@@ -248,8 +248,18 @@ def populate_data(
 # -- Plot toolset ------------------------------------------------------
 def populate_plot(
     toolbar: QToolBar, *, color: str, sidebar_open: bool = False,
-    on_toggle_sidebar=None,
+    on_toggle_sidebar=None, states: dict | None = None,
+    on_reset_view=None, on_axes=None, on_grid=None, on_bbox=None, on_legend=None,
 ) -> None:
+    states = states or {}
+
+    def _toggle(text: str, icon: str, key: str, cb) -> QAction:
+        act = _action(toolbar, text, icon, color, checkable=True)
+        act.setChecked(bool(states.get(key)))
+        if cb is not None:
+            act.toggled.connect(cb)
+        return act
+
     # Panel toggle — same control as the Data toolbar.
     panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
     panel.setChecked(sidebar_open)
@@ -257,18 +267,18 @@ def populate_plot(
         panel.toggled.connect(on_toggle_sidebar)
     toolbar.addSeparator()
     # View
-    _action(toolbar, "Reset view", "reset_view", color)
+    reset = _action(toolbar, "Reset view", "reset_view", color)
+    if on_reset_view is not None:
+        reset.triggered.connect(lambda: on_reset_view())
     _combo(toolbar, "View", ["Iso", "Top", "Front", "Side"], width=80)
     _combo(toolbar, "Proj", ["Perspective", "Ortho"], width=110)
     toolbar.addSeparator()
-    # Scene toggles (display on/off). Legend joins the scene toggles; colour-by,
-    # colormap, scale and marker now live in the side panel. "Colour by" is a
-    # plot input (a data column) and belongs to plot generation, not here.
-    axes = _action(toolbar, "Axes", "axes", color, checkable=True)
-    axes.setChecked(True)
-    _action(toolbar, "Grid", "grid", color, checkable=True)
-    _action(toolbar, "BBox", "bbox", color, checkable=True)
-    _action(toolbar, "Legend", "legend", color, checkable=True)
+    # Scene toggles — drive the active plot's decorations.
+    _toggle("Axes", "axes", "axes", on_axes)
+    _toggle("Grid", "grid", "grid", on_grid)
+    bbox = _toggle("BBox", "bbox", "bbox", on_bbox)
+    bbox.setEnabled(bool(states.get("is_3d")))  # bbox is a 3D decoration
+    _toggle("Legend", "legend", "legend", on_legend)
     toolbar.addSeparator()
     # Select
     _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)

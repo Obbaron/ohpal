@@ -4,21 +4,28 @@ Holds a PlotSpec (which columns map to X/Y/Z/colour) and renders whatever
 dataframe it's handed. The window re-feeds it the shared result whenever the
 span or data changes; the tab never queries or assumes columns.
 
-VisPy is imported lazily and guarded: without VisPy (or an OpenGL context) the
-tab shows a labelled placeholder instead of crashing, so the shell runs anywhere.
-Render arrays are released on close.
+Decorations:
+  * 2D → ticked AxisWidgets (column names as titles) + optional gridlines.
+  * 3D → a wireframe bounding box + coloured axis-name labels at the box edges.
+  * numeric colour → a ColorBarWidget; the toolbar toggles show/hide each.
+
+VisPy is imported lazily and guarded: without it (or an OpenGL context) the tab
+shows a labelled placeholder. Render arrays are released on close.
 """
 
 from __future__ import annotations
 
+import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import plotdata
-from .plotdata import DEFAULT_COLORMAP
+from .plotdata import DEFAULT_COLORMAP, colormap_stops
 from .plotspec import PlotSpec
 
-_BG = "white"  # plot canvas background
+_BG = "white"
+# Axis label colours (x, y, z) for the 3D decorations.
+_AXIS_RGB = ((0.80, 0.12, 0.12, 1), (0.10, 0.55, 0.12, 1), (0.12, 0.30, 0.85, 1))
 
 
 def _placeholder(message: str) -> QWidget:
@@ -51,9 +58,22 @@ class PlotTab(QWidget):
         self.scale = "linear"
         self.crange = None  # auto-detected on first render; sliders then tweak
         self._rendered_once = False
+
+        # Decoration toggles (bbox on by default for 3D).
+        self._show_axes = True
+        self._show_grid = False
+        self._show_bbox = spec.is_3d
+        self._show_legend = True
+
         self._canvas = None
         self._view = None
         self._scatter = None
+        self._grid = None
+        self._xaxis = self._yaxis = None
+        self._gridlines = None
+        self._cbar = None
+        self._bbox = None
+        self._axis_labels: list = []
         self._status: QLabel | None = None
 
         self._lay = QVBoxLayout(self)
@@ -80,20 +100,38 @@ class PlotTab(QWidget):
                 f"(import error: {exc})"
             )
         try:
-            canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG,
-                                       show=False)
-            view = canvas.central_widget.add_view()
+            canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
+            grid = canvas.central_widget.add_grid(margin=6)
+            self._grid = grid
+            view = grid.add_view(row=0, col=1)
             if self.spec.is_3d:
                 view.camera = scene.cameras.TurntableCamera(fov=45)
-                scene.visuals.XYZAxis(parent=view.scene)
             else:
                 view.camera = scene.cameras.PanZoomCamera(aspect=None)
+                self._yaxis = scene.AxisWidget(
+                    orientation="left", axis_label=self.spec.y,
+                    axis_font_size=9, tick_label_margin=12,
+                )
+                self._yaxis.width_max = 62
+                grid.add_widget(self._yaxis, row=0, col=0)
+                self._xaxis = scene.AxisWidget(
+                    orientation="bottom", axis_label=self.spec.x,
+                    axis_font_size=9, tick_label_margin=12,
+                )
+                self._xaxis.height_max = 42
+                grid.add_widget(self._xaxis, row=1, col=1)
+                self._yaxis.link_view(view)
+                self._xaxis.link_view(view)
+                self._gridlines = scene.visuals.GridLines(
+                    color=(0, 0, 0, 0.12), parent=view.scene
+                )
+                self._gridlines.visible = self._show_grid
             self._scatter = scene.visuals.Markers()
             view.add(self._scatter)
             self._canvas, self._view = canvas, view
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
-            return _placeholder(f"Could not start the 3D canvas:\n{exc}")
+            return _placeholder(f"Could not start the canvas:\n{exc}")
 
     # -- data ----------------------------------------------------------
     def set_dataframe(self, df) -> None:
@@ -118,26 +156,128 @@ class PlotTab(QWidget):
             self._show_overlay("No rows to plot for this selection.")
             return
         self._clear_overlay()
-        # Auto-detect the colour range on the first render; sliders tweak after.
         if self.crange is None and data.crange is not None:
-            self.crange = data.crange
+            self.crange = data.crange  # auto-detect once; sliders tweak after
         first = not self._rendered_once
         self._rendered_once = True
         self._scatter.set_data(data.pos, face_color=data.colors, size=5,
                                edge_width=0)
+        self._update_decor(data)
+        self._apply_visibility()
         if self._view is not None and first:
             self._view.camera.set_range(margin=0.12)  # fit all data + buffer
+
+    # -- decorations ---------------------------------------------------
+    def _update_decor(self, data) -> None:
+        if self.spec.is_3d and data.n_drawn:
+            self._build_3d_axes(data.pos.min(axis=0), data.pos.max(axis=0))
+        self._update_legend(data)
+
+    def _build_3d_axes(self, lo, hi) -> None:
+        from vispy import scene
+
+        for old in [self._bbox, *self._axis_labels]:
+            if old is not None:
+                old.parent = None
+        self._axis_labels = []
+
+        x0, y0, z0 = (float(v) for v in lo)
+        x1, y1, z1 = (float(v) for v in hi)
+        c = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+             (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+        e = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+             (0, 4), (1, 5), (2, 6), (3, 7)]
+        segs = np.array([c[i] for pair in e for i in pair], dtype="float32")
+        self._bbox = scene.visuals.Line(segs, connect="segments",
+                                        color=(0, 0, 0, 0.30),
+                                        parent=self._view.scene)
+        labels = [
+            (self.spec.x, ((x0 + x1) / 2, y0, z0)),
+            (self.spec.y, (x0, (y0 + y1) / 2, z0)),
+            (self.spec.z, (x0, y0, (z0 + z1) / 2)),
+        ]
+        for i, (name, p) in enumerate(labels):
+            t = scene.visuals.Text(name, pos=p, color=_AXIS_RGB[i],
+                                   font_size=10, bold=True,
+                                   parent=self._view.scene)
+            self._axis_labels.append(t)
+
+    def _update_legend(self, data) -> None:
+        leg = data.legend
+        if isinstance(leg, tuple) and leg and leg[0] == "colorbar":
+            _, lo, hi, name = leg
+            self._set_colorbar(lo, hi, name)
+        elif self._cbar is not None:
+            self._cbar.visible = False  # categorical/none: no colourbar (yet)
+
+    def _set_colorbar(self, lo, hi, name) -> None:
+        from vispy import scene
+        from vispy.color import Colormap
+
+        cm = Colormap(colormap_stops(self.cmap))
+        if self._cbar is None:
+            self._cbar = scene.ColorBarWidget(
+                cmap=cm, orientation="right", label=str(name),
+                clim=(float(lo), float(hi)), border_width=1,
+                border_color="#888888",
+            )
+            self._cbar.width_max = 80
+            self._grid.add_widget(self._cbar, row=0, col=2)
+        else:
+            self._cbar.cmap = cm
+            self._cbar.clim = (float(lo), float(hi))
+            self._cbar.label.text = str(name)
+        self._cbar.visible = self._show_legend
+
+    def _apply_visibility(self) -> None:
+        for w in (self._xaxis, self._yaxis):
+            if w is not None:
+                w.visible = self._show_axes
+        if self._gridlines is not None:
+            self._gridlines.visible = self._show_grid
+        if self._bbox is not None:
+            self._bbox.visible = self._show_bbox
+        for t in self._axis_labels:
+            t.visible = self._show_axes
+        if self._cbar is not None:
+            self._cbar.visible = self._show_legend
+
+    # -- toolbar-driven controls ---------------------------------------
+    def set_axes_visible(self, on: bool) -> None:
+        self._show_axes = on
+        self._apply_visibility()
+
+    def set_grid_visible(self, on: bool) -> None:
+        self._show_grid = on
+        self._apply_visibility()
+
+    def set_bbox_visible(self, on: bool) -> None:
+        self._show_bbox = on
+        self._apply_visibility()
+
+    def set_legend_visible(self, on: bool) -> None:
+        self._show_legend = on
+        self._apply_visibility()
+
+    def reset_view(self) -> None:
+        if self._view is not None:
+            self._view.camera.set_range(margin=0.12)
+
+    def toggle_states(self) -> dict:
+        return {
+            "axes": self._show_axes, "grid": self._show_grid,
+            "bbox": self._show_bbox, "legend": self._show_legend,
+            "is_3d": self.spec.is_3d,
+        }
 
     # -- overlay (errors / empty) on top of the canvas -----------------
     def _show_overlay(self, text: str) -> None:
         if self._scatter is not None:
-            import numpy as np
-
             self._scatter.set_data(np.zeros((0, 3), "float32"))
         if self._status is None:
             self._status = QLabel(self)
             self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._status.setStyleSheet("color:#8b93a1; font-size:13px;")
+            self._status.setStyleSheet("color:#5a6472; font-size:13px;")
             self._status.setWordWrap(True)
             self._lay.addWidget(self._status)
         self._status.setText(text)
@@ -151,6 +291,7 @@ class PlotTab(QWidget):
     def release(self) -> None:
         """Free render arrays and close the canvas (called on tab close)."""
         self._df = None
+        self.raw = None
         self._scatter = None
         self._view = None
         if self._canvas is not None:
