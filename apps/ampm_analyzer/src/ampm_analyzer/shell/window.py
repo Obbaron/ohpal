@@ -109,6 +109,9 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.panel = SidePanel()
         self.panel.closed.connect(self._close_panel)
+        self.panel.markerSizeChanged.connect(
+            lambda px: self._active_plot and self._active_plot.set_marker_size(px)
+        )
         self.panel.setVisible(False)  # hidden by default; opens when relevant
 
         content = QSplitter(Qt.Orientation.Horizontal)
@@ -370,6 +373,8 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(index)
         widget = self.stack.widget(index)
         self._active_plot = widget if widget in self._plot_tabs else None
+        if self._active_plot is not None:
+            self.panel.set_marker_size_value(self._active_plot.marker_size())
         self._sync_toolbar(index)
 
     # -- status bar ----------------------------------------------------

@@ -23,9 +23,16 @@ from . import plotdata
 from .plotdata import DEFAULT_COLORMAP, colormap_stops
 from .plotspec import PlotSpec
 
-_BG = "white"
+_BG = "#e5ecf6"  # soft blue-grey (Plotly-style) so sparse points still read
 # Axis label colours (x, y, z) for the 3D decorations.
 _AXIS_RGB = ((0.80, 0.12, 0.12, 1), (0.10, 0.55, 0.12, 1), (0.12, 0.30, 0.85, 1))
+
+# Marker sizing. Base is the on-screen px at/below the fit zoom; when zoomed out
+# past the fit the size grows (×FIT→×MAX) so sparse struts fill in, easing back
+# to base as you zoom in. 2D only — 3D keeps a fixed size.
+_DEFAULT_MARKER_PX = 7
+_SIZE_FIT_MULT = 1.6
+_SIZE_MAX_MULT = 3.0
 
 
 def _nice_step(span: float, target: int = 10) -> float:
@@ -115,6 +122,13 @@ class PlotTab(QWidget):
         self._hover_rows = None
         self._tooltip: QLabel | None = None
 
+        # Marker sizing / zoom-adaptive state.
+        self._base_size = _DEFAULT_MARKER_PX   # slider-driven base px
+        self._applied_size: float | None = None  # last px set on the scatter
+        self._fit_width: float | None = None   # visible data width at fit (2D)
+        self._last_pos = None                   # drawn positions (for re-sizing)
+        self._last_colors = None
+
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._body = self._build_canvas()
@@ -178,6 +192,7 @@ class PlotTab(QWidget):
             view.add(self._scatter)
             self._canvas, self._view = canvas, view
             canvas.events.mouse_move.connect(self._on_mouse_move)
+            canvas.events.mouse_wheel.connect(self._on_wheel)
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
             return _placeholder(f"Could not start the canvas:\n{exc}")
@@ -209,8 +224,8 @@ class PlotTab(QWidget):
             self.crange = data.crange  # auto-detect once; sliders tweak after
         first = not self._rendered_once
         self._rendered_once = True
-        self._scatter.set_data(data.pos, face_color=data.colors, size=5,
-                               edge_width=0, edge_color=None)
+        self._last_pos, self._last_colors = data.pos, data.colors
+        self._set_scatter(self._effective_size())
         self._build_hover_index(data)
         self._update_decor(data)
         self._apply_visibility()
@@ -359,6 +374,51 @@ class PlotTab(QWidget):
         else:
             self._view.camera.set_range(x=(lo[0], hi[0]), y=(lo[1], hi[1]),
                                         margin=0.12)
+            # Record the fit width as the zoom-adaptive reference, then size.
+            try:
+                self._fit_width = float(self._view.camera.rect.width)
+            except Exception:  # noqa: BLE001
+                self._fit_width = None
+            self._resize_markers()
+
+    # -- marker sizing (zoom-adaptive, 2D) -----------------------------
+    def _effective_size(self) -> float:
+        """On-screen px for the markers: base, grown when zoomed out (2D)."""
+        if self.spec.is_3d or self._view is None or not self._fit_width:
+            return self._base_size
+        try:
+            w = float(self._view.camera.rect.width)
+        except Exception:  # noqa: BLE001
+            return self._base_size
+        if w <= 0:
+            return self._base_size
+        mult = min(_SIZE_MAX_MULT, max(1.0, _SIZE_FIT_MULT * w / self._fit_width))
+        return self._base_size * mult
+
+    def _set_scatter(self, px: float) -> None:
+        if self._scatter is None or self._last_pos is None:
+            return
+        self._scatter.set_data(self._last_pos, face_color=self._last_colors,
+                               size=px, edge_width=0, edge_color=None)
+        self._applied_size = px
+
+    def _resize_markers(self) -> None:
+        """Re-apply the adaptive size if the zoom changed it meaningfully."""
+        px = self._effective_size()
+        if self._applied_size is None or abs(px - self._applied_size) >= 0.5:
+            self._set_scatter(px)
+
+    def _on_wheel(self, event) -> None:
+        # Defer so the camera has applied the zoom before we read its rect.
+        QTimer.singleShot(0, self._resize_markers)
+
+    def set_marker_size(self, px: int) -> None:
+        """Set the base marker size (from the Size slider)."""
+        self._base_size = max(1, int(px))
+        self._set_scatter(self._effective_size())
+
+    def marker_size(self) -> int:
+        return self._base_size
 
     def toggle_states(self) -> dict:
         return {
@@ -409,6 +469,7 @@ class PlotTab(QWidget):
             return
         if getattr(event, "buttons", None):  # a drag (pan/zoom) — not a hover
             self._hide_tooltip()
+            self._resize_markers()  # right-drag zoom changes the scale
             return
         try:
             to_data = self._scatter.get_transform("canvas", "visual")
@@ -475,6 +536,7 @@ class PlotTab(QWidget):
         self._scatter = None
         self._view = None
         self._hover_tree = self._hover_rows = self._hover_xy = None
+        self._last_pos = self._last_colors = None
         self._hide_tooltip()
         if self._canvas is not None:
             try:

@@ -39,6 +39,7 @@ def _slider(lo: int, hi: int, val: int) -> QSlider:
 
 class SidePanel(QWidget):
     closed = pyqtSignal()
+    markerSizeChanged = pyqtSignal(int)  # Size slider → active plot
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,6 +80,12 @@ class SidePanel(QWidget):
         for page in self._pages.values():
             self.stack.addWidget(page)
 
+    def set_marker_size_value(self, px: int) -> None:
+        """Reflect a plot's size on the slider without re-emitting."""
+        self.size_slider.blockSignals(True)
+        self.size_slider.setValue(int(px))
+        self.size_slider.blockSignals(False)
+
     def show_for(self, kind: str) -> None:
         page = self._pages.get(kind)
         if page is not None:
@@ -112,7 +119,9 @@ class SidePanel(QWidget):
         marker = QComboBox()
         marker.addItems(["disc", "square", "ring", "cross"])
         pf.addRow("Marker", marker)
-        pf.addRow("Size", _slider(1, 20, 5))
+        self.size_slider = _slider(1, 20, 7)
+        self.size_slider.valueChanged.connect(self.markerSizeChanged)
+        pf.addRow("Size", self.size_slider)
         pf.addRow("Opacity", _slider(0, 100, 90))
         lay.addWidget(points)
 
