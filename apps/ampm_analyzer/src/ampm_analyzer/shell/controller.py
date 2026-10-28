@@ -99,6 +99,9 @@ class AppController(QObject):
 
         self._config = config
         self.session.set_store(store, source_dir, build_root.name, thickness)
+        # Apply the configured assignment so builds opened straight from cache
+        # (no setup page) still surface part_id; a later build overrides it.
+        self._apply_part_assignment(store, config.get("METHOD"))
 
         cached, _total = self._cache_status(store)
         exists = cached > 0
@@ -136,7 +139,10 @@ class AppController(QObject):
 
     # -- build the cache (from the setup page) -------------------------
     def build_datastore(
-        self, scope: tuple[int, int] | None, thickness: float | None = None
+        self,
+        scope: tuple[int, int] | None,
+        thickness: float | None = None,
+        recipe: dict | None = None,
     ) -> None:
         store = self.session.store
         if store is None or self._busy:
@@ -151,6 +157,9 @@ class AppController(QObject):
             store = self._construct_store(self.session.source_dir, thickness)
             self.session.store = store
             self.session.layer_thickness = thickness
+        # Part assignment (dhxml → part_id) per the chosen recipe, else config.
+        method = (recipe or {}).get("part_method") or self._config.get("METHOD")
+        self._apply_part_assignment(store, method)
         if scope is None:
             layers = list(store.layers)
         else:
@@ -193,6 +202,26 @@ class AppController(QObject):
         from ohpal.ampm import DataStore
 
         return DataStore(source_dir, layer_thickness=layer_thickness)
+
+    def _apply_part_assignment(self, store, method: str) -> None:
+        """Configure the store's part assignment for the chosen method.
+
+        Only ``dhxml`` is wired (bounding-box containment from the build's
+        .dhxml); every other method clears assignment. Failing to load the
+        dhxml is surfaced but non-fatal — the build proceeds without part_id.
+        """
+        if (method or "").lower() == "dhxml":
+            dhxml = (self._config or {}).get("DHXML")
+            if dhxml:
+                try:
+                    from ohpal.ampm.parts import BuildStartedDHXML
+
+                    table = BuildStartedDHXML.from_dhxml(dhxml).parts_table()
+                    store.set_part_assignment(table)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self.session.fail(f"Could not load DHXML parts: {exc}")
+        store.set_part_assignment(None)
 
     @staticmethod
     def _cache_status(store) -> tuple[int, int]:

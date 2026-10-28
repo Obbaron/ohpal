@@ -171,7 +171,9 @@ class DataStoreSettings(QWidget):
         # Columns to include — optional first, the locked always-required ones
         # grouped together at the bottom.
         self.columns_list.clear()
-        cols = columns or []
+        # part_id is assignment output (not a loadable source column) — never
+        # offer it in the load checklist even when assignment is already active.
+        cols = [c for c in (columns or []) if c != "part_id"]
         optional = [c for c in cols if c not in _ALWAYS]
         required = [c for c in cols if c in _ALWAYS]
         for name in optional + required:

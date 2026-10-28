@@ -98,6 +98,12 @@ class DataStore:
 
         self._source_files: dict[int, Path] = self._discover_source_files()
 
+        # Optional part assignment. When set, ``query`` attaches a ``part_id``
+        # column by bounding-box containment on (Demand X, Demand Y); see
+        # ``set_part_assignment``. Kept out of the Parquet cache so switching
+        # the assignment method never invalidates the raw per-layer cache.
+        self._parts_table: pl.DataFrame | None = None
+
     def _discover_source_files(self) -> dict[int, Path]:
         """Find all matching .txt files in source_dir and map layer -> path."""
         out: dict[int, Path] = {}
@@ -131,8 +137,25 @@ class DataStore:
 
     @property
     def columns(self) -> list[str]:
-        """Available data columns: the 17 source columns + 'layer' + 'Z'."""
-        return [*EXPECTED_COLUMNS, "layer", "Z"]
+        """Available data columns: the 17 source columns + 'layer' + 'Z'.
+
+        When a part assignment is active, ``part_id`` is appended — it is
+        computed per query rather than stored in the cache.
+        """
+        base = [*EXPECTED_COLUMNS, "layer", "Z"]
+        if self._parts_table is not None:
+            base.append("part_id")
+        return base
+
+    def set_part_assignment(self, parts_table: pl.DataFrame | None) -> None:
+        """Enable (or clear) a bounding-box part assignment.
+
+        ``parts_table`` is a one-row-per-part table with ``part_id`` and the
+        box corners (``x_min`` … ``y_max``), e.g. from
+        ``BuildStartedDHXML(...).parts_table()``. Pass ``None`` to disable.
+        Queries then gain a ``part_id`` column (null outside every box).
+        """
+        self._parts_table = parts_table
 
     def _needs_rebuild(self, layer: int) -> bool:
         """
@@ -284,6 +307,11 @@ class DataStore:
         paths = [str(self._cache_path(L)) for L in sorted(layer_set)]
         lf = pl.scan_parquet(paths, glob=False)
 
+        # ``part_id`` is virtual (computed post-collect), not a Parquet column.
+        want_part = self._parts_table is not None and (
+            columns is None or "part_id" in columns
+        )
+
         predicates: list[pl.Expr] = []
         if x_range is not None:
             lo, hi = x_range
@@ -293,7 +321,7 @@ class DataStore:
             predicates.append(pl.col("Demand Y").is_between(lo, hi))
         if filters:
             for col, (lo, hi) in filters.items():
-                if col not in self.columns:
+                if col not in self.columns or col == "part_id":
                     raise KeyError(f"Unknown column in filters: {col!r}")
                 predicates.append(pl.col(col).is_between(lo, hi))
 
@@ -310,9 +338,27 @@ class DataStore:
             keep = list(
                 dict.fromkeys([*columns, "layer", "Z"])
             )  # de-dupe, preserve order
-            lf = lf.select(keep)
+            # Scan the real columns only; part_id is attached after collect and
+            # needs the coordinates present even when the caller didn't ask for
+            # them.
+            scan = [c for c in keep if c != "part_id"]
+            if want_part:
+                scan = list(dict.fromkeys([*scan, "Demand X", "Demand Y"]))
+            lf = lf.select(scan)
 
-        return lf.collect()
+        df = lf.collect()
+
+        if want_part:
+            from ohpal.ampm.parts import assign_bounding_box_part
+
+            df = assign_bounding_box_part(
+                df, self._parts_table, noise_label=None, verbose=False
+            )
+            if columns is not None:
+                keep = list(dict.fromkeys([*columns, "layer", "Z"]))
+                df = df.select([c for c in keep if c in df.columns])
+
+        return df
 
     def _resolve_layers(
         self,

@@ -268,7 +268,9 @@ class MainWindow(QMainWindow):
 
     def _on_build_requested(self) -> None:
         form = self.backstage.ds_form
-        self.controller.build_datastore(form.scope(), form.thickness())
+        self.controller.build_datastore(
+            form.scope(), form.thickness(), form.recipe()
+        )
 
     def _on_cache_progress(self, done: int, total: int, layer: int) -> None:
         self._progress.setRange(0, total)
