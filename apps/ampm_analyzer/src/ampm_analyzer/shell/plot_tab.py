@@ -108,7 +108,9 @@ class PlotTab(QWidget):
     @property
     def span_label(self) -> str:
         mode, lo, hi = self.span
-        return "all layers" if mode == "all" else f"layers {lo}–{hi}"
+        if mode == "all":
+            return "all layers"
+        return f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
 
     def set_loading(self, text: str) -> None:
         self._show_overlay(text)

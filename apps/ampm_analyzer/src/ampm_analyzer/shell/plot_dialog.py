@@ -25,12 +25,17 @@ _NONE = "— none —"
 
 
 class NewPlotDialog(QDialog):
-    def __init__(self, kind: str, columns, layers=None, parent=None) -> None:
+    def __init__(self, kind: str, columns, layers=None, current_layer=None,
+                 parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"New {kind}")
         self._kind = kind
         self._columns = list(columns)
         self._layers = list(layers or [])
+        self._current = (
+            current_layer if current_layer is not None
+            else (self._layers[0] if self._layers else None)
+        )
         base = default_spec(kind, self._columns)
 
         lay = QVBoxLayout(self)
@@ -62,13 +67,21 @@ class NewPlotDialog(QDialog):
         lay.addLayout(form)
 
         # Layer span this plot queries — its own, independent of the grid.
+        # Default: the current layer for 2D (a top-down view overplots layers),
+        # all layers for 3D.
         span_row = QHBoxLayout()
+        cur_label = f"This layer ({self._current})" if self._current is not None \
+            else "This layer"
+        self.radio_single = QRadioButton(cur_label)
         self.radio_all = QRadioButton("All layers")
         self.radio_range = QRadioButton("Range")
-        self.radio_all.setChecked(True)
         grp = QButtonGroup(self)
-        grp.addButton(self.radio_all)
-        grp.addButton(self.radio_range)
+        for r in (self.radio_single, self.radio_all, self.radio_range):
+            grp.addButton(r)
+        if base.is_3d:
+            self.radio_all.setChecked(True)
+        else:
+            self.radio_single.setChecked(True)
         self.lo_spin = LayerSpinBox()
         self.hi_spin = LayerSpinBox()
         for sb in (self.lo_spin, self.hi_spin):
@@ -77,8 +90,9 @@ class NewPlotDialog(QDialog):
             self.lo_spin.set_layers(self._layers, self._layers[0])
             self.hi_spin.set_layers(self._layers, self._layers[-1])
         self._sync_range_enabled()
-        self.radio_all.toggled.connect(lambda _c: self._sync_range_enabled())
+        self.radio_range.toggled.connect(lambda _c: self._sync_range_enabled())
         span_row.addWidget(QLabel("Layers"))
+        span_row.addWidget(self.radio_single)
         span_row.addWidget(self.radio_all)
         span_row.addWidget(self.radio_range)
         span_row.addWidget(self.lo_spin)
@@ -118,7 +132,9 @@ class NewPlotDialog(QDialog):
         )
 
     def span(self) -> tuple:
-        """("all", None, None) or ("range", lo, hi)."""
+        """("single", L, L), ("all", None, None) or ("range", lo, hi)."""
+        if self.radio_single.isChecked():
+            return ("single", self._current, self._current)
         if self.radio_range.isChecked():
             return ("range", self.lo_spin.value(), self.hi_spin.value())
         return ("all", None, None)
