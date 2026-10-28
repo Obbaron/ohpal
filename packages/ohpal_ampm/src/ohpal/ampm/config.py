@@ -87,6 +87,7 @@ def load_config(build_dir: str | Path) -> dict:
     paths = _config.get("paths", {})
     stl = _resolve_optional(paths.get("stl"), build_dir)
     parts_csv = _resolve_optional(paths.get("parts_csv"), build_dir)
+    dhxml = _resolve_optional(paths.get("dhxml"), build_dir)
 
     layer_thickness = _config.get("build", {}).get("layer_thickness", 0.0)
 
@@ -120,6 +121,7 @@ def load_config(build_dir: str | Path) -> dict:
         "SOURCE": source,
         "STL": stl,
         "PARTS_CSV": parts_csv,
+        "DHXML": dhxml,
         "LAYER_THICKNESS": layer_thickness,
         "MASK_CACHE": str(Path(source) / ".cache" / "fullplate_mask.pkl"),
         "MASK_KEEP_CACHE": str(Path(source) / ".cache" / "mask_keep.pq"),
@@ -141,6 +143,7 @@ def create_or_load_config(
     source: str | Path | None = None,
     stl: str | Path | None = None,
     parts_csv: str | Path | None = None,
+    dhxml: str | Path | None = None,
 ) -> dict:
     """
     Load config.toml from the project root creating it first if absent.
@@ -156,6 +159,8 @@ def create_or_load_config(
         Override for the STL file.
     parts_csv : str, Path, or None
         Override for the QuantAM parts CSV.
+    dhxml : str, Path, or None
+        Override for the build's .dhxml layout export.
 
     Returns
     -------
@@ -173,6 +178,7 @@ def create_or_load_config(
             source=source,
             stl=stl,
             parts_csv=parts_csv,
+            dhxml=dhxml,
         )
 
     return load_config(build_dir)

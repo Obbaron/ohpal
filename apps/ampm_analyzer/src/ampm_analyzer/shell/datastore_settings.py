@@ -81,9 +81,11 @@ class DataStoreSettings(QWidget):
         box = QGroupBox("Build inputs (detected)")
         f = QFormLayout(box)
         self.lbl_source = _value_label(_MISSING)
+        self.lbl_dhxml = _value_label(_MISSING)
         self.lbl_stl = _value_label(_MISSING)
         self.lbl_csv = _value_label(_MISSING)
         f.addRow("Packet source", self.lbl_source)
+        f.addRow("DHXML", self.lbl_dhxml)
         f.addRow("STL", self.lbl_stl)
         f.addRow("Parts CSV", self.lbl_csv)
         return box
@@ -116,6 +118,16 @@ class DataStoreSettings(QWidget):
         self.chk_correction = QCheckBox("Apply correction")
         f.addRow("Correction", self.chk_correction)
         return box
+
+    def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
+        """Enable/disable one Part-assignment dropdown item (greys it out)."""
+        item = self.cmb_parts.model().item(index)
+        if item is not None:
+            item.setEnabled(enabled)
+
+    def _part_option_enabled(self, index: int) -> bool:
+        item = self.cmb_parts.model().item(index)
+        return bool(item is not None and item.isEnabled())
 
     def _scope_group(self) -> QGroupBox:
         box = QGroupBox("Layers")
@@ -171,6 +183,7 @@ class DataStoreSettings(QWidget):
             self.columns_list.addItem(item)
 
         self.lbl_source.setText(shown(config.get("SOURCE")))
+        self.lbl_dhxml.setText(shown(config.get("DHXML")))
         self.lbl_stl.setText(shown(config.get("STL")))
         self.lbl_csv.setText(shown(config.get("PARTS_CSV")))
         lt = config.get("LAYER_THICKNESS")
@@ -190,15 +203,23 @@ class DataStoreSettings(QWidget):
         self.chk_mask.setChecked(has_stl)
         self.chk_mask.setToolTip("" if has_stl else "No STL found to mask with")
 
-        self.cmb_parts.setEnabled(has_parts)
-        if has_parts:
+        # Part assignment: Direct/DBSCAN need the parts CSV; DHXML needs the
+        # dhxml. Gate each option on its own input and pick an available one.
+        has_dhxml = bool(config.get("DHXML"))
+        self._set_part_option_enabled(1, has_parts)   # Direct
+        self._set_part_option_enabled(2, has_dhxml)   # DHXML
+        self._set_part_option_enabled(3, has_parts)   # DBSCAN
+        self.cmb_parts.setEnabled(has_parts or has_dhxml)
+        if has_parts or has_dhxml:
             method = str(config.get("METHOD", "direct")).lower()
             index = {"direct": 1, "dhxml": 2, "dbscan": 3}.get(method, 1)
+            if not self._part_option_enabled(index):
+                index = 2 if has_dhxml else 1  # fall back to what's available
             self.cmb_parts.setCurrentIndex(index)
             self.cmb_parts.setToolTip("")
         else:
             self.cmb_parts.setCurrentIndex(0)  # None
-            self.cmb_parts.setToolTip("No parts CSV / DHXML found")
+            self.cmb_parts.setToolTip("No parts CSV or DHXML found")
 
         self.chk_correction.setChecked(bool(config.get("APPLY_CORRECTION")))
 
