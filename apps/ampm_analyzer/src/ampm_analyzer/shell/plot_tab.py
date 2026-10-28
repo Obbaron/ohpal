@@ -138,7 +138,8 @@ class PlotTab(QWidget):
                 self._cbar_col = 1
             else:
                 view = grid.add_view(row=0, col=1)
-                view.camera = scene.cameras.PanZoomCamera(aspect=None)
+                # aspect=1 → one X unit == one Y unit, so parts aren't skewed.
+                view.camera = scene.cameras.PanZoomCamera(aspect=1)
                 self._cbar_col = 2
                 self._yaxis = scene.AxisWidget(
                     orientation="left", axis_label=self.spec.y,
