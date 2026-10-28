@@ -189,6 +189,9 @@ class PlotTab(QWidget):
                 grid.add_widget(self._xaxis, row=1, col=1)
                 self._yaxis.link_view(view)
                 self._xaxis.link_view(view)
+                # Match the axis strips to the canvas so there's no white frame.
+                self._xaxis.bgcolor = _BG
+                self._yaxis.bgcolor = _BG
                 self._gridlines = scene.visuals.GridLines(
                     color=(0, 0, 0, 0.12), parent=view.scene
                 )
@@ -321,12 +324,15 @@ class PlotTab(QWidget):
 
         cm = Colormap(colormap_stops(self.cmap))
         if self._cbar is None:
+            # orientation="left": axis label sits to the LEFT of the bar, clim
+            # numbers at the ends — and nothing runs off the right edge.
             self._cbar = scene.ColorBarWidget(
-                cmap=cm, orientation="right", label=str(name),
+                cmap=cm, orientation="left", label=str(name),
                 clim=(float(lo), float(hi)), border_width=1,
                 border_color="#888888",
             )
-            self._cbar.width_max = 80
+            self._cbar.width_max = 105  # room for label + numbers, no clipping
+            self._cbar.bgcolor = _BG
             self._grid.add_widget(self._cbar, row=0, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
