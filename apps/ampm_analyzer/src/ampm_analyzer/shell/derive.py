@@ -27,6 +27,9 @@ import re
 from typing import Any
 
 _TOKEN_RE = re.compile(r"\[([^\[\]]+)\]")
+# Inline per-aggregate grouping: `mean([mp]) by [part, side]`. Rewritten to a
+# method call `.__over__('part', 'side')` so it binds to the preceding aggregate.
+_BY_RE = re.compile(r"\bby\s*\[([^\[\]]+)\]")
 
 # Element-wise (per-row) functions.
 _ELEMENTWISE = ("abs", "sqrt", "log", "log10", "exp", "sin", "cos")
@@ -81,6 +84,20 @@ def _parse(text: str, columns, what: str):
         raise DeriveError(f"{what} is empty.")
 
     known = set(columns)
+
+    # 1. Inline grouping `… by [a, b]` -> `.__over__('a', 'b')` (validate names).
+    def _by_sub(m: re.Match) -> str:
+        cols = [c.strip() for c in m.group(1).split(",")]
+        for c in cols:
+            if not c:
+                raise DeriveError("Empty column name in a 'by [...]' group.")
+            if c not in known:
+                raise DeriveError(f"Unknown column: {c!r}")
+        return ".__over__(" + ", ".join(repr(c) for c in cols) + ")"
+
+    text = _BY_RE.sub(_by_sub, text)
+
+    # 2. Value columns `[Name]` -> placeholder identifiers.
     mapping: dict[str, str] = {}  # placeholder identifier -> column name
 
     def _sub(m: re.Match) -> str:
@@ -168,6 +185,14 @@ def _build_value(node, mapping, funcs):
             return _build_value(node.operand, mapping, funcs)
         raise DeriveError("Unsupported unary operator.")
     if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "__over__":
+            # `expr by [a, b]` -> expr.over([a, b]) — per-aggregate grouping.
+            base = _build_value(node.func.value, mapping, funcs)
+            cols = [a.value for a in node.args
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+            if not cols:
+                raise DeriveError("'by' needs at least one column.")
+            return base.over(cols)
         if not isinstance(node.func, ast.Name) or node.func.id not in funcs:
             raise DeriveError("Unknown function.")
         arity, fn = funcs[node.func.id]
@@ -218,10 +243,13 @@ def compile_predicate(text: str, columns) -> Any:
 
 # -- application --------------------------------------------------------
 def _formula_expr(d, columns):
-    expr = compile_expr(d["expr"], columns)
+    text = d["expr"]
+    expr = compile_expr(text, columns)
     group = d.get("group")
-    if group and group in columns:
-        expr = expr.over(group)  # per-group, mapped back to rows
+    # The dropdown wraps the whole formula; skip it when the formula already
+    # scopes grouping per-aggregate with inline `by [...]`.
+    if group and group in columns and not _BY_RE.search(text or ""):
+        expr = expr.over(group)
     return expr
 
 

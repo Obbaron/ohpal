@@ -68,7 +68,9 @@ class DeriveColumnDialog(QDialog):
             "Conditions: < <= > >= == != with and / or / not → a true/false "
             "column (e.g. [Demand X] > 30 and [Demand Y] < 0).\n"
             "where(cond, a, b) → a where cond is true, else b "
-            "(e.g. where([Z] > 0.5, \"high\", \"low\"))."
+            "(e.g. where([Z] > 0.5, \"high\", \"low\")).\n"
+            "Group an aggregate inline with by [cols] (overrides Group by): "
+            "cov([mp]) by [part, layer] / cov([mp]) by [part]."
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
