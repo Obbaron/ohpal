@@ -48,7 +48,16 @@ class DeriveError(ValueError):
     """A formula/condition that can't be compiled (bad syntax, unknown column…)."""
 
 
+def _safe_div(num, den):
+    """num / den, but null (not inf/NaN) when the denominator is zero."""
+    import polars as pl
+
+    return pl.when(den == 0).then(None).otherwise(num / den)
+
+
 def _functions() -> dict[str, tuple[int, Any]]:
+    import polars as pl
+
     agg = {
         "mean": lambda a: a.mean(),
         "std": lambda a: a.std(),
@@ -61,7 +70,7 @@ def _functions() -> dict[str, tuple[int, Any]]:
         "n_unique": lambda a: a.n_unique(),
         "first": lambda a: a.first(),
         "last": lambda a: a.last(),
-        "cov": lambda a: a.std() / a.mean(),  # coefficient of variation
+        "cov": lambda a: _safe_div(a.std(), a.mean()),  # CoV (0 mean -> null)
     }
     elem = {
         "abs": lambda a: a.abs(),
@@ -74,8 +83,6 @@ def _functions() -> dict[str, tuple[int, Any]]:
     }
     funcs = {name: (1, fn) for name, fn in {**agg, **elem}.items()}
     # Multi-arg: where(cond, a, b) -> a where cond is true, else b.
-    import polars as pl
-
     funcs["where"] = (3, lambda c, a, b: pl.when(c).then(a).otherwise(b))
     return funcs
 
@@ -253,9 +260,9 @@ def _build_value(node, mapping, funcs, ctx=None):
         if isinstance(op, ast.Mult):
             return left * right
         if isinstance(op, ast.Div):
-            return left / right
+            return _safe_div(left, right)  # /0 -> null, not inf/NaN
         if isinstance(op, ast.Mod):
-            return left % right
+            return pl.when(right == 0).then(None).otherwise(left % right)
         if isinstance(op, ast.Pow):
             return left ** right
         raise DeriveError("Unsupported operator.")
