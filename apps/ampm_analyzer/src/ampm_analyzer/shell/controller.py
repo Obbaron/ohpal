@@ -251,6 +251,15 @@ class AppController(QObject):
         cached = sum(1 for L in store.layers if store._cache_path(L).exists())
         return cached, len(store.layers)
 
+    def current_config(self) -> dict:
+        return self._config
+
+    def cache_exists(self, store=None) -> bool:
+        store = store or self.session.store
+        if store is None:
+            return False
+        return self._cache_status(store)[0] > 0
+
     # -- prompts / state -----------------------------------------------
     def _confirm(self, text: str) -> bool:
         return (
@@ -415,10 +424,22 @@ class AppController(QObject):
     def filters(self) -> list[str]:
         return list(self._filter)
 
+    def set_filters(self, conditions, *, refresh: bool = False) -> None:
+        """Replace the whole filter list (used to restore persisted filters)."""
+        self._filter = [c for c in (conditions or []) if (c or "").strip()]
+        if refresh:
+            self.refresh_grid()
+
     def add_filter(self, condition: str) -> None:
         text = (condition or "").strip()
         if text:
             self._filter.append(text)
+            self.refresh_grid()
+
+    def edit_filter(self, index: int, condition: str) -> None:
+        text = (condition or "").strip()
+        if 0 <= index < len(self._filter) and text:
+            self._filter[index] = text
             self.refresh_grid()
 
     def remove_filter(self, index: int) -> None:

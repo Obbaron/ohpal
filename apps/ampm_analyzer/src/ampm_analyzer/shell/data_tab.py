@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QTableView,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -157,23 +158,42 @@ class DataTab(QWidget):
         bar.setVisible(False)
         return bar
 
-    def set_filters(self, conditions, shown, total, on_remove) -> None:
-        """Show active filter chips (✕ to remove) and the shown/total count."""
+    def set_filters(self, conditions, shown, total, on_remove, on_edit) -> None:
+        """Show active filter chips and the shown/total count.
+
+        Clicking a chip's label edits that condition; the ✕ removes it.
+        """
         while self._chips.count():
             item = self._chips.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
         for i, cond in enumerate(conditions):
-            label = cond if len(cond) <= 40 else cond[:37] + "…"
-            chip = QPushButton(f"{label}  ✕")
-            chip.setToolTip(cond)
-            chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.clicked.connect(lambda _c=False, idx=i: on_remove(idx))
-            self._chips.addWidget(chip)
+            self._chips.addWidget(self._make_chip(i, cond, on_remove, on_edit))
         if conditions:
             self._count.setText(f"{shown:,} of {total:,} rows")
         self._filter_bar.setVisible(bool(conditions))
+
+    def _make_chip(self, index, cond, on_remove, on_edit) -> QFrame:
+        chip = QFrame()
+        chip.setProperty("class", "FilterChip")
+        h = QHBoxLayout(chip)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        one_line = " ".join(cond.split())
+        label = one_line if len(one_line) <= 40 else one_line[:37] + "…"
+        edit = QPushButton(label)
+        edit.setToolTip(f"{cond}\n\nClick to edit")
+        edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit.clicked.connect(lambda _c=False, idx=index: on_edit(idx))
+        close = QToolButton()
+        close.setText("✕")
+        close.setToolTip("Remove this condition")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.clicked.connect(lambda _c=False, idx=index: on_remove(idx))
+        h.addWidget(edit)
+        h.addWidget(close)
+        return chip
 
     # -- model ---------------------------------------------------------
     @property

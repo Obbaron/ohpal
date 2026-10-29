@@ -25,7 +25,7 @@ def _path(cache_dir: Path) -> Path:
 
 
 def _empty() -> dict:
-    return {"grid_header": None, "derivations": [], "removed": []}
+    return {"grid_header": None, "derivations": [], "removed": [], "filters": []}
 
 
 def load_state(cache_dir: Path) -> dict:
@@ -39,6 +39,7 @@ def load_state(cache_dir: Path) -> dict:
             "grid_header": base64.b64decode(blob) if blob else None,
             "derivations": data.get("derivations") or [],
             "removed": data.get("removed") or [],
+            "filters": data.get("filters") or [],
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -58,6 +59,7 @@ def save_state(
     grid_header: bytes | None = None,
     derivations: list | None = None,
     removed: list | None = None,
+    filters: list | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
     try:
@@ -72,6 +74,7 @@ def save_state(
             ),
             "derivations": list(derivations or []),
             "removed": list(removed or []),
+            "filters": list(filters or []),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:

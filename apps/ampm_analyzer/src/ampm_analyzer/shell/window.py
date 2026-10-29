@@ -223,6 +223,7 @@ class MainWindow(QMainWindow):
             grid_header=header,
             derivations=self.session.derivations,
             removed=self.session.removed,
+            filters=self.controller.filters(),
         )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
@@ -238,6 +239,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
         self.backstage.refresh_recents()  # the just-loaded build is now recent
+        # Populate the DataStore setup form now, so it's ready if the user
+        # navigates back to it to rebuild — even when the build opened straight
+        # from cache (which skips the setup page on load).
+        self.backstage.set_datastore_config(
+            self.controller.current_config(), list(store.layers), list(store.columns)
+        )
+        self.backstage.set_datastore_exists(self.controller.cache_exists(store))
         # Restore this build's saved UI state. set_store has just cleared the
         # session's derivations/removed; put the saved ones back before the first
         # query, so the controller's pipeline applies them to the first result.
@@ -245,6 +253,7 @@ class MainWindow(QMainWindow):
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
         self.session.removed = list(state["removed"])
+        self.controller.set_filters(state["filters"])  # restore persisted filters
         self._pending_grid_state = state["grid_header"]
         if self._data_tab is not None:
             self._data_tab.set_persisted_state(self._pending_grid_state)
@@ -256,6 +265,7 @@ class MainWindow(QMainWindow):
         # layout) and delete its file, so a stale layout isn't restored.
         self.session.derivations = []
         self.session.removed = []
+        self.controller.set_filters([])
         self._pending_grid_state = None
         if self._data_tab is not None:
             self._data_tab.set_persisted_state(None)
@@ -271,6 +281,10 @@ class MainWindow(QMainWindow):
 
     def _on_build_requested(self) -> None:
         form = self.backstage.ds_form
+        # A (re)build can change the loaded column set, so force the next query
+        # to refresh the toolbar (Show/hide columns menu) rather than treating
+        # the columns as unchanged.
+        self._last_columns = None
         self.controller.build_datastore(
             form.scope(), form.thickness(), form.recipe()
         )
@@ -291,17 +305,18 @@ class MainWindow(QMainWindow):
         cols = list(result.df.columns)
         changed = cols != self._last_columns
         self._last_columns = cols
-        was_on_data = self.stack.currentWidget() is self._data_tab
         self._data_tab.set_dataframe(result.df)
         self._data_tab.set_filters(
             self.controller.filters(), result.shown_rows, result.total_rows,
-            lambda idx: self.controller.remove_filter(idx),
+            self._remove_filter_at, self._edit_filter_at,
         )
         self._select_widget(self._data_tab)
-        # If we were already on the Data tab the selection is a no-op, so a
-        # changed column set (e.g. a new derived column) needs an explicit
-        # toolbar rebuild to refresh the Show/hide list.
-        if changed and was_on_data:
+        # A changed column set (new derived column, or a rebuild with a
+        # different selection) needs the toolbar rebuilt so the Show/hide menu
+        # matches the grid. When the tab actually switched, the switch already
+        # rebuilt it with the fresh columns; this covers the no-switch case
+        # (and a harmless second rebuild otherwise).
+        if changed:
             self._sync_toolbar(self.tabbar.currentIndex())
         lo, hi = result.layers
         where = f"layer {lo}" if lo == hi else f"layers {lo}–{hi}"
@@ -537,8 +552,8 @@ class MainWindow(QMainWindow):
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
                 on_filter=self._on_filter,
-                on_remove_filter=self.controller.remove_last_filter,
-                on_reset_filter=self.controller.reset_filters,
+                on_remove_filter=self._on_remove_last_filter,
+                on_reset_filter=self._on_reset_filters,
                 on_new_plot=lambda name=None: self._new_plot(name),
             )
         else:
@@ -569,6 +584,32 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.controller.add_filter(dlg.condition())
+        self._save_ui()
+
+    def _edit_filter_at(self, index: int) -> None:
+        dt = self._data_tab
+        conditions = self.controller.filters()
+        if dt is None or not (0 <= index < len(conditions)):
+            return
+        from .filter_dialog import FilterConditionDialog
+
+        dlg = FilterConditionDialog(dt._columns, self, initial=conditions[index])
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.controller.edit_filter(index, dlg.condition())
+        self._save_ui()
+
+    def _remove_filter_at(self, index: int) -> None:
+        self.controller.remove_filter(index)
+        self._save_ui()
+
+    def _on_remove_last_filter(self) -> None:
+        self.controller.remove_last_filter()
+        self._save_ui()
+
+    def _on_reset_filters(self) -> None:
+        self.controller.reset_filters()
+        self._save_ui()
 
     def _add_derive_column(self) -> None:
         dt = self._data_tab

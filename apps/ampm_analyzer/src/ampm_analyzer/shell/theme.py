@@ -143,7 +143,10 @@ QHeaderView::section { background: palette(window); padding: 5px 8px; border: no
 
 /* --- Side panel --- */
 #FilterBar { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
-#FilterBar QPushButton { padding: 2px 8px; border-radius: 9px; font-size: 12px; }
+#FilterBar .FilterChip { background: palette(base); border: 1px solid palette(mid); border-radius: 9px; }
+#FilterBar .FilterChip QPushButton { border: none; background: transparent; padding: 2px 2px 2px 9px; font-size: 12px; }
+#FilterBar .FilterChip QToolButton { border: none; background: transparent; padding: 2px 8px 2px 3px; }
+#FilterBar .FilterChip QPushButton:hover, #FilterBar .FilterChip QToolButton:hover { color: palette(highlight); }
 
 #SidePanel { background: palette(base); border-left: 1px solid palette(mid); }
 #PanelHeader { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }

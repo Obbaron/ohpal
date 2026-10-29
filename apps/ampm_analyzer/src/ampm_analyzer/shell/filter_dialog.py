@@ -29,15 +29,18 @@ _Y = "Demand Y"
 
 
 class FilterConditionDialog(QDialog):
-    def __init__(self, columns, parent=None) -> None:
+    def __init__(self, columns, parent=None, *, initial: str = "") -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add filter condition")
+        self.setWindowTitle("Edit filter condition" if initial
+                            else "Add filter condition")
         self._columns = list(columns)
 
         lay = QVBoxLayout(self)
 
         lay.addWidget(QLabel("Condition (keeps rows where this is true)"))
         self.expr_edit = QPlainTextEdit()
+        if initial:
+            self.expr_edit.setPlainText(initial)
         self.expr_edit.setPlaceholderText(
             'e.g. [Demand X] >= -32 and [Demand X] <= -28\n'
             '     [MeltVIEW melt pool (mean)] >= 500\n'
