@@ -40,7 +40,7 @@ _AXIS_RGB = ((0.80, 0.12, 0.12, 1), (0.10, 0.55, 0.12, 1), (0.12, 0.30, 0.85, 1)
 # Marker sizing. Base is the on-screen px at/below the fit zoom; when zoomed out
 # past the fit the size grows (×FIT→×MAX) so sparse struts fill in, easing back
 # to base as you zoom in. 2D only — 3D keeps a fixed size.
-_DEFAULT_MARKER_PX = 7
+_DEFAULT_MARKER_PX = 3
 _SIZE_FIT_MULT = 1.6
 _SIZE_MAX_MULT = 3.0
 

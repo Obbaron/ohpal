@@ -193,7 +193,7 @@ class SidePanel(QWidget):
         self.marker_combo.addItems(["disc", "square", "ring", "cross"])
         self.marker_combo.currentTextChanged.connect(self.markerSymbolChanged)
         pf.addRow("Marker", self.marker_combo)
-        self.size_slider = _slider(1, 20, 7, " px")
+        self.size_slider = _slider(1, 20, 3, " px")
         self.size_slider.valueChanged.connect(self.markerSizeChanged)
         pf.addRow("Size", self.size_slider)
         self.opacity_slider = _slider(0, 100, 100, "%")
