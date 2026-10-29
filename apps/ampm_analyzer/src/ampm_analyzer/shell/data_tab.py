@@ -133,6 +133,11 @@ class DataTab(QWidget):
         self._persisted: bytes | None = None  # saved header blob for this build
         self._layout_done = False   # whether the layout has been applied once
         self._last_state: bytes | None = None  # most recent captured header blob
+        # Name-based layout snapshot, used when the column set changes (add /
+        # remove) — restoring a count-mismatched blob corrupts the header.
+        self._last_cols: list[str] = []
+        self._order_names: list[str] = []
+        self._hidden_names: set[str] = set()
 
     # -- filter chip bar -----------------------------------------------
     def _build_filter_bar(self) -> QFrame:
@@ -186,8 +191,11 @@ class DataTab(QWidget):
     def set_dataframe(self, df) -> None:
         """Show a Polars DataFrame; (re)apply the column layout."""
         first = not self._layout_done
+        new_cols = list(df.columns)
+        cols_changed = (not first) and (new_cols != self._last_cols)
         self.model.set_dataframe(df)
-        self._apply_layout(first)
+        self._apply_layout(first, cols_changed)
+        self._last_cols = new_cols
         # A column added mid-session (e.g. a new derived column, often off-screen
         # to the right) can leave the view's geometry stale and paint blank until
         # a reload. Force a re-layout + repaint so it shows immediately.
@@ -200,7 +208,7 @@ class DataTab(QWidget):
         self._persisted = state
         self._layout_done = False
 
-    def _apply_layout(self, first: bool) -> None:
+    def _apply_layout(self, first: bool, cols_changed: bool = False) -> None:
         self._applying = True
         try:
             header = self.table.horizontalHeader()
@@ -210,16 +218,47 @@ class DataTab(QWidget):
                     header.restoreState(QByteArray(self._persisted))
                 else:
                     self._apply_defaults()
+            elif cols_changed:
+                # Column added/removed: re-apply the user's order + hidden set
+                # BY NAME (new columns append, visible). Restoring the old blob
+                # here would corrupt the header — its section count is stale.
+                self._apply_named_layout()
             elif self._last_state is not None:
-                # Later populations (layer change, column add/remove): re-assert
-                # the CURRENT layout — which includes the user's mid-session
-                # hides/reorders — so a model reset can't drop them. (Restoring
-                # the load-time blob here would revert those changes.)
+                # Same columns (e.g. a layer change): re-assert the exact layout
+                # (order / hidden / widths) so a model reset can't drop it.
                 header.restoreState(QByteArray(self._last_state))
         finally:
             self._applying = False
+            self._capture_names()
             self._last_state = bytes(header.saveState())
             self._layout_done = True
+
+    def _capture_names(self) -> None:
+        """Snapshot the current visual order + hidden set, by column name."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        n = len(cols)
+        self._order_names = [
+            cols[header.logicalIndex(v)] for v in range(n)
+            if 0 <= header.logicalIndex(v) < n
+        ]
+        self._hidden_names = {
+            cols[i] for i in range(n) if header.isSectionHidden(i)
+        }
+
+    def _apply_named_layout(self) -> None:
+        """Reorder + hide by saved column names; new columns go last, visible."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        logical = {name: i for i, name in enumerate(cols)}
+        desired = [n for n in self._order_names if n in logical]
+        desired += [n for n in cols if n not in self._order_names]
+        for target_vis, name in enumerate(desired):
+            cur_vis = header.visualIndex(logical[name])
+            if cur_vis != target_vis:
+                header.moveSection(cur_vis, target_vis)
+        for name, i in logical.items():
+            header.setSectionHidden(i, name in self._hidden_names)
 
     def _apply_defaults(self) -> None:
         header = self.table.horizontalHeader()
@@ -238,6 +277,7 @@ class DataTab(QWidget):
     def _on_header_changed(self, *args) -> None:
         if self._applying:
             return
+        self._capture_names()  # keep the name snapshot current for column changes
         self._last_state = bytes(self.table.horizontalHeader().saveState())
         self.layoutChanged.emit()
 
