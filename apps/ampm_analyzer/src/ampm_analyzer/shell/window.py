@@ -293,6 +293,10 @@ class MainWindow(QMainWindow):
         self._last_columns = cols
         was_on_data = self.stack.currentWidget() is self._data_tab
         self._data_tab.set_dataframe(result.df)
+        self._data_tab.set_filters(
+            self.controller.filters(), result.shown_rows, result.total_rows,
+            lambda idx: self.controller.remove_filter(idx),
+        )
         self._select_widget(self._data_tab)
         # If we were already on the Data tab the selection is a no-op, so a
         # changed column set (e.g. a new derived column) needs an explicit
@@ -336,6 +340,7 @@ class MainWindow(QMainWindow):
         span = dlg.span()  # ("all", None, None) or ("range", lo, hi)
         self._ensure_data_tab()
         tab = PlotTab(spec, span=span)
+        tab.row_filter = self.controller.filters()  # snapshot the active filter
         self._plot_tabs.append(tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
@@ -347,15 +352,21 @@ class MainWindow(QMainWindow):
         if tab not in self._plot_tabs:
             return  # closed before the query returned
         tab.raw = raw_df
-        tab.set_dataframe(self.controller.shape(raw_df))
+        tab.set_dataframe(self.controller.shape_filtered(raw_df, tab.row_filter))
         if tab is self._active_plot:  # data just arrived — refresh Min/Max etc.
             self.panel.sync_plot(tab.panel_state())
 
     def _reshape_plots(self) -> None:
-        """Re-shape open plots from their raw span after a column change."""
+        """Re-shape open plots from their raw span after a column change.
+
+        Column shaping propagates live; each plot keeps its own snapshotted
+        row filter (captured at creation), so filtered plots stay filtered.
+        """
         for tab in self._plot_tabs:
             if getattr(tab, "raw", None) is not None:
-                tab.set_dataframe(self.controller.shape(tab.raw))
+                tab.set_dataframe(
+                    self.controller.shape_filtered(tab.raw, tab.row_filter)
+                )
 
     def _close_tab(self, index: int) -> None:
         widget = self.stack.widget(index)
@@ -525,6 +536,9 @@ class MainWindow(QMainWindow):
                 on_add_label=self._add_group_label,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
+                on_filter=self._on_filter,
+                on_remove_filter=self.controller.remove_last_filter,
+                on_reset_filter=self.controller.reset_filters,
                 on_new_plot=lambda name=None: self._new_plot(name),
             )
         else:
@@ -544,6 +558,17 @@ class MainWindow(QMainWindow):
 
     def _on_layer_changed(self, layer: int) -> None:
         self.controller.show_layer(layer)
+
+    def _on_filter(self) -> None:
+        dt = self._data_tab
+        if dt is None:
+            return
+        from .filter_dialog import FilterConditionDialog
+
+        dlg = FilterConditionDialog(dt._columns, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.controller.add_filter(dlg.condition())
 
     def _add_derive_column(self) -> None:
         dt = self._data_tab

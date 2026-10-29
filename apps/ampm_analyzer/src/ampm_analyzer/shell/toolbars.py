@@ -163,6 +163,9 @@ def populate_data(
     on_add_label=None,
     on_remove_column=None,
     on_restore_column=None,
+    on_filter=None,
+    on_remove_filter=None,
+    on_reset_filter=None,
     on_new_plot=None,
 ) -> None:
     columns = columns or []
@@ -228,9 +231,15 @@ def populate_data(
     # Filters (query-time; on top of the cache). Mask / assign-parts /
     # correction are not here — they're defined with the DataStore in the
     # backstage setup page.
-    _action(toolbar, "Filter", "filter", color)
-    _action(toolbar, "Remove filter", "remove_filter", color)
-    _action(toolbar, "Reset filters", "reset_filter", color)
+    flt = _action(toolbar, "Filter", "filter", color)
+    if on_filter is not None:
+        flt.triggered.connect(lambda: on_filter())
+    rmf = _action(toolbar, "Remove filter", "remove_filter", color)
+    if on_remove_filter is not None:
+        rmf.triggered.connect(lambda: on_remove_filter())
+    rsf = _action(toolbar, "Reset filters", "reset_filter", color)
+    if on_reset_filter is not None:
+        rsf.triggered.connect(lambda: on_reset_filter())
     toolbar.addSeparator()
 
     # New plot — dropdown of plot types (icon per type).

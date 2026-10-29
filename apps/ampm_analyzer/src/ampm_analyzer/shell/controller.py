@@ -49,6 +49,7 @@ class AppController(QObject):
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
         self._columns: list[str] | None = None  # selected load columns (None = all)
+        self._filter: list[str] = []  # active row-filter conditions (grid-live)
         self._base_df = None  # last raw grid query output, before shaping
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
@@ -113,6 +114,7 @@ class AppController(QObject):
 
         self._config = config
         self._columns = None  # default to all; the setup page's build may narrow it
+        self._filter = []     # a fresh build starts unfiltered
         # Record this build in the recents list (before set_store so the
         # backstage refresh triggered by the load already sees it).
         cached_now, _ = self._cache_status(store)
@@ -390,16 +392,59 @@ class AppController(QObject):
     def _deliver_grid(self, result) -> None:
         self.session.current_layer = result.layers[0]
         self._base_df = result.df  # keep the raw output for re-shaping
-        shaped = self._shape(result.df)
+        self._publish_grid(result.layers)
+
+    def _publish_grid(self, layers) -> None:
+        """Shape + filter the current base frame and push it to the grid."""
+        if self._base_df is None:
+            return
+        shaped = self._shape(self._base_df)
+        display = derive.filter_rows(shaped, self._filter)
         self.session.set_result(
-            QueryResult(shaped, result.total_rows, result.shown_rows, result.layers)
+            QueryResult(display, shaped.height, display.height, layers)
         )
+
+    def refresh_grid(self) -> None:
+        """Re-shape + re-filter the current grid in place (no re-query)."""
+        if self._base_df is None:
+            return
+        L = self.session.current_layer
+        self._publish_grid((L, L))
+
+    # -- row filter (grid-live; plots snapshot it at creation) ---------
+    def filters(self) -> list[str]:
+        return list(self._filter)
+
+    def add_filter(self, condition: str) -> None:
+        text = (condition or "").strip()
+        if text:
+            self._filter.append(text)
+            self.refresh_grid()
+
+    def remove_filter(self, index: int) -> None:
+        if 0 <= index < len(self._filter):
+            self._filter.pop(index)
+            self.refresh_grid()
+
+    def remove_last_filter(self) -> None:
+        if self._filter:
+            self._filter.pop()
+            self.refresh_grid()
+
+    def reset_filters(self) -> None:
+        if self._filter:
+            self._filter = []
+            self.refresh_grid()
 
     # -- column shaping (derive, then drop removed) --------------------
     def shape(self, df):
         """Apply the derived + removed-column pipeline to any frame. Public so a
         plot can re-shape its own span without re-querying."""
         return self._shape(df)
+
+    def shape_filtered(self, df, conditions):
+        """Shape, then apply a plot's snapshotted row filter (after derivation)."""
+        return derive.filter_rows(self._shape(df), conditions or [])
 
     def _shape(self, df):
         if self.session.derivations:
@@ -490,11 +535,7 @@ class AppController(QObject):
     def _refresh_derived(self) -> None:
         if self._base_df is None or self.session.result is None:
             return
-        r = self.session.result
-        shaped = self._shape(self._base_df)
-        self.session.set_result(
-            QueryResult(shaped, r.total_rows, r.shown_rows, r.layers)
-        )
+        self._publish_grid(self.session.result.layers)
 
     def _on_cache_finished(self, store) -> None:
         # Cache built — now show the first layer in the grid.

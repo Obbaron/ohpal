@@ -198,6 +198,7 @@ class PlotTab(QWidget):
         self.spec = spec
         self.span = span or ("all", None, None)
         self.title = title or f"{spec.kind} {PlotTab._counter}"
+        self.row_filter: list[str] = []  # snapshot of the data filter at creation
 
         self._df = None
         self.raw = None  # the plot's own raw span query (for re-shaping)

@@ -394,6 +394,36 @@ def _label_expr(d, columns):
     return default if when is None else when.otherwise(default)
 
 
+def filter_rows(df, conditions):
+    """Return ``df`` keeping only rows that satisfy every condition (AND).
+
+    Each condition is a boolean predicate string in the same DSL as derived
+    columns. A condition that no longer compiles/evaluates against this frame
+    (e.g. it references a column not present) is skipped, not raised.
+    """
+    if not conditions:
+        return df
+    import polars as pl  # noqa: F401 (kept parallel with the rest of the module)
+
+    names = df.columns
+    combined = None
+    for cond in conditions:
+        text = (cond or "").strip()
+        if not text:
+            continue
+        try:
+            pred = compile_predicate(text, names)
+        except Exception:  # noqa: BLE001 — skip a condition this frame can't honour
+            continue
+        combined = pred if combined is None else (combined & pred)
+    if combined is None:
+        return df
+    try:
+        return df.filter(combined)
+    except Exception:  # noqa: BLE001
+        return df
+
+
 def apply(df, derivations):
     """Return ``df`` with each derivation added as a column.
 

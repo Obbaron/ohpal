@@ -15,7 +15,11 @@ from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
+    QPushButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -99,6 +103,10 @@ class DataTab(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._filter_bar = self._build_filter_bar()
+        lay.addWidget(self._filter_bar)
 
         self.model = DataFrameModel(self)
         self.table = QTableView()
@@ -125,6 +133,42 @@ class DataTab(QWidget):
         self._persisted: bytes | None = None  # saved header blob for this build
         self._layout_done = False   # whether the layout has been applied once
         self._last_state: bytes | None = None  # most recent captured header blob
+
+    # -- filter chip bar -----------------------------------------------
+    def _build_filter_bar(self) -> QFrame:
+        bar = QFrame()
+        bar.setObjectName("FilterBar")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 4, 10, 4)
+        h.setSpacing(6)
+        h.addWidget(QLabel("Filter:"))
+        self._chips = QHBoxLayout()
+        self._chips.setSpacing(6)
+        h.addLayout(self._chips)
+        h.addStretch(1)
+        self._count = QLabel("")
+        self._count.setProperty("class", "PanelHeading")
+        h.addWidget(self._count)
+        bar.setVisible(False)
+        return bar
+
+    def set_filters(self, conditions, shown, total, on_remove) -> None:
+        """Show active filter chips (✕ to remove) and the shown/total count."""
+        while self._chips.count():
+            item = self._chips.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for i, cond in enumerate(conditions):
+            label = cond if len(cond) <= 40 else cond[:37] + "…"
+            chip = QPushButton(f"{label}  ✕")
+            chip.setToolTip(cond)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.clicked.connect(lambda _c=False, idx=i: on_remove(idx))
+            self._chips.addWidget(chip)
+        if conditions:
+            self._count.setText(f"{shown:,} of {total:,} rows")
+        self._filter_bar.setVisible(bool(conditions))
 
     # -- model ---------------------------------------------------------
     @property

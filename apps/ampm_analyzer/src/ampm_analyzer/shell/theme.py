@@ -142,6 +142,9 @@ QTableView { background: palette(base); gridline-color: palette(mid); selection-
 QHeaderView::section { background: palette(window); padding: 5px 8px; border: none; border-right: 1px solid palette(mid); border-bottom: 1px solid palette(mid); color: palette(placeholder-text); font-weight: 600; }
 
 /* --- Side panel --- */
+#FilterBar { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
+#FilterBar QPushButton { padding: 2px 8px; border-radius: 9px; font-size: 12px; }
+
 #SidePanel { background: palette(base); border-left: 1px solid palette(mid); }
 #PanelHeader { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
 #DockBody { background: palette(base); }
