@@ -205,7 +205,7 @@ class SidePanel(QWidget):
         cf = QFormLayout(self.colour_box)
         self.map_combo = QComboBox()
         self.map_combo.addItems(
-            ["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo"]
+            ["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo", "turbo_r"]
         )
         self.map_combo.currentTextChanged.connect(self.colormapChanged)
         cf.addRow("Map", self.map_combo)

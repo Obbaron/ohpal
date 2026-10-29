@@ -335,12 +335,12 @@ class MainWindow(QMainWindow):
         self.log_bus.log_line(message)  # full traceback to the log
 
     def _new_plot(self, kind: str | None = None) -> None:
-        from .plotspec import SCATTER_KINDS
+        from .plotspec import PLOT_KINDS
 
         if self.session.result is None:
             self.set_status("Load a build before plotting.")
             return
-        if kind not in SCATTER_KINDS:
+        if kind not in PLOT_KINDS:
             self.set_status(f"{kind}: not wired yet.")
             return
         from .plot_dialog import NewPlotDialog

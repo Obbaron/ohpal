@@ -228,6 +228,11 @@ class PlotTab(QWidget):
         self._axis_labels: list = []
         self._status: QLabel | None = None
 
+        # Bar plot visuals (a quad mesh + per-bar category labels).
+        self._bars = None
+        self._bar_labels: list = []
+        self._bar_data = None
+
         # Hover tooltip (2D only): a KDTree over the drawn points + the rows
         # behind them, and a floating label shown near the cursor.
         self._hover_tree = None
@@ -331,6 +336,9 @@ class PlotTab(QWidget):
     def _render(self) -> None:
         if self._df is None or self._scatter is None:
             return
+        if self.spec.is_bar or self.spec.is_hist:
+            self._render_bars()
+            return
         try:
             data = plotdata.build(self._df, self.spec, cmap=self.cmap,
                                   scale=self.scale, crange=self.crange)
@@ -359,6 +367,113 @@ class PlotTab(QWidget):
             # Defer the fit so the grid (incl. the just-added colourbar) has
             # settled and the view has its real size before framing.
             QTimer.singleShot(0, self.reset_view)
+
+    # -- bar rendering -------------------------------------------------
+    def _render_bars(self) -> None:
+        from vispy import scene
+
+        builder = plotdata.build_histogram if self.spec.is_hist else plotdata.build_bars
+        try:
+            data = builder(self._df, self.spec, cmap=self.cmap,
+                           scale=self.scale, crange=self.crange)
+        except KeyError as exc:
+            self._show_overlay(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._show_overlay(f"Could not plot: {exc}")
+            return
+        if data.n == 0:
+            self._show_overlay("Nothing to plot for this selection.")
+            return
+        self._clear_overlay()
+        if self._scatter is not None:
+            self._scatter.visible = False  # bars take over the 2D view
+        if self.crange is None:
+            self.crange = data.crange
+        self._full_range = data.full_range
+        self._bar_data = data
+
+        n = data.n
+        w = data.width or 0.8
+        heights = np.where(np.isfinite(data.heights), data.heights, 0.0)
+        verts = np.empty((4 * n, 3), "float32")
+        faces = np.empty((2 * n, 3), "uint32")
+        vcol = np.empty((4 * n, 4), "float32")
+        for i in range(n):
+            h = float(heights[i])
+            c = float(data.centers[i])
+            x0, x1 = c - w / 2, c + w / 2
+            b = 4 * i
+            verts[b:b + 4] = [[x0, 0, 0], [x1, 0, 0], [x1, h, 0], [x0, h, 0]]
+            faces[2 * i:2 * i + 2] = [[b, b + 1, b + 2], [b, b + 2, b + 3]]
+            vcol[b:b + 4] = data.colors[i]
+        if self._bars is None:
+            self._bars = scene.visuals.Mesh(
+                vertices=verts, faces=faces, vertex_colors=vcol,
+                parent=self._view.scene)
+        else:
+            self._bars.set_data(vertices=verts, faces=faces, vertex_colors=vcol)
+
+        for t in self._bar_labels:
+            t.parent = None
+        self._bar_labels = []
+        hvals = data.heights[np.isfinite(data.heights)]
+        ymin = min(0.0, float(hvals.min()) if hvals.size else 0.0)
+        ymax = max(0.0, float(hvals.max()) if hvals.size else 1.0)
+        if data.categorical and data.labels:  # category text under each bar
+            for i, label in enumerate(data.labels):
+                t = scene.visuals.Text(
+                    label, pos=(float(data.centers[i]), ymin), color=_AXIS_TEXT,
+                    anchor_x="center", anchor_y="top", font_size=9,
+                    parent=self._view.scene)
+                self._bar_labels.append(t)
+
+        self._set_colorbar(data.crange[0], data.crange[1], data.value_name)
+        xlo = float(data.centers.min()) - w / 2
+        xhi = float(data.centers.max()) + w / 2
+        self._data_bounds = (np.array([xlo, ymin], "float32"),
+                             np.array([xhi, ymax], "float32"))
+        self._apply_visibility()
+        first = not self._rendered_once
+        self._rendered_once = True
+        if self._view is not None and first:
+            QTimer.singleShot(0, self.reset_view)
+
+    def _bar_hover(self, event) -> None:
+        if (self._bar_data is None or self._scatter is None
+                or getattr(event, "pos", None) is None):
+            return
+        if getattr(event, "buttons", None):
+            self._hide_tooltip()
+            return
+        try:
+            dx, dy = self._scatter.get_transform("canvas", "visual").map(event.pos)[:2]
+            data = self._bar_data
+            w = data.width or 0.8
+            i = int(np.argmin(np.abs(data.centers - dx)))
+            if not (0 <= i < data.n) or abs(dx - float(data.centers[i])) > w / 2:
+                self._hide_tooltip()
+                return
+            h = float(data.heights[i]) if np.isfinite(data.heights[i]) else 0.0
+            lo, hi = (0.0, h) if h >= 0 else (h, 0.0)
+            if not (lo - 1e-6 <= dy <= hi + 1e-6):
+                self._hide_tooltip()
+                return
+            px, py = self._scatter.get_transform("visual", "canvas").map(
+                [float(data.centers[i]), h])[:2]
+            if data.labels is not None:          # bar: show the category
+                head = f"{data.x_name}: {data.labels[i]}"
+            else:                                # histogram: show the bin range
+                head = (f"{data.x_name}: {_fmt(data.centers[i] - w / 2)}"
+                        f"–{_fmt(data.centers[i] + w / 2)}")
+            text = f"{head}\n{data.value_name}: {_fmt(h)}"
+            if self._tooltip is None:
+                self._tooltip = PlotTooltip(self._canvas.native)
+            native = self._canvas.native
+            self._tooltip.show_at((px, py), text.split("\n"), data.colors[i],
+                                  (native.width(), native.height()))
+        except Exception:  # noqa: BLE001
+            self._hide_tooltip()
 
     # -- decorations ---------------------------------------------------
     def _update_decor(self, data) -> None:
@@ -458,9 +573,12 @@ class PlotTab(QWidget):
         self._cbar.visible = self._show_legend
 
     def _apply_visibility(self) -> None:
-        for w in (self._xaxis, self._yaxis):
-            if w is not None:
-                w.visible = self._show_axes
+        if self._yaxis is not None:
+            self._yaxis.visible = self._show_axes
+        if self._xaxis is not None:
+            # Category bars use text labels, not the numeric x axis; histograms
+            # keep the numeric x axis.
+            self._xaxis.visible = self._show_axes and not self.spec.is_bar
         if self._gridlines is not None:
             self._gridlines.visible = self._show_grid
         if self._floor is not None:
@@ -468,6 +586,8 @@ class PlotTab(QWidget):
         if self._bbox is not None:
             self._bbox.visible = self._show_bbox
         for t in self._axis_labels:
+            t.visible = self._show_axes
+        for t in self._bar_labels:
             t.visible = self._show_axes
         if self._cbar is not None:
             self._cbar.visible = self._show_legend
@@ -665,6 +785,9 @@ class PlotTab(QWidget):
             self._hover_tree = self._hover_rows = self._hover_xy = None
 
     def _on_mouse_move(self, event) -> None:
+        if self.spec.is_bar or self.spec.is_hist:
+            self._bar_hover(event)
+            return
         if (
             self._hover_tree is None
             or self._scatter is None
@@ -730,6 +853,9 @@ class PlotTab(QWidget):
         self._view = None
         self._hover_tree = self._hover_rows = self._hover_xy = None
         self._last_pos = self._last_colors = None
+        self._bars = None
+        self._bar_labels = []
+        self._bar_data = None
         self._hide_tooltip()
         if self._canvas is not None:
             try:

@@ -42,6 +42,11 @@ _COLORMAPS = {
         [0.531, 0.941, 0.293], [0.912, 0.755, 0.180], [0.890, 0.267, 0.079],
         [0.479, 0.012, 0.011],
     ],
+    "turbo_r": [
+        [0.479, 0.012, 0.011], [0.890, 0.267, 0.079], [0.912, 0.755, 0.180],
+        [0.531, 0.941, 0.293], [0.149, 0.740, 0.757], [0.275, 0.408, 0.859],
+        [0.190, 0.072, 0.232],
+    ],
 }
 COLORMAP_NAMES = tuple(_COLORMAPS)
 DEFAULT_COLORMAP = "turbo"  # no white midpoint → data stays visible on white bg
@@ -76,6 +81,91 @@ class RenderData:
     crange: tuple | None = None  # (lo, hi) used for numeric colour, for the sliders
     full_range: tuple | None = None  # (min, max) of the colour column, for Min/Max
     rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
+
+
+@dataclass
+class BarData:
+    centers: np.ndarray   # (N,) x position of each bar's centre
+    heights: np.ndarray   # (N,) float32 bar height
+    colors: np.ndarray    # (N, 4) float32
+    value_name: str       # y-axis / colourbar label
+    x_name: str           # x-axis label
+    labels: list | None   # category labels (bar) or None (histogram)
+    categorical: bool     # True → category axis (labels); False → numeric x
+    width: float = 0.8    # bar width in data units
+    crange: tuple | None = None
+    full_range: tuple | None = None
+    n: int = 0
+
+
+def _bar_colors(heights, cmap, crange):
+    """Colour each bar by its height via the colormap; returns (colors, lo, hi)."""
+    finite = np.isfinite(heights)
+    if crange is not None:
+        lo, hi = float(crange[0]), float(crange[1])
+    elif finite.any():
+        lo, hi = float(np.min(heights[finite])), float(np.max(heights[finite]))
+    else:
+        lo, hi = 0.0, 1.0
+    span = (hi - lo) or 1.0
+    t = np.where(finite, (heights - lo) / span, 0.0).astype("float32")
+    colors = _apply_cmap(t, cmap)
+    colors[~finite] = _NULL_RGBA
+    return colors, lo, hi
+
+
+def build_bars(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
+    """Aggregate ``spec.y`` per category ``spec.x`` into one bar each."""
+    import polars as pl
+
+    cmap = cmap or DEFAULT_COLORMAP
+    cat, val, agg = spec.x, spec.y, (spec.agg or "mean")
+    for c in (cat, val):
+        if c and c not in df.columns:
+            raise KeyError(f"Column {c!r} is not in the data.")
+
+    reduce = {
+        "mean": pl.col(val).mean(), "median": pl.col(val).median(),
+        "sum": pl.col(val).sum(), "min": pl.col(val).min(),
+        "max": pl.col(val).max(), "count": pl.len(),
+        "first": pl.col(val).first(),
+    }.get(agg, pl.col(val).mean())
+
+    g = (
+        df.filter(pl.col(cat).is_not_null())
+        .group_by(cat, maintain_order=True)
+        .agg(reduce.alias("_v"))
+        .sort(cat)
+    )
+    labels = [str(v) for v in g[cat].to_list()]
+    heights = g["_v"].to_numpy().astype("float32")
+    colors, lo, hi = _bar_colors(heights, cmap, crange)
+    n = len(labels)
+    return BarData(np.arange(n, dtype="float32"), heights, colors, val, cat,
+                   labels, True, 0.8, (lo, hi), (lo, hi), n)
+
+
+def build_histogram(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
+    """Bin numeric ``spec.x`` into ``spec.bins`` bars of counts."""
+    cmap = cmap or DEFAULT_COLORMAP
+    col = spec.x
+    if col and col not in df.columns:
+        raise KeyError(f"Column {col!r} is not in the data.")
+
+    vals = df[col].to_numpy().astype("float64")
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        empty = np.zeros((0, 4), "float32")
+        return BarData(np.zeros(0, "float32"), np.zeros(0, "float32"), empty,
+                       "count", col, None, False, 0.0, None, None, 0)
+    bins = max(1, int(spec.bins or 30))
+    counts, edges = np.histogram(vals, bins=bins)
+    centers = ((edges[:-1] + edges[1:]) / 2).astype("float32")
+    width = float(edges[1] - edges[0]) if len(edges) > 1 else 1.0
+    heights = counts.astype("float32")
+    colors, lo, hi = _bar_colors(heights, cmap, crange)
+    return BarData(centers, heights, colors, "count", col, None, False,
+                   width, (lo, hi), (lo, hi), len(heights))
 
 
 def _apply_cmap(t: np.ndarray, name: str) -> np.ndarray:

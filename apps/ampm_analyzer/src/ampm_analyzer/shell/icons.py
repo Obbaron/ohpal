@@ -37,7 +37,7 @@ UI = {
     "favourites": "favorite", "shared": "share", "search": "search",
     # data toolbar
     "sidebar": "side-panel--open", "sidebar_close": "side-panel--close",
-    "layer": "layers", "new_plot": "chart--custom",
+    "layer": "layers", "new_plot": "chart--scatter",
     "rename_column": "edit",
     "add_column": "column--insert", "remove_column": "column--delete",
     "show_hide": "view", "xy_bounds": "crop",

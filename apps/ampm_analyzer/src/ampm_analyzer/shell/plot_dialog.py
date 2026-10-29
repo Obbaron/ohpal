@@ -15,10 +15,11 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QRadioButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
-from .plotspec import PlotSpec, default_spec
+from .plotspec import BAR_AGGS, PlotSpec, default_spec
 from .toolbars import LayerSpinBox
 
 _NONE = "— none —"
@@ -48,22 +49,43 @@ class NewPlotDialog(QDialog):
                 cb.setCurrentIndex(self._columns.index(selected))
             return cb
 
-        self.x_combo = axis_combo(base.x)
-        form.addRow("X", self.x_combo)
-        self.y_combo = axis_combo(base.y)
-        form.addRow("Y", self.y_combo)
-
+        self.agg_combo = None
         self.z_combo = None
-        if base.is_3d:
-            self.z_combo = axis_combo(base.z)
-            form.addRow("Z", self.z_combo)
-
-        self.color_combo = QComboBox()
-        self.color_combo.addItem(_NONE)
-        self.color_combo.addItems(self._columns)
-        if base.color in self._columns:
-            self.color_combo.setCurrentText(base.color)
-        form.addRow("Colour by", self.color_combo)
+        self.color_combo = None
+        self.bins_spin = None
+        if base.is_hist:
+            # Histogram: one numeric column + a bin count.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("Column", self.x_combo)
+            self.y_combo = None
+            self.bins_spin = QSpinBox()
+            self.bins_spin.setRange(1, 1000)
+            self.bins_spin.setValue(base.bins)
+            form.addRow("Bins", self.bins_spin)
+        elif base.is_bar:
+            # Bar: a category axis, a value to reduce, and how to reduce it.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("Category", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Value", self.y_combo)
+            self.agg_combo = QComboBox()
+            self.agg_combo.addItems(BAR_AGGS)
+            self.agg_combo.setCurrentText(base.agg)
+            form.addRow("Aggregate", self.agg_combo)
+        else:
+            self.x_combo = axis_combo(base.x)
+            form.addRow("X", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Y", self.y_combo)
+            if base.is_3d:
+                self.z_combo = axis_combo(base.z)
+                form.addRow("Z", self.z_combo)
+            self.color_combo = QComboBox()
+            self.color_combo.addItem(_NONE)
+            self.color_combo.addItems(self._columns)
+            if base.color in self._columns:
+                self.color_combo.setCurrentText(base.color)
+            form.addRow("Colour by", self.color_combo)
         lay.addLayout(form)
 
         # Layer span this plot queries — its own, independent of the grid.
@@ -78,8 +100,8 @@ class NewPlotDialog(QDialog):
         grp = QButtonGroup(self)
         for r in (self.radio_single, self.radio_all, self.radio_range):
             grp.addButton(r)
-        if base.is_3d:
-            self.radio_all.setChecked(True)
+        if base.is_3d or base.is_bar or base.is_hist:
+            self.radio_all.setChecked(True)  # summary/3D views span all layers
         else:
             self.radio_single.setChecked(True)
         self.lo_spin = LayerSpinBox()
@@ -122,6 +144,22 @@ class NewPlotDialog(QDialog):
         self.hi_spin.setEnabled(on)
 
     def spec(self) -> PlotSpec:
+        if self.bins_spin is not None:  # histogram
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y="count",
+                color=None,
+                bins=self.bins_spin.value(),
+            )
+        if self.agg_combo is not None:  # bar
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y=self.y_combo.currentText(),
+                color=None,  # bars colour by their value
+                agg=self.agg_combo.currentText(),
+            )
         color = self.color_combo.currentText()
         return PlotSpec(
             kind=self._kind,

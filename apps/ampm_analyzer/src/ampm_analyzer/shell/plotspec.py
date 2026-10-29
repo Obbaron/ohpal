@@ -10,7 +10,12 @@ from dataclasses import dataclass
 
 SCATTER_2D = "2D Scatter"
 SCATTER_3D = "3D Scatter"
+BAR = "Bar"
+HISTOGRAM = "Histogram"
 SCATTER_KINDS = (SCATTER_2D, SCATTER_3D)
+PLOT_KINDS = (SCATTER_2D, SCATTER_3D, BAR, HISTOGRAM)  # the wired plot types
+
+BAR_AGGS = ("mean", "median", "sum", "min", "max", "count", "first")
 
 
 @dataclass
@@ -20,10 +25,20 @@ class PlotSpec:
     y: str
     z: str | None = None
     color: str | None = None  # None = single colour
+    agg: str = "mean"         # bar only: how to reduce the value per category
+    bins: int = 30            # histogram only: number of bins
 
     @property
     def is_3d(self) -> bool:
         return self.kind == SCATTER_3D
+
+    @property
+    def is_bar(self) -> bool:
+        return self.kind == BAR
+
+    @property
+    def is_hist(self) -> bool:
+        return self.kind == HISTOGRAM
 
     @property
     def axes(self) -> list[str]:
@@ -38,6 +53,18 @@ def default_spec(kind: str, columns: list[str]) -> PlotSpec:
         if preferred in cols:
             return preferred
         return cols[index] if index < len(cols) else (cols[0] if cols else "")
+
+    if kind == BAR:
+        # Category: a label-ish column if present; Value: melt pool (mean).
+        cat = next((c for c in ("region", "side", "part_id") if c in cols),
+                   cols[0] if cols else "")
+        val = _default_color(cols) or pick("Z", 1)
+        return PlotSpec(kind=kind, x=cat, y=val, agg="mean")
+
+    if kind == HISTOGRAM:
+        # Bin a numeric column; Y is the count.
+        col = _default_color(cols) or pick("Z", 0)
+        return PlotSpec(kind=kind, x=col, y="count", bins=30)
 
     x = pick("Demand X", 0)
     y = pick("Demand Y", 1)
