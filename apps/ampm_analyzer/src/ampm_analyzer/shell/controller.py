@@ -518,6 +518,30 @@ class AppController(QObject):
         self._refresh_derived()
         return None
 
+    def add_join_derivation(
+        self, name: str, key: str, mapping: dict, dtype: str = "f64"
+    ) -> str | None:
+        """Register an Excel-imported column: a key->value map left-joined onto
+        the grid on ``key``. ``mapping`` is pre-normalised (canonical string
+        keys). Returns an error message, or None on success."""
+        base = self._base_df
+        cols = list(base.columns) if base is not None else []
+        names = cols + [d["name"] for d in self.session.derivations]
+        if name in names:
+            return f"A column named {name!r} already exists."
+        # The key may be a source column or an already-derived one (the join is
+        # appended last, so earlier derivations are in scope at join time).
+        if base is not None and key not in names:
+            return f"Key column {key!r} isn't in this build."
+        if not mapping:
+            return "No key/value rows to import."
+        self.session.derivations.append(
+            {"kind": "join", "name": name, "key": key,
+             "map": dict(mapping), "dtype": dtype}
+        )
+        self._refresh_derived()
+        return None
+
     def remove_derivation(self, name: str) -> None:
         self.session.derivations = [
             d for d in self.session.derivations if d["name"] != name

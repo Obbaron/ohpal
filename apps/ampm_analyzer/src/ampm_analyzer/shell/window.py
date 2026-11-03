@@ -560,6 +560,7 @@ class MainWindow(QMainWindow):
                 ),
                 on_add_derive=self._add_derive_column,
                 on_add_label=self._add_group_label,
+                on_add_excel=self._add_excel_column,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
                 on_filter=self._on_filter,
@@ -690,6 +691,27 @@ class MainWindow(QMainWindow):
             self.set_status(f"Group label failed: {err}")
         else:
             self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
+            self._save_ui()
+            self._reshape_plots()
+
+    def _add_excel_column(self) -> None:
+        dt = self._data_tab
+        if dt is None:
+            return
+        from .excel_dialog import ExcelImportDialog
+
+        taken = [d["name"] for d in self.session.derivations]
+        dlg = ExcelImportDialog(dt._columns, self, taken=taken)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, grid_key, mapping, dtype, n = dlg.result_values()
+        err = self.controller.add_join_derivation(name, grid_key, mapping, dtype)
+        if err:
+            self.set_status(f"Add from Excel failed: {err}")
+        else:
+            self.set_status(
+                f"Added column '{name}' from Excel ({n} keys on '{grid_key}')."
+            )
             self._save_ui()
             self._reshape_plots()
 

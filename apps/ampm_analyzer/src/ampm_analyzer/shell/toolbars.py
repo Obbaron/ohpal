@@ -162,6 +162,7 @@ def populate_data(
     on_column_visibility=None,
     on_add_derive=None,
     on_add_label=None,
+    on_add_excel=None,
     on_remove_column=None,
     on_restore_column=None,
     on_filter=None,
@@ -203,7 +204,7 @@ def populate_data(
             a.toggled.connect(lambda vis, n=name: on_column_visibility(n, vis))
     _action(toolbar, "Rename column", "rename_column", color)
     # Add column — a menu of sources. "Derive column" is a row-wise formula over
-    # existing columns; "Add from Excel" is stubbed for now.
+    # existing columns; "Add from Excel" joins external key/value data.
     add_btn = _menu_button(toolbar, "Add column", "add_column", color)
     a_derive = add_btn.menu().addAction("Derive column")
     if on_add_derive is not None:
@@ -212,8 +213,10 @@ def populate_data(
     if on_add_label is not None:
         a_label.triggered.connect(lambda: on_add_label())
     a_excel = add_btn.menu().addAction("Add from Excel")
-    a_excel.setEnabled(False)  # not wired yet
-    a_excel.setToolTip("Not available yet")
+    if on_add_excel is not None:
+        a_excel.triggered.connect(lambda: on_add_excel())
+    else:
+        a_excel.setEnabled(False)
     # Restore a previously removed source column (only shown when there are any).
     removed = removed_columns or []
     if removed:

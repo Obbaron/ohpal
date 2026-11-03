@@ -382,6 +382,48 @@ def _apply_formula(out, d):
     return out
 
 
+def norm_key(value) -> str:
+    """Canonical string form for join-key matching.
+
+    Strips surrounding whitespace and a trailing ``.0`` run so a key that reads
+    as ``1``, ``1.0`` or ``"1"`` (Excel's loose typing vs an integer grid
+    column) all collapse to the same token. Applied identically to the stored
+    Excel keys and to the grid key column, so both sides stay in step.
+    """
+    return re.sub(r"\.0+$", "", str(value).strip())
+
+
+def _apply_join(out, d):
+    """Left-join an inline key->value map (from an Excel import) as a column.
+
+    Matching is on the canonical string form of both the grid key column and
+    the stored keys (see ``norm_key``). Unmatched grid rows get null. Skipped
+    (frame returned unchanged) if the key column isn't in this build or the map
+    is empty — so a later-deselected key degrades gracefully, like a formula
+    that no longer compiles.
+    """
+    import polars as pl
+
+    key = d.get("key")
+    mapping = d.get("map") or {}
+    name = d["name"]
+    if not key or key not in out.columns or not mapping:
+        return out
+    dtype = pl.Float64 if d.get("dtype") == "f64" else pl.Utf8
+    kv = pl.DataFrame(
+        {
+            "__join_k": pl.Series(list(mapping.keys()), dtype=pl.Utf8),
+            name: pl.Series(list(mapping.values()), dtype=dtype, strict=False),
+        }
+    )
+    lk = (
+        pl.col(key).cast(pl.Utf8).str.strip_chars().str.replace(r"\.0+$", "")
+    )
+    out = out.with_columns(lk.alias("__join_lk"))
+    out = out.join(kv, left_on="__join_lk", right_on="__join_k", how="left")
+    return out.drop("__join_lk")
+
+
 def _label_expr(d, columns):
     import polars as pl
 
@@ -435,8 +477,11 @@ def apply(df, derivations):
     out = df
     for d in derivations or []:
         try:
-            if d.get("kind", "formula") == "label":
+            kind = d.get("kind", "formula")
+            if kind == "label":
                 out = out.with_columns(_label_expr(d, out.columns).alias(d["name"]))
+            elif kind == "join":
+                out = _apply_join(out, d)
             else:
                 out = _apply_formula(out, d)
         except Exception:  # noqa: BLE001 — skip a bad derivation, keep the rest
