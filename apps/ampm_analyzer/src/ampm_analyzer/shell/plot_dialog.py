@@ -90,46 +90,46 @@ class NewPlotDialog(QDialog):
         lay.addLayout(form)
 
         # Layer span this plot queries — its own, independent of the grid.
-        # Default: the current layer for 2D (a top-down view overplots layers),
-        # all layers for 3D.
+        # Default: all layers for 3D/bar/histogram (summary views); the current
+        # layer for a 2D scatter (a top-down view overplots layers).
         span_row = QHBoxLayout()
-        cur_label = f"This layer ({self._current})" if self._current is not None \
-            else "This layer"
-        self.radio_single = QRadioButton(cur_label)
         self.radio_all = QRadioButton("All layers")
+        self.radio_single = QRadioButton("Single")
         self.radio_range = QRadioButton("Range")
         grp = QButtonGroup(self)
-        for r in (self.radio_single, self.radio_all, self.radio_range):
+        for r in (self.radio_all, self.radio_single, self.radio_range):
             grp.addButton(r)
-        if base.is_3d or base.is_bar or base.is_hist:
-            self.radio_all.setChecked(True)  # summary/3D views span all layers
-        else:
-            self.radio_single.setChecked(True)
+        # Single-layer entry (its own spinbox for quick layer typing) +
+        # range lo/hi — all snap to available layers.
+        self.single_spin = LayerSpinBox()
         self.lo_spin = LayerSpinBox()
         self.hi_spin = LayerSpinBox()
-        for sb in (self.lo_spin, self.hi_spin):
+        for sb in (self.single_spin, self.lo_spin, self.hi_spin):
             sb.setFixedWidth(80)
         if self._layers:
+            self.single_spin.set_layers(
+                self._layers,
+                self._current if self._current is not None else self._layers[0],
+            )
             self.lo_spin.set_layers(self._layers, self._layers[0])
             self.hi_spin.set_layers(self._layers, self._layers[-1])
-        self._sync_range_enabled()
-        self.radio_range.toggled.connect(lambda _c: self._sync_range_enabled())
+        if base.is_3d or base.is_bar or base.is_hist:
+            self.radio_all.setChecked(True)
+        else:
+            self.radio_single.setChecked(True)
+        self._sync_span_enabled()
+        self.radio_single.toggled.connect(lambda _c: self._sync_span_enabled())
+        self.radio_range.toggled.connect(lambda _c: self._sync_span_enabled())
         span_row.addWidget(QLabel("Layers"))
-        span_row.addWidget(self.radio_single)
         span_row.addWidget(self.radio_all)
+        span_row.addWidget(self.radio_single)
+        span_row.addWidget(self.single_spin)
         span_row.addWidget(self.radio_range)
         span_row.addWidget(self.lo_spin)
         span_row.addWidget(QLabel("to"))
         span_row.addWidget(self.hi_spin)
         span_row.addStretch(1)
         lay.addLayout(span_row)
-
-        hint = QLabel(
-            "Any column can go on any channel. Numeric colour → colormap; "
-            "a label column → discrete colours + legend."
-        )
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -139,10 +139,11 @@ class NewPlotDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
 
-    def _sync_range_enabled(self) -> None:
-        on = self.radio_range.isChecked()
-        self.lo_spin.setEnabled(on)
-        self.hi_spin.setEnabled(on)
+    def _sync_span_enabled(self) -> None:
+        self.single_spin.setEnabled(self.radio_single.isChecked())
+        on_range = self.radio_range.isChecked()
+        self.lo_spin.setEnabled(on_range)
+        self.hi_spin.setEnabled(on_range)
 
     def spec(self) -> PlotSpec:
         if self.bins_spin is not None:  # histogram
@@ -173,7 +174,8 @@ class NewPlotDialog(QDialog):
     def span(self) -> tuple:
         """("single", L, L), ("all", None, None) or ("range", lo, hi)."""
         if self.radio_single.isChecked():
-            return ("single", self._current, self._current)
+            L = self.single_spin.value()
+            return ("single", L, L)
         if self.radio_range.isChecked():
             return ("range", self.lo_spin.value(), self.hi_spin.value())
         return ("all", None, None)
