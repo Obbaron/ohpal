@@ -30,6 +30,12 @@ _PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNOR
 # Cap the rows handed to the (non-virtualised) grid; virtualised model = Stage 3.
 STAGE1_ROW_CAP = 5000
 
+# Row budget for a plot query. A plot span can be the whole build (tens of
+# millions of rows) but a scatter only draws ~150k points; the query is
+# downsampled to this many rows to cap memory (derived group-stats like a
+# per-part CoV are then computed on the sample — close, but approximate).
+_PLOT_SAMPLE_ROWS = 1_000_000
+
 
 def _has_packets(path: Path) -> bool:
     try:
@@ -339,7 +345,9 @@ class AppController(QObject):
         """Query a plot's span off-thread; call ``on_raw(raw_df)`` when ready.
 
         Shaping (derived/removed columns) is applied by the caller via ``shape``
-        so a plot can re-shape without re-querying.
+        so a plot can re-shape without re-querying. A plot's span can be the
+        whole build (tens of millions of rows) but it only draws ~150k points,
+        so the query is downsampled to a bounded budget to cap memory.
         """
         store = self.session.store
         if store is None:
@@ -348,17 +356,18 @@ class AppController(QObject):
         label = f"plot layer {qlo}" if qlo == qhi else f"plot layers {qlo}–{qhi}"
         # quiet: no global loading UI — the plot tab shows its own overlay.
         self._request(
-            (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False, quiet=True
+            (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False,
+            quiet=True, sample_to=_PLOT_SAMPLE_ROWS,
         )
 
     # -- query queue (serialized worker) -------------------------------
     def _request(self, span, dest, label: str, coalesce: bool,
-                 quiet: bool = False) -> None:
+                 quiet: bool = False, sample_to: int | None = None) -> None:
         if coalesce:  # drop any still-queued grid request; keep the latest
             self._queue = [r for r in self._queue if not r["coalesce"]]
         self._queue.append({
             "span": span, "dest": dest, "label": label,
-            "coalesce": coalesce, "quiet": quiet,
+            "coalesce": coalesce, "quiet": quiet, "sample_to": sample_to,
         })
         if not self._busy:
             self._start_next()
@@ -371,7 +380,7 @@ class AppController(QObject):
         self._busy = True
         if not req["quiet"]:
             self.session.begin_load(req["label"])
-        self._start_query(self.session.store, req["span"])
+        self._start_query(self.session.store, req["span"], req.get("sample_to"))
 
     def _begin_query(self, store) -> None:
         first = store.layers[0]
@@ -389,11 +398,13 @@ class AppController(QObject):
             cols.append("part_id")
         return cols
 
-    def _start_query(self, store, layers: tuple[int, int]) -> None:
+    def _start_query(self, store, layers: tuple[int, int],
+                     sample_to: int | None = None) -> None:
         thread = QThread(self)
         worker = QueryWorker(
-            store, layers, columns=self._query_columns(store), row_cap=None
-        )  # virtualised grid: no cap
+            store, layers, columns=self._query_columns(store),
+            row_cap=None, sample_to=sample_to,
+        )  # virtualised grid: no cap; plots pass a sample budget
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_query_finished)

@@ -233,10 +233,12 @@ class PlotTab(QWidget):
         self._bar_labels: list = []
         self._bar_data = None
 
-        # Hover tooltip (2D only): a KDTree over the drawn points + the rows
-        # behind them, and a floating label shown near the cursor.
+        # Hover tooltip: the rows behind the drawn points + a floating label
+        # near the cursor. 2D picks via a data-space KDTree; 3D projects the
+        # points to the screen each move (the turntable camera rotates).
         self._hover_tree = None
         self._hover_xy = None
+        self._hover_pos = None  # 3D: the drawn (N, 3) positions, screen-projected
         self._hover_rows = None
         self._tooltip: PlotTooltip | None = None
 
@@ -789,23 +791,37 @@ class PlotTab(QWidget):
 
     # -- hover tooltip (2D) --------------------------------------------
     def _build_hover_index(self, data) -> None:
-        """Spatial index over the drawn points for nearest-point hover (2D)."""
-        if self.spec.is_3d or data.rows is None or data.n_drawn == 0:
-            self._hover_tree = self._hover_rows = self._hover_xy = None
+        """Index the drawn points for nearest-point hover.
+
+        2D builds a data-space KDTree (the camera only pans/zooms, so a point's
+        data XY is a stable key). 3D keeps the raw (N, 3) positions and projects
+        them to the screen on each move, since the turntable camera rotates.
+        """
+        self._hover_tree = self._hover_xy = self._hover_pos = None
+        if data.rows is None or data.n_drawn == 0:
+            self._hover_rows = None
             self._hide_tooltip()
             return
         try:
-            from scipy.spatial import cKDTree
+            if self.spec.is_3d:
+                self._hover_pos = np.ascontiguousarray(data.pos, dtype="float64")
+            else:
+                from scipy.spatial import cKDTree
 
-            self._hover_xy = np.ascontiguousarray(data.pos[:, :2], dtype="float64")
-            self._hover_tree = cKDTree(self._hover_xy)
+                self._hover_xy = np.ascontiguousarray(
+                    data.pos[:, :2], dtype="float64")
+                self._hover_tree = cKDTree(self._hover_xy)
             self._hover_rows = data.rows
         except Exception:  # noqa: BLE001 - hover is a nicety; never break render
             self._hover_tree = self._hover_rows = self._hover_xy = None
+            self._hover_pos = None
 
     def _on_mouse_move(self, event) -> None:
         if self.spec.is_bar or self.spec.is_hist:
             self._bar_hover(event)
+            return
+        if self.spec.is_3d:
+            self._hover3d(event)
             return
         if (
             self._hover_tree is None
@@ -831,6 +847,37 @@ class PlotTab(QWidget):
                 return
             self._show_tooltip(int(i), float(px), float(py))
         except Exception:  # noqa: BLE001
+            self._hide_tooltip()
+
+    def _hover3d(self, event) -> None:
+        """Nearest-point hover for the 3D scatter: project every drawn point to
+        the screen, pick the closest to the cursor within a few pixels."""
+        if (
+            self._hover_pos is None
+            or self._scatter is None
+            or getattr(event, "pos", None) is None
+        ):
+            return
+        if getattr(event, "buttons", None):  # a drag rotates/zooms — not a hover
+            self._hide_tooltip()
+            return
+        try:
+            proj = self._scatter.get_transform("visual", "canvas").map(
+                self._hover_pos)
+            w = proj[:, 3]
+            front = w > 1e-6  # points at/behind the camera plane don't project
+            if not front.any():
+                self._hide_tooltip()
+                return
+            sx, sy = proj[:, 0] / w, proj[:, 1] / w
+            d2 = (sx - event.pos[0]) ** 2 + (sy - event.pos[1]) ** 2
+            d2[~front] = np.inf
+            i = int(np.argmin(d2))
+            if d2[i] > 12 ** 2:  # same pixel tolerance as the 2D hover
+                self._hide_tooltip()
+                return
+            self._show_tooltip(i, float(sx[i]), float(sy[i]))
+        except Exception:  # noqa: BLE001 - hover is a nicety; never break
             self._hide_tooltip()
 
     def _hover_text(self, i: int) -> str:
@@ -891,6 +938,7 @@ class PlotTab(QWidget):
         self._scatter = None
         self._view = None
         self._hover_tree = self._hover_rows = self._hover_xy = None
+        self._hover_pos = None
         self._last_pos = self._last_colors = None
         self._bars = None
         self._bar_labels = []

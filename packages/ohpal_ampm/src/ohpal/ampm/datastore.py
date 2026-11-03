@@ -290,6 +290,7 @@ class DataStore:
         x_range: tuple[float, float] | None = None,
         y_range: tuple[float, float] | None = None,
         filters: dict[str, tuple[float, float]] | None = None,
+        sample_to: int | None = None,
     ) -> pl.DataFrame:
         """
         Query a slice of the dataset.
@@ -309,6 +310,13 @@ class DataStore:
             Inclusive ``(min, max)`` filters on Demand X / Demand Y.
         filters
             Additional ``{column_name: (min, max)}`` inclusive filters.
+        sample_to
+            If set and the (filtered) result would exceed this many rows,
+            downsample to roughly this many by taking an even stride during the
+            scan — so the full result is never materialized. Deterministic and
+            evenly spread across the selected layers. ``None`` returns every
+            row. Used for plots (a scatter only draws ~150k points anyway); the
+            grid never samples.
 
         Returns
         -------
@@ -361,6 +369,15 @@ class DataStore:
             if want_part:
                 scan = list(dict.fromkeys([*scan, "Demand X", "Demand Y"]))
             lf = lf.select(scan)
+
+        # Bound memory before collect: count cheaply, then take an even stride
+        # so at most ~sample_to rows are ever materialized (the full build can
+        # be tens of millions of rows; a scatter only draws ~150k).
+        if sample_to is not None and sample_to > 0:
+            n = lf.select(pl.len()).collect().item()
+            if n > sample_to:
+                step = -(-n // sample_to)  # ceil(n / sample_to), >= 2 here
+                lf = lf.gather_every(step)
 
         df = lf.collect()
 

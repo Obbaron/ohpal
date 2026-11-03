@@ -39,19 +39,24 @@ class QueryWorker(QObject):
         *,
         columns: list[str] | None = None,
         row_cap: int | None = None,
+        sample_to: int | None = None,
     ) -> None:
         super().__init__()
         self._store = store
         self._layers = layers
         self._columns = columns
         self._row_cap = row_cap
+        self._sample_to = sample_to
 
     @pyqtSlot()
     def run(self) -> None:
         try:
             lo, hi = self._layers
             self.progress.emit(0, f"Querying layer {lo}…")
-            df = self._store.query(layers=self._layers, columns=self._columns)
+            df = self._store.query(
+                layers=self._layers, columns=self._columns,
+                sample_to=self._sample_to,
+            )
             total = df.height
             if self._row_cap is not None and total > self._row_cap:
                 df = df.head(self._row_cap)
