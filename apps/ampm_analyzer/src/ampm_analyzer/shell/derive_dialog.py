@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .derive import DeriveError, compile_expr
+from .widgets import fix_combo
 
 
 class DeriveColumnDialog(QDialog):
@@ -51,7 +52,7 @@ class DeriveColumnDialog(QDialog):
         lay.addWidget(self.expr_edit, 1)
 
         pick = QHBoxLayout()
-        self.col_combo = QComboBox()
+        self.col_combo = fix_combo(QComboBox())
         self.col_combo.addItems(self._columns)
         insert = QPushButton("Insert column")
         insert.clicked.connect(self._insert_column)

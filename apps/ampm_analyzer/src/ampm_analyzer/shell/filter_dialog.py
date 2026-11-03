@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .derive import DeriveError, compile_predicate
+from .widgets import fix_combo
 
 _X = "Demand X"
 _Y = "Demand Y"
@@ -50,7 +51,7 @@ class FilterConditionDialog(QDialog):
         lay.addWidget(self.expr_edit, 1)
 
         pick = QHBoxLayout()
-        self.col_combo = QComboBox()
+        self.col_combo = fix_combo(QComboBox())
         self.col_combo.addItems(self._columns)
         insert = QPushButton("Insert column")
         insert.clicked.connect(self._insert_column)

@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import fix_combo
+
 _TITLES = {"plot": "Plot", "data": "Data"}
 
 
@@ -189,7 +191,7 @@ class SidePanel(QWidget):
 
         points = QGroupBox("Points")
         pf = QFormLayout(points)
-        self.marker_combo = QComboBox()
+        self.marker_combo = fix_combo(QComboBox())
         self.marker_combo.addItems(["disc", "square", "ring", "cross"])
         self.marker_combo.currentTextChanged.connect(self.markerSymbolChanged)
         pf.addRow("Marker", self.marker_combo)
@@ -203,13 +205,13 @@ class SidePanel(QWidget):
 
         self.colour_box = QGroupBox("Colour")
         cf = QFormLayout(self.colour_box)
-        self.map_combo = QComboBox()
+        self.map_combo = fix_combo(QComboBox())
         self.map_combo.addItems(
             ["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo", "turbo_r"]
         )
         self.map_combo.currentTextChanged.connect(self.colormapChanged)
         cf.addRow("Map", self.map_combo)
-        self.scale_combo = QComboBox()
+        self.scale_combo = fix_combo(QComboBox())
         self.scale_combo.addItems(["Linear", "Log"])
         self.scale_combo.currentTextChanged.connect(self.scaleChanged)
         cf.addRow("Scale", self.scale_combo)

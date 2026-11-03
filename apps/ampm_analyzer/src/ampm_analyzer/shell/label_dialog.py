@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .derive import DeriveError, compile_predicate
+from .widgets import fix_combo
 
 
 class _Rule(QWidget):
@@ -73,7 +74,7 @@ class GroupLabelDialog(QDialog):
 
         # Column inserter — inserts [name] into the last-focused condition.
         pick = QHBoxLayout()
-        self.col_combo = QComboBox()
+        self.col_combo = fix_combo(QComboBox())
         self.col_combo.addItems(self._columns)
         insert = QPushButton("Insert column")
         insert.clicked.connect(self._insert_column)

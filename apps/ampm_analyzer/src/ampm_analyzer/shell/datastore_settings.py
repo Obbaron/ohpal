@@ -33,6 +33,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .widgets import fix_combo
+
 _DEFAULT_THICKNESS = 0.03  # mm — fallback when a build has nothing to detect from
 
 _MISSING = "— not found —"
@@ -111,7 +113,7 @@ class DataStoreSettings(QWidget):
         self.chk_mask = QCheckBox("Apply mask")
         f.addRow("Masking", self.chk_mask)
 
-        self.cmb_parts = QComboBox()
+        self.cmb_parts = fix_combo(QComboBox())
         self.cmb_parts.addItems(["None", "Direct", "DHXML", "DBSCAN"])
         f.addRow("Part assignment", self.cmb_parts)
 

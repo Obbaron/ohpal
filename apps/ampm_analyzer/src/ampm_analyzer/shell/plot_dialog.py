@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from .plotspec import BAR_AGGS, PlotSpec, default_spec
 from .toolbars import LayerSpinBox
+from .widgets import fix_combo
 
 _NONE = "— none —"
 
@@ -43,7 +44,7 @@ class NewPlotDialog(QDialog):
         form = QFormLayout()
 
         def axis_combo(selected: str | None) -> QComboBox:
-            cb = QComboBox()
+            cb = fix_combo(QComboBox())
             cb.addItems(self._columns)
             if selected in self._columns:
                 cb.setCurrentIndex(self._columns.index(selected))
@@ -68,7 +69,7 @@ class NewPlotDialog(QDialog):
             form.addRow("Category", self.x_combo)
             self.y_combo = axis_combo(base.y)
             form.addRow("Value", self.y_combo)
-            self.agg_combo = QComboBox()
+            self.agg_combo = fix_combo(QComboBox())
             self.agg_combo.addItems(BAR_AGGS)
             self.agg_combo.setCurrentText(base.agg)
             form.addRow("Aggregate", self.agg_combo)
@@ -80,7 +81,7 @@ class NewPlotDialog(QDialog):
             if base.is_3d:
                 self.z_combo = axis_combo(base.z)
                 form.addRow("Z", self.z_combo)
-            self.color_combo = QComboBox()
+            self.color_combo = fix_combo(QComboBox())
             self.color_combo.addItem(_NONE)
             self.color_combo.addItems(self._columns)
             if base.color in self._columns:

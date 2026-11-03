@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import icons
+from .widgets import fix_combo
 
 
 class LayerSpinBox(QSpinBox):
@@ -92,7 +93,7 @@ def _action(
 
 def _combo(toolbar: QToolBar, label: str, items: list[str], width: int = 110) -> QComboBox:
     toolbar.addWidget(_muted(label))
-    cb = QComboBox()
+    cb = fix_combo(QComboBox())
     cb.addItems(items)
     cb.setFixedWidth(width)
     toolbar.addWidget(cb)
