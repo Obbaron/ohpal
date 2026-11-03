@@ -169,6 +169,7 @@ def populate_data(
     on_remove_filter=None,
     on_reset_filter=None,
     on_new_plot=None,
+    on_export_excel=None,
 ) -> None:
     columns = columns or []
 
@@ -255,7 +256,11 @@ def populate_data(
     toolbar.addSeparator()
 
     # Export
-    _action(toolbar, "Export to Excel", "export_excel", color)
+    xls = _action(toolbar, "Export to Excel", "export_excel", color)
+    if on_export_excel is not None:
+        xls.triggered.connect(lambda: on_export_excel())
+    else:
+        xls.setEnabled(False)
 
 
 # -- Plot toolset ------------------------------------------------------

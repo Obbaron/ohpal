@@ -587,6 +587,7 @@ class MainWindow(QMainWindow):
                 on_remove_filter=self._on_remove_last_filter,
                 on_reset_filter=self._on_reset_filters,
                 on_new_plot=lambda name=None: self._new_plot(name),
+                on_export_excel=self._export_excel,
             )
         else:
             p = self._active_plot
@@ -734,6 +735,51 @@ class MainWindow(QMainWindow):
             )
             self._save_ui()
             self._reshape_plots()
+
+    def _export_excel(self) -> None:
+        dt = self._data_tab
+        if dt is None or self.session.result is None:
+            self.set_status("Load a build before exporting.")
+            return
+        from .export_dialog import ExcelExportDialog
+
+        store = self.session.store
+        dlg = ExcelExportDialog(
+            dt._columns, self,
+            layers=list(store.layers) if store is not None else [],
+            current_layer=self.session.current_layer,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        spec = dlg.result_values()
+        mode, lo, hi = spec["scope"]
+        if mode == "current":  # the layer on screen -> a single-layer query
+            cur = self.session.current_layer
+            qmode, qlo, qhi = "single", cur, cur
+        else:
+            qmode, qlo, qhi = mode, lo, hi
+        self.set_status("Exporting…")
+        self.controller.query_for(
+            qmode, qlo, qhi, lambda raw, s=spec: self._write_export(s, raw)
+        )
+
+    def _write_export(self, spec, raw_df) -> None:
+        from pathlib import Path
+
+        from . import export
+
+        filters = self.controller.filters() if spec["respect_filters"] else []
+        try:
+            frame = self.controller.shape_filtered(raw_df, filters)
+            if spec["mode"] == "summary":
+                out = export.build_summary(frame, spec["key"], spec["values"])
+            else:
+                out = export.build_raw(frame, spec.get("columns"))
+            n = export.write_xlsx(out, spec["path"], spec["sheet"])
+        except Exception as exc:  # noqa: BLE001 - report, don't crash
+            self.set_status(f"Export failed: {exc}")
+            return
+        self.set_status(f"Exported {n} row(s) to {Path(spec['path']).name}.")
 
     def _remove_columns(self) -> None:
         dt = self._data_tab
