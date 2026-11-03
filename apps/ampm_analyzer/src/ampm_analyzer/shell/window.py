@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._plot_tabs: list = []  # open plot tabs, re-fed the shared result
         self._active_plot = None  # the plot tab the toolbar/panel controls drive
         self._pending_grid_state: bytes | None = None  # per-build column layout
+        self._pending_grid_layout = ([], [], [])  # (columns, order, hidden) by name
         self._grid_cache_dir = None  # where to persist the layout
         self._last_columns: list[str] | None = None  # to rebuild toolbar on change
 
@@ -207,7 +208,8 @@ class MainWindow(QMainWindow):
         """Create the single Data tab if needed; return it (no side prompts)."""
         if self._data_tab is None:
             self._data_tab = DataTab()
-            self._data_tab.set_persisted_state(self._pending_grid_state)
+            self._data_tab.set_persisted_state(
+                self._pending_grid_state, *self._pending_grid_layout)
             self._data_tab.layoutChanged.connect(self._save_ui)
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
@@ -217,13 +219,18 @@ class MainWindow(QMainWindow):
         """Persist grid layout + derivations + removed columns for this build."""
         if self._grid_cache_dir is None:
             return
-        header = self._data_tab.current_state() if self._data_tab is not None else None
+        dt = self._data_tab
+        header = dt.current_state() if dt is not None else None
+        cols, order, hidden = dt.layout_names() if dt is not None else ([], [], [])
         uistate.save_state(
             self._grid_cache_dir,
             grid_header=header,
             derivations=self.session.derivations,
             removed=self.session.removed,
             filters=self.controller.filters(),
+            grid_columns=cols,
+            grid_order=order,
+            grid_hidden=hidden,
         )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
@@ -255,8 +262,11 @@ class MainWindow(QMainWindow):
         self.session.removed = list(state["removed"])
         self.controller.set_filters(state["filters"])  # restore persisted filters
         self._pending_grid_state = state["grid_header"]
+        self._pending_grid_layout = (
+            state["grid_columns"], state["grid_order"], state["grid_hidden"])
         if self._data_tab is not None:
-            self._data_tab.set_persisted_state(self._pending_grid_state)
+            self._data_tab.set_persisted_state(
+                self._pending_grid_state, *self._pending_grid_layout)
 
     def _on_setup_required(self, payload) -> None:
         config, layers, columns, exists = payload
@@ -267,6 +277,7 @@ class MainWindow(QMainWindow):
         self.session.removed = []
         self.controller.set_filters([])
         self._pending_grid_state = None
+        self._pending_grid_layout = ([], [], [])
         if self._data_tab is not None:
             self._data_tab.set_persisted_state(None)
         if self._grid_cache_dir is not None:

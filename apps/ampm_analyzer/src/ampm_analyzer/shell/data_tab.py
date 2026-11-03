@@ -132,6 +132,7 @@ class DataTab(QWidget):
 
         self._applying = False      # suppress layoutChanged during programmatic apply
         self._persisted: bytes | None = None  # saved header blob for this build
+        self._persisted_cols: list[str] = []  # columns the blob was saved with
         self._layout_done = False   # whether the layout has been applied once
         self._last_state: bytes | None = None  # most recent captured header blob
         # Name-based layout snapshot, used when the column set changes (add /
@@ -223,9 +224,18 @@ class DataTab(QWidget):
         self.table.viewport().update()
 
     # -- layout / persistence ------------------------------------------
-    def set_persisted_state(self, state: bytes | None) -> None:
-        """Hand the window's saved header blob (or None for defaults)."""
+    def set_persisted_state(self, state: bytes | None, columns=None,
+                            order=None, hidden=None) -> None:
+        """Hand the window's saved header blob + the columns it was saved with.
+
+        ``order``/``hidden`` (column names) let the grid lay out by name when
+        the blob's column set no longer matches (a stale blob would corrupt the
+        header mapping).
+        """
         self._persisted = state
+        self._persisted_cols = list(columns or [])
+        self._order_names = list(order or [])
+        self._hidden_names = set(hidden or [])
         self._layout_done = False
 
     def _apply_layout(self, first: bool, cols_changed: bool = False) -> None:
@@ -233,9 +243,15 @@ class DataTab(QWidget):
         try:
             header = self.table.horizontalHeader()
             if first:
-                # Build load: restore the saved per-build blob, else defaults.
-                if self._persisted is not None:
+                # Build load: restore the saved blob ONLY when its columns match
+                # the current ones exactly (same logical set + order) — otherwise
+                # the blob's section mapping is stale and would scramble the
+                # header. On a mismatch, lay out by saved name, else defaults.
+                if (self._persisted is not None
+                        and self._persisted_cols == list(self.model.columns)):
                     header.restoreState(QByteArray(self._persisted))
+                elif self._order_names or self._hidden_names:
+                    self._apply_named_layout()
                 else:
                     self._apply_defaults()
             elif cols_changed:
@@ -303,6 +319,11 @@ class DataTab(QWidget):
 
     def current_state(self) -> bytes:
         return bytes(self.table.horizontalHeader().saveState())
+
+    def layout_names(self) -> tuple[list, list, list]:
+        """Logical columns, visual order (names), hidden (names) — for persistence."""
+        return (list(self.model.columns), list(self._order_names),
+                sorted(self._hidden_names))
 
     # -- show / hide ---------------------------------------------------
     def hidden_columns(self) -> set[str]:

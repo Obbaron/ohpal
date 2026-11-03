@@ -25,11 +25,14 @@ def _path(cache_dir: Path) -> Path:
 
 
 def _empty() -> dict:
-    return {"grid_header": None, "derivations": [], "removed": [], "filters": []}
+    return {
+        "grid_header": None, "derivations": [], "removed": [], "filters": [],
+        "grid_columns": [], "grid_order": [], "grid_hidden": [],
+    }
 
 
 def load_state(cache_dir: Path) -> dict:
-    """Return {"grid_header": bytes|None, "derivations": list, "removed": list}."""
+    """Return the saved per-build UI state (missing keys default to empty)."""
     try:
         data = json.loads(_path(cache_dir).read_text(encoding="utf-8"))
         if data.get("version") != _VERSION:
@@ -40,6 +43,12 @@ def load_state(cache_dir: Path) -> dict:
             "derivations": data.get("derivations") or [],
             "removed": data.get("removed") or [],
             "filters": data.get("filters") or [],
+            # Column names the header blob was saved with, plus order/hidden by
+            # name — used to validate the blob and lay out by name when the
+            # column set has drifted (a stale blob would corrupt the header).
+            "grid_columns": data.get("grid_columns") or [],
+            "grid_order": data.get("grid_order") or [],
+            "grid_hidden": data.get("grid_hidden") or [],
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -60,6 +69,9 @@ def save_state(
     derivations: list | None = None,
     removed: list | None = None,
     filters: list | None = None,
+    grid_columns: list | None = None,
+    grid_order: list | None = None,
+    grid_hidden: list | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
     try:
@@ -75,6 +87,9 @@ def save_state(
             "derivations": list(derivations or []),
             "removed": list(removed or []),
             "filters": list(filters or []),
+            "grid_columns": list(grid_columns or []),
+            "grid_order": list(grid_order or []),
+            "grid_hidden": list(grid_hidden or []),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
