@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         self.panel.closed.connect(self._close_panel)
         self._wire_panel_controls()
         self.panel.setVisible(False)  # hidden by default; opens when relevant
+        # The Data tab keeps its own panel-open preference, so a plot tab
+        # auto-opening the panel doesn't force it open on Data too.
+        self._panel_data_open = False
 
         content = QSplitter(Qt.Orientation.Horizontal)
         content.addWidget(self.panel)  # panel on the left
@@ -485,6 +488,9 @@ class MainWindow(QMainWindow):
 
     def _close_panel(self) -> None:
         """User dismissed the panel; it reopens when they revisit a plot tab."""
+        w = self.stack.currentWidget()
+        if w is not None and w.property("tabkind") == "data":
+            self._panel_data_open = False  # remember it's closed on Data
         self.panel.setVisible(False)
 
     # -- settings / theme ----------------------------------------------
@@ -543,8 +549,9 @@ class MainWindow(QMainWindow):
             self.panel.setVisible(True)
         elif kind == "file":
             self.panel.setVisible(False)
-        else:  # data — keep whatever the user set; just sync the page
-            if self.panel.isVisible():
+        else:  # data — restore the Data tab's own panel preference
+            self.panel.setVisible(self._panel_data_open)
+            if self._panel_data_open:
                 self.panel.show_for(kind)
 
         self.toolbar.clear()
@@ -752,8 +759,10 @@ class MainWindow(QMainWindow):
         self._reshape_plots()
 
     def _toggle_sidebar(self, checked: bool) -> None:
+        kind = self.stack.currentWidget().property("tabkind")
+        if kind == "data":  # remember the Data tab's own choice
+            self._panel_data_open = checked
         if checked:
-            kind = self.stack.currentWidget().property("tabkind")
             self.panel.show_for(kind)
             self.panel.setVisible(True)
         else:
