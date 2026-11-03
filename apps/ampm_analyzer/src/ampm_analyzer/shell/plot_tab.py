@@ -386,8 +386,17 @@ class PlotTab(QWidget):
             self._show_overlay("Nothing to plot for this selection.")
             return
         self._clear_overlay()
-        if self._scatter is not None:
-            self._scatter.visible = False  # bars take over the 2D view
+        if self._scatter is not None and self._scatter.parent is not None:
+            # Remove the (data-less) scatter from the scene: set_range walks
+            # every visual's bounds, and an un-fed Markers crashes on None data.
+            self._scatter.parent = None
+            self._scatter.visible = False
+        # Bars/histograms are not spatial — free the x/y aspect so a near-flat
+        # value range can't collapse the (aspect-locked) camera into NaNs.
+        try:
+            self._view.camera.aspect = None
+        except Exception:  # noqa: BLE001
+            pass
         if self.crange is None:
             self.crange = data.crange
         self._full_range = data.full_range
@@ -420,6 +429,8 @@ class PlotTab(QWidget):
         hvals = data.heights[np.isfinite(data.heights)]
         ymin = min(0.0, float(hvals.min()) if hvals.size else 0.0)
         ymax = max(0.0, float(hvals.max()) if hvals.size else 1.0)
+        if ymax <= ymin:  # flat/degenerate heights → give the view a real span
+            ymax = ymin + 1.0
         if data.categorical and data.labels:  # category text under each bar
             for i, label in enumerate(data.labels):
                 t = scene.visuals.Text(
@@ -428,7 +439,10 @@ class PlotTab(QWidget):
                     parent=self._view.scene)
                 self._bar_labels.append(t)
 
-        self._set_colorbar(data.crange[0], data.crange[1], data.value_name)
+        clo, chi = float(data.crange[0]), float(data.crange[1])
+        if chi <= clo:  # flat values → a readable colourbar still needs a span
+            chi = clo + 1.0
+        self._set_colorbar(clo, chi, data.value_name)
         xlo = float(data.centers.min()) - w / 2
         xhi = float(data.centers.max()) + w / 2
         self._data_bounds = (np.array([xlo, ymin], "float32"),
@@ -440,14 +454,14 @@ class PlotTab(QWidget):
             QTimer.singleShot(0, self.reset_view)
 
     def _bar_hover(self, event) -> None:
-        if (self._bar_data is None or self._scatter is None
+        if (self._bar_data is None or self._bars is None
                 or getattr(event, "pos", None) is None):
             return
         if getattr(event, "buttons", None):
             self._hide_tooltip()
             return
         try:
-            dx, dy = self._scatter.get_transform("canvas", "visual").map(event.pos)[:2]
+            dx, dy = self._bars.get_transform("canvas", "visual").map(event.pos)[:2]
             data = self._bar_data
             w = data.width or 0.8
             i = int(np.argmin(np.abs(data.centers - dx)))
@@ -459,7 +473,7 @@ class PlotTab(QWidget):
             if not (lo - 1e-6 <= dy <= hi + 1e-6):
                 self._hide_tooltip()
                 return
-            px, py = self._scatter.get_transform("visual", "canvas").map(
+            px, py = self._bars.get_transform("visual", "canvas").map(
                 [float(data.centers[i]), h])[:2]
             if data.labels is not None:          # bar: show the category
                 head = f"{data.x_name}: {data.labels[i]}"
@@ -617,11 +631,16 @@ class PlotTab(QWidget):
             self._view.camera.set_range(margin=0.12)
             return
         lo, hi = b  # frame the data, not the padded floor grid
+
+        def _span(a, z):  # never a zero-width range (would NaN the transform)
+            a, z = float(a), float(z)
+            return (a, z) if z > a else (a - 0.5, a + 0.5)
+
         if self.spec.is_3d:
-            self._view.camera.set_range(x=(lo[0], hi[0]), y=(lo[1], hi[1]),
-                                        z=(lo[2], hi[2]), margin=0.12)
+            self._view.camera.set_range(x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]),
+                                        z=_span(lo[2], hi[2]), margin=0.12)
         else:
-            self._view.camera.set_range(x=(lo[0], hi[0]), y=(lo[1], hi[1]),
+            self._view.camera.set_range(x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]),
                                         margin=0.12)
             # Record the fit width as the zoom-adaptive reference, then size.
             try:
