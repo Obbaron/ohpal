@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -194,12 +195,64 @@ def _placeholder(message: str) -> QWidget:
     return frame
 
 
+class _PlotTitle(QLineEdit):
+    """The plot's title shown above the canvas. It looks like a label until you
+    double-click it, then it becomes editable; Enter / click-away commits,
+    Escape cancels."""
+
+    renamed = pyqtSignal(str)
+
+    def __init__(self, text: str, parent=None) -> None:
+        super().__init__(text, parent)
+        self.setReadOnly(True)
+        self.setFrame(False)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setProperty("role", "plottitle")
+        self.setToolTip("Double-click to rename")
+        self._editing = False
+        self._orig = text
+        self.editingFinished.connect(self._commit)
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if self.isReadOnly():
+            self._orig = self.text()
+            self.setReadOnly(False)
+            self.setCursor(Qt.CursorShape.IBeamCursor)
+            self.selectAll()
+            self.setFocus()
+            self._editing = True
+        else:
+            super().mouseDoubleClickEvent(e)
+
+    def keyPressEvent(self, e) -> None:
+        if self._editing and e.key() == Qt.Key.Key_Escape:
+            self.setText(self._orig)  # cancel: restore, then commit the original
+            self.clearFocus()
+            return
+        super().keyPressEvent(e)
+
+    def _commit(self) -> None:
+        if not self._editing:
+            return
+        self._editing = False
+        self.setReadOnly(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.deselect()
+        name = self.text().strip()
+        if not name:  # don't allow an empty title
+            name = self._orig
+            self.setText(name)
+        self.renamed.emit(name)
+
+
 class PlotTab(QWidget):
     _counter = 0
 
     # Emitted (debounced) when the Layer Viewer's scrub slider settles on a
     # layer; the window re-queries that layer and feeds it back.
     layerChanged = pyqtSignal(int)
+    # Emitted when the on-plot title is renamed; the window updates the tab.
+    titleChanged = pyqtSignal(str)
 
     def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
                  layers=None, parent: QWidget | None = None) -> None:
@@ -227,6 +280,7 @@ class PlotTab(QWidget):
         self._show_grid = True
         self._show_bbox = spec.is_3d
         self._show_legend = True
+        self._show_title = True
 
         self._canvas = None
         self._view = None
@@ -269,6 +323,9 @@ class PlotTab(QWidget):
 
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
+        self._title_edit = _PlotTitle(self.title)
+        self._title_edit.renamed.connect(self._on_title_renamed)
+        self._lay.addWidget(self._title_edit)
         self._body = self._build_canvas()
         self._lay.addWidget(self._body)
         self._slider = None
@@ -684,6 +741,14 @@ class PlotTab(QWidget):
         self._show_legend = on
         self._apply_visibility()
 
+    def set_title_visible(self, on: bool) -> None:
+        self._show_title = on
+        self._title_edit.setVisible(on)
+
+    def _on_title_renamed(self, name: str) -> None:
+        self.title = name
+        self.titleChanged.emit(name)
+
     def reset_view(self) -> None:
         if self._view is None:
             return
@@ -828,7 +893,7 @@ class PlotTab(QWidget):
         return {
             "axes": self._show_axes, "grid": self._show_grid,
             "bbox": self._show_bbox, "legend": self._show_legend,
-            "is_3d": self.spec.is_3d,
+            "title": self._show_title, "is_3d": self.spec.is_3d,
         }
 
     # -- overlay (errors / empty) on top of the canvas -----------------

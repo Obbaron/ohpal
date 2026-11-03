@@ -50,7 +50,8 @@ UI = {
     "export_excel": "XLS",
     # plot toolbar
     "reset_view": "fit-to-screen", "axes": "x-axis", "grid": "grid",
-    "bbox": "cube", "legend": "legend", "select": "select--01",
+    "bbox": "cube", "legend": "legend", "title": "custom/title",
+    "select": "select--01",
     "clear_sel": "close", "invert_sel": "select--02",
     "sel_box": "select--window", "sel_lasso": "lasso", "screenshot": "camera",
     # panel

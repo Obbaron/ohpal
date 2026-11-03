@@ -374,11 +374,18 @@ class MainWindow(QMainWindow):
         self._plot_tabs.append(tab)
         if spec.is_layer_viewer:  # the scrub slider re-queries its layer
             tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
+        tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
         # Query this plot's own span, then shape + feed it.
         tab.set_loading(f"Querying {tab.span_label}…")
         self.controller.query_for(*span, lambda raw, t=tab: self._feed_plot(t, raw))
+
+    def _on_plot_renamed(self, tab, name: str) -> None:
+        """A plot's on-canvas title was renamed; mirror it onto its tab."""
+        idx = self.stack.indexOf(tab)
+        if idx >= 0:
+            self.tabbar.setTabText(idx, name)
 
     def _scrub_layer(self, tab, layer: int) -> None:
         """Re-query a Layer Viewer's chosen layer and feed it (camera stays
@@ -602,6 +609,7 @@ class MainWindow(QMainWindow):
                 on_grid=lambda v: p and p.set_grid_visible(v),
                 on_bbox=lambda v: p and p.set_bbox_visible(v),
                 on_legend=lambda v: p and p.set_legend_visible(v),
+                on_title=lambda v: p and p.set_title_visible(v),
                 on_screenshot=self._screenshot_plot,
             )
 

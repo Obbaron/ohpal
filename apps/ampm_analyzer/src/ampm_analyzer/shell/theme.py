@@ -114,6 +114,17 @@ QTabBar::tab:first:selected { background: palette(base); }
    so placing it here keeps it snug to the title — left-side leaves a gap). */
 QTabBar::close-button { subcontrol-position: right; margin: 2px 7px 2px 3px; }
 
+/* Plot title: a centred heading above the canvas. Looks like a label; while
+   being edited (not read-only) it gets a field background + border. */
+QLineEdit[role="plottitle"] {
+    font-size: 14px; font-weight: 600; color: palette(window-text);
+    background: palette(base); border: 1px solid palette(highlight);
+    border-radius: 4px; padding: 4px; margin: 4px 8px 0 8px;
+}
+QLineEdit[role="plottitle"]:read-only {
+    background: transparent; border: 1px solid transparent;
+}
+
 /* --- Toolbar --- */
 QToolBar { background: palette(base); border-bottom: 1px solid palette(mid); spacing: 3px; padding: 3px; }
 QToolButton { padding: 4px 8px; border-radius: 4px; color: palette(button-text); }

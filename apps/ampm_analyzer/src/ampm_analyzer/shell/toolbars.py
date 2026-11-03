@@ -268,7 +268,7 @@ def populate_plot(
     toolbar: QToolBar, *, color: str, sidebar_open: bool = False,
     on_toggle_sidebar=None, states: dict | None = None,
     on_reset_view=None, on_axes=None, on_grid=None, on_bbox=None, on_legend=None,
-    on_screenshot=None,
+    on_screenshot=None, on_title=None,
 ) -> None:
     states = states or {}
 
@@ -298,6 +298,7 @@ def populate_plot(
     bbox = _toggle("BBox", "bbox", "bbox", on_bbox)
     bbox.setEnabled(bool(states.get("is_3d")))  # bbox is a 3D decoration
     _toggle("Legend", "legend", "legend", on_legend)
+    _toggle("Title", "title", "title", on_title)
     toolbar.addSeparator()
     # Select
     _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)
