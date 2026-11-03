@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -57,6 +56,8 @@ _SIZE_MAX_MULT = 3.0
 _AXIS_LINE = _BG
 _AXIS_TICK = "#8a94a6"
 _AXIS_TEXT = "#5a6472"
+_TITLE_TEXT = "#2a2f3a"   # plot title: darker than the axis text
+_TITLE_STRIP_PX = 34      # top band that double-click-to-rename responds to
 
 
 def _sig(x: float, n: int = 4) -> float:
@@ -195,56 +196,6 @@ def _placeholder(message: str) -> QWidget:
     return frame
 
 
-class _PlotTitle(QLineEdit):
-    """The plot's title shown above the canvas. It looks like a label until you
-    double-click it, then it becomes editable; Enter / click-away commits,
-    Escape cancels."""
-
-    renamed = pyqtSignal(str)
-
-    def __init__(self, text: str, parent=None) -> None:
-        super().__init__(text, parent)
-        self.setReadOnly(True)
-        self.setFrame(False)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setProperty("role", "plottitle")
-        self.setToolTip("Double-click to rename")
-        self._editing = False
-        self._orig = text
-        self.editingFinished.connect(self._commit)
-
-    def mouseDoubleClickEvent(self, e) -> None:
-        if self.isReadOnly():
-            self._orig = self.text()
-            self.setReadOnly(False)
-            self.setCursor(Qt.CursorShape.IBeamCursor)
-            self.selectAll()
-            self.setFocus()
-            self._editing = True
-        else:
-            super().mouseDoubleClickEvent(e)
-
-    def keyPressEvent(self, e) -> None:
-        if self._editing and e.key() == Qt.Key.Key_Escape:
-            self.setText(self._orig)  # cancel: restore, then commit the original
-            self.clearFocus()
-            return
-        super().keyPressEvent(e)
-
-    def _commit(self) -> None:
-        if not self._editing:
-            return
-        self._editing = False
-        self.setReadOnly(True)
-        self.setCursor(Qt.CursorShape.ArrowCursor)
-        self.deselect()
-        name = self.text().strip()
-        if not name:  # don't allow an empty title
-            name = self._orig
-            self.setText(name)
-        self.renamed.emit(name)
-
-
 class PlotTab(QWidget):
     _counter = 0
 
@@ -321,11 +272,9 @@ class PlotTab(QWidget):
         self._opacity = 1.0                     # 0..1 multiplier on marker alpha
         self._full_range: tuple | None = None   # colour column extent, for Min/Max
 
+        self._title_label = None  # a VisPy Label inside the canvas
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
-        self._title_edit = _PlotTitle(self.title)
-        self._title_edit.renamed.connect(self._on_title_renamed)
-        self._lay.addWidget(self._title_edit)
         self._body = self._build_canvas()
         self._lay.addWidget(self._body)
         self._slider = None
@@ -399,15 +348,22 @@ class PlotTab(QWidget):
             canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
             grid = canvas.central_widget.add_grid(margin=6)
             self._grid = grid
+            # Title strip inside the canvas (so it's part of screenshots), full
+            # width at row 0; the plot + axes + colourbar live from row 1 down.
+            self._title_label = scene.Label(
+                self.title, color=_TITLE_TEXT, font_size=13)
+            self._title_label.height_max = 28
+            grid.add_widget(self._title_label, row=0, col=0, col_span=3)
+            self._title_label.visible = self._show_title
             if self.spec.is_3d:
                 # No left axis column in 3D — an empty grid column would take an
                 # equal stretch and shove the view into the right half. View at
                 # col 0, colourbar at col 1.
-                view = grid.add_view(row=0, col=0)
+                view = grid.add_view(row=1, col=0)
                 view.camera = scene.cameras.TurntableCamera(fov=45)
                 self._cbar_col = 1
             else:
-                view = grid.add_view(row=0, col=1)
+                view = grid.add_view(row=1, col=1)
                 # aspect=1 → one X unit == one Y unit, so parts aren't skewed.
                 view.camera = scene.cameras.PanZoomCamera(aspect=1)
                 self._cbar_col = 2
@@ -418,7 +374,7 @@ class PlotTab(QWidget):
                     text_color=_AXIS_TEXT,
                 )
                 self._yaxis.width_max = 62
-                grid.add_widget(self._yaxis, row=0, col=0)
+                grid.add_widget(self._yaxis, row=1, col=0)
                 self._xaxis = scene.AxisWidget(
                     orientation="bottom", axis_label=self.spec.x,
                     axis_font_size=9, tick_label_margin=12,
@@ -426,7 +382,7 @@ class PlotTab(QWidget):
                     text_color=_AXIS_TEXT,
                 )
                 self._xaxis.height_max = 42
-                grid.add_widget(self._xaxis, row=1, col=1)
+                grid.add_widget(self._xaxis, row=2, col=1)
                 self._yaxis.link_view(view)
                 self._xaxis.link_view(view)
                 # Match the axis strips to the canvas so there's no white frame.
@@ -441,6 +397,7 @@ class PlotTab(QWidget):
             self._canvas, self._view = canvas, view
             canvas.events.mouse_move.connect(self._on_mouse_move)
             canvas.events.mouse_wheel.connect(self._on_wheel)
+            canvas.events.mouse_double_click.connect(self._on_double_click)
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
             return _placeholder(f"Could not start the canvas:\n{exc}")
@@ -697,7 +654,7 @@ class PlotTab(QWidget):
             )
             self._cbar.width_max = 120  # room for label + 4-sig numbers, no clip
             self._cbar.bgcolor = _BG
-            self._grid.add_widget(self._cbar, row=0, col=self._cbar_col)
+            self._grid.add_widget(self._cbar, row=1, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
             self._cbar.clim = (_sig(lo), _sig(hi))
@@ -743,11 +700,34 @@ class PlotTab(QWidget):
 
     def set_title_visible(self, on: bool) -> None:
         self._show_title = on
-        self._title_edit.setVisible(on)
+        if self._title_label is not None:
+            self._title_label.visible = on
+            self._title_label.height_max = 28 if on else 0  # reclaim strip space
+            if self._canvas is not None:
+                self._canvas.update()
 
-    def _on_title_renamed(self, name: str) -> None:
+    def _set_title(self, name: str) -> None:
+        name = name.strip()
+        if not name:
+            return
         self.title = name
+        if self._title_label is not None:
+            self._title_label.text = name
         self.titleChanged.emit(name)
+
+    def _on_double_click(self, event) -> None:
+        """Double-click the title strip (top band) to rename the plot."""
+        if not self._show_title or self._title_label is None:
+            return
+        pos = getattr(event, "pos", None)
+        if pos is None or pos[1] > _TITLE_STRIP_PX:
+            return
+        from PyQt6.QtWidgets import QInputDialog
+
+        text, ok = QInputDialog.getText(
+            self, "Rename plot", "Title:", text=self.title)
+        if ok:
+            self._set_title(text)
 
     def reset_view(self) -> None:
         if self._view is None:
@@ -1063,6 +1043,7 @@ class PlotTab(QWidget):
         self._view = None
         self._hover_tree = self._hover_rows = self._hover_xy = None
         self._hover_pos = None
+        self._title_label = None
         self._last_pos = self._last_colors = None
         self._bars = None
         self._bar_labels = []
