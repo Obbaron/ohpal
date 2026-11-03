@@ -18,7 +18,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from . import derive
+from . import derive, uistate
 from .datastore_settings import REQUIRED_COLUMNS
 from .recents import RecentStore
 from .state import BuildSession, QueryResult
@@ -115,6 +115,13 @@ class AppController(QObject):
         self._config = config
         self._columns = None  # default to all; the setup page's build may narrow it
         self._filter = []     # a fresh build starts unfiltered
+        # Overlay the part-assignment method the user chose at build time
+        # (persisted per-build) — config.toml doesn't record it, so without this
+        # a reopened cached build loses its part_id. Set before set_store so the
+        # setup form it repopulates also shows the real choice.
+        saved_method = uistate.load_state(store.cache_dir).get("part_method")
+        if saved_method:
+            self._config["METHOD"] = saved_method
         # Record this build in the recents list (before set_store so the
         # backstage refresh triggered by the load already sees it).
         cached_now, _ = self._cache_status(store)
@@ -122,7 +129,7 @@ class AppController(QObject):
         self.session.set_store(store, source_dir, build_root.name, thickness)
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
-        self._apply_part_assignment(store, config.get("METHOD"))
+        self._apply_part_assignment(store, self._config.get("METHOD"))
 
         cached, _total = self._cache_status(store)
         exists = cached > 0
@@ -180,7 +187,17 @@ class AppController(QObject):
             self.session.layer_thickness = thickness
         # Part assignment (dhxml → part_id) per the chosen recipe, else config.
         method = (recipe or {}).get("part_method") or self._config.get("METHOD")
+        if (method or "").lower() == "dbscan":
+            QMessageBox.information(
+                self._window, "Part assignment",
+                "DBSCAN part assignment isn't implemented yet.\n\n"
+                "Building without a part assignment.",
+            )
         self._apply_part_assignment(store, method)
+        # Persist the choice (config.toml doesn't record it) and keep the
+        # in-memory config in step, so reopening this cached build re-applies it.
+        self._config["METHOD"] = method
+        uistate.set_part_method(store.cache_dir, method)
         # Restrict later queries to the columns the user kept (None = all).
         self._columns = (recipe or {}).get("columns") or None
         if scope is None:
@@ -229,21 +246,38 @@ class AppController(QObject):
     def _apply_part_assignment(self, store, method: str) -> None:
         """Configure the store's part assignment for the chosen method.
 
-        Only ``dhxml`` is wired (bounding-box containment from the build's
-        .dhxml); every other method clears assignment. Failing to load the
-        dhxml is surfaced but non-fatal — the build proceeds without part_id.
+        ``dhxml`` → bounding-box containment from the build's .dhxml.
+        ``direct`` → nearest part centre from the QuantAM parts CSV (capped by
+        the config's MAX_DISTANCE_MM). Any other method (incl. ``dbscan``,
+        not yet implemented) clears assignment. A load failure is surfaced but
+        non-fatal — the build proceeds without part_id.
         """
-        if (method or "").lower() == "dhxml":
+        m = (method or "").lower()
+        if m == "dhxml":
             dhxml = (self._config or {}).get("DHXML")
             if dhxml:
                 try:
                     from ohpal.ampm.parts import BuildStartedDHXML
 
                     table = BuildStartedDHXML.from_dhxml(dhxml).parts_table()
-                    store.set_part_assignment(table)
+                    store.set_part_assignment(table, method="bbox")
                     return
                 except Exception as exc:  # noqa: BLE001
                     self.session.fail(f"Could not load DHXML parts: {exc}")
+        elif m == "direct":
+            parts_csv = (self._config or {}).get("PARTS_CSV")
+            if parts_csv:
+                try:
+                    from ohpal.ampm.parts import QuantAMParts
+
+                    table = QuantAMParts.from_path(parts_csv).parent_parts()
+                    store.set_part_assignment(
+                        table, method="nearest",
+                        max_distance_mm=(self._config or {}).get("MAX_DISTANCE_MM"),
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self.session.fail(f"Could not load parts CSV: {exc}")
         store.set_part_assignment(None)
 
     @staticmethod

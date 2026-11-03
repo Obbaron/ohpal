@@ -231,6 +231,7 @@ class MainWindow(QMainWindow):
             grid_columns=cols,
             grid_order=order,
             grid_hidden=hidden,
+            part_method=(self.controller.current_config() or {}).get("METHOD") or "",
         )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------

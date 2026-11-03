@@ -28,6 +28,7 @@ def _empty() -> dict:
     return {
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
+        "part_method": "",
     }
 
 
@@ -49,6 +50,10 @@ def load_state(cache_dir: Path) -> dict:
             "grid_columns": data.get("grid_columns") or [],
             "grid_order": data.get("grid_order") or [],
             "grid_hidden": data.get("grid_hidden") or [],
+            # The part-assignment method chosen in the setup form at build time.
+            # config.toml doesn't record it, so it's persisted here and re-applied
+            # on open (else a reopened cached build loses its part_id column).
+            "part_method": data.get("part_method") or "",
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -72,6 +77,7 @@ def save_state(
     grid_columns: list | None = None,
     grid_order: list | None = None,
     grid_hidden: list | None = None,
+    part_method: str | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
     try:
@@ -90,7 +96,28 @@ def save_state(
             "grid_columns": list(grid_columns or []),
             "grid_order": list(grid_order or []),
             "grid_hidden": list(grid_hidden or []),
+            "part_method": part_method or "",
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
         pass  # persistence is best-effort; never block on it
+
+
+def set_part_method(cache_dir: Path, method: str) -> None:
+    """Update just the persisted part-assignment method, preserving the rest.
+
+    Used at build time so the choice is saved even before any derived column,
+    filter or grid change triggers a full ``save_state``.
+    """
+    st = load_state(cache_dir)
+    save_state(
+        cache_dir,
+        grid_header=st["grid_header"],
+        derivations=st["derivations"],
+        removed=st["removed"],
+        filters=st["filters"],
+        grid_columns=st["grid_columns"],
+        grid_order=st["grid_order"],
+        grid_hidden=st["grid_hidden"],
+        part_method=method,
+    )

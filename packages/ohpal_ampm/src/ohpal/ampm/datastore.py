@@ -99,10 +99,14 @@ class DataStore:
         self._source_files: dict[int, Path] = self._discover_source_files()
 
         # Optional part assignment. When set, ``query`` attaches a ``part_id``
-        # column by bounding-box containment on (Demand X, Demand Y); see
-        # ``set_part_assignment``. Kept out of the Parquet cache so switching
-        # the assignment method never invalidates the raw per-layer cache.
+        # column — either by bounding-box containment (``"bbox"``, e.g. from a
+        # .dhxml) or by nearest part centre (``"nearest"``, e.g. from a QuantAM
+        # parts CSV) on (Demand X, Demand Y); see ``set_part_assignment``. Kept
+        # out of the Parquet cache so switching the method never invalidates the
+        # raw per-layer cache.
         self._parts_table: pl.DataFrame | None = None
+        self._parts_method: str = "bbox"
+        self._parts_max_dist: float | None = None
 
     def _discover_source_files(self) -> dict[int, Path]:
         """Find all matching .txt files in source_dir and map layer -> path."""
@@ -147,15 +151,27 @@ class DataStore:
             base.append("part_id")
         return base
 
-    def set_part_assignment(self, parts_table: pl.DataFrame | None) -> None:
-        """Enable (or clear) a bounding-box part assignment.
+    def set_part_assignment(
+        self,
+        parts_table: pl.DataFrame | None,
+        *,
+        method: str = "bbox",
+        max_distance_mm: float | None = None,
+    ) -> None:
+        """Enable (or clear) a part assignment.
 
-        ``parts_table`` is a one-row-per-part table with ``part_id`` and the
-        box corners (``x_min`` … ``y_max``), e.g. from
-        ``BuildStartedDHXML(...).parts_table()``. Pass ``None`` to disable.
-        Queries then gain a ``part_id`` column (null outside every box).
+        ``parts_table`` is a one-row-per-part table. With ``method="bbox"`` it
+        carries ``part_id`` and the box corners (``x_min`` … ``y_max``), e.g.
+        from ``BuildStartedDHXML(...).parts_table()``, and rows are assigned by
+        containment (null outside every box). With ``method="nearest"`` it
+        carries ``part_id`` and part centres (``x_center``/``y_center``), e.g.
+        from ``QuantAMParts(...).parent_parts()``, and each row takes its
+        nearest part's id; ``max_distance_mm`` (if given) nulls rows farther
+        than that from any part. Pass ``None`` to disable.
         """
         self._parts_table = parts_table
+        self._parts_method = (method or "bbox").lower()
+        self._parts_max_dist = max_distance_mm
 
     def _needs_rebuild(self, layer: int) -> bool:
         """
@@ -349,11 +365,20 @@ class DataStore:
         df = lf.collect()
 
         if want_part:
-            from ohpal.ampm.parts import assign_bounding_box_part
+            if self._parts_method == "nearest":
+                from ohpal.ampm.parts import assign_nearest_part
 
-            df = assign_bounding_box_part(
-                df, self._parts_table, noise_label=None, verbose=False
-            )
+                df = assign_nearest_part(
+                    df, self._parts_table,
+                    max_distance_mm=self._parts_max_dist,
+                    noise_label=None, verbose=False,
+                )
+            else:
+                from ohpal.ampm.parts import assign_bounding_box_part
+
+                df = assign_bounding_box_part(
+                    df, self._parts_table, noise_label=None, verbose=False
+                )
             if columns is not None:
                 keep = list(dict.fromkeys([*columns, "layer", "Z"]))
                 df = df.select([c for c in keep if c in df.columns])
