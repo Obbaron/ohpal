@@ -89,6 +89,17 @@ class NewPlotDialog(QDialog):
             form.addRow("Colour by", self.color_combo)
         lay.addLayout(form)
 
+        # A Layer Viewer shows one layer at a time, scrubbed with a slider on the
+        # plot itself — so it has no layer-span row; it starts on the current
+        # layer.
+        self._is_layer_viewer = base.is_layer_viewer
+        if self._is_layer_viewer:
+            note = QLabel("Scrub through layers with the slider on the plot.")
+            note.setWordWrap(True)
+            lay.addWidget(note)
+            self._add_buttons(lay)
+            return
+
         # Layer span this plot queries — its own, independent of the grid.
         # Default: all layers for 3D/bar/histogram (summary views); the current
         # layer for a 2D scatter (a top-down view overplots layers).
@@ -131,6 +142,9 @@ class NewPlotDialog(QDialog):
         span_row.addStretch(1)
         lay.addLayout(span_row)
 
+        self._add_buttons(lay)
+
+    def _add_buttons(self, lay) -> None:
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -173,6 +187,8 @@ class NewPlotDialog(QDialog):
 
     def span(self) -> tuple:
         """("single", L, L), ("all", None, None) or ("range", lo, hi)."""
+        if self._is_layer_viewer:  # starts on the current layer; slider scrubs
+            return ("single", self._current, self._current)
         if self.radio_single.isChecked():
             L = self.single_spin.value()
             return ("single", L, L)

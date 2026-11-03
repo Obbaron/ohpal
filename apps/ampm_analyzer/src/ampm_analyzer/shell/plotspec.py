@@ -12,8 +12,10 @@ SCATTER_2D = "2D Scatter"
 SCATTER_3D = "3D Scatter"
 BAR = "Bar"
 HISTOGRAM = "Histogram"
+LAYER_VIEWER = "Layer Viewer"
 SCATTER_KINDS = (SCATTER_2D, SCATTER_3D)
-PLOT_KINDS = (SCATTER_2D, SCATTER_3D, BAR, HISTOGRAM)  # the wired plot types
+# the wired plot types
+PLOT_KINDS = (SCATTER_2D, SCATTER_3D, LAYER_VIEWER, BAR, HISTOGRAM)
 
 BAR_AGGS = ("mean", "median", "sum", "min", "max", "count", "first")
 
@@ -39,6 +41,10 @@ class PlotSpec:
     @property
     def is_hist(self) -> bool:
         return self.kind == HISTOGRAM
+
+    @property
+    def is_layer_viewer(self) -> bool:
+        return self.kind == LAYER_VIEWER
 
     @property
     def axes(self) -> list[str]:

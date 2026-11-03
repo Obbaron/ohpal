@@ -16,7 +16,7 @@ shows a labelled placeholder. Render arrays are released on close.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -27,7 +27,14 @@ from PyQt6.QtGui import (
     QPen,
     QPolygonF,
 )
-from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import plotdata
 from .plotdata import DEFAULT_COLORMAP, colormap_stops
@@ -190,8 +197,12 @@ def _placeholder(message: str) -> QWidget:
 class PlotTab(QWidget):
     _counter = 0
 
+    # Emitted (debounced) when the Layer Viewer's scrub slider settles on a
+    # layer; the window re-queries that layer and feeds it back.
+    layerChanged = pyqtSignal(int)
+
     def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
-                 parent: QWidget | None = None) -> None:
+                 layers=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("tabkind", "plot")
         PlotTab._counter += 1
@@ -199,6 +210,8 @@ class PlotTab(QWidget):
         self.span = span or ("all", None, None)
         self.title = title or f"{spec.kind} {PlotTab._counter}"
         self.row_filter: list[str] = []  # snapshot of the data filter at creation
+        self._layers = list(layers or [])  # Layer Viewer: the scrub range
+        self._current_layer = self.span[1]  # ("single", L, L) for a Layer Viewer
 
         self._df = None
         self.raw = None  # the plot's own raw span query (for re-shaping)
@@ -258,6 +271,10 @@ class PlotTab(QWidget):
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._body = self._build_canvas()
         self._lay.addWidget(self._body)
+        self._slider = None
+        self._scrub_timer = None
+        if spec.is_layer_viewer:
+            self._build_scrubber()
 
     @property
     def span_label(self) -> str:
@@ -268,6 +285,48 @@ class PlotTab(QWidget):
 
     def set_loading(self, text: str) -> None:
         self._show_overlay(text)
+
+    # -- layer scrubber (Layer Viewer only) ----------------------------
+    def _build_scrubber(self) -> None:
+        """A slider under the plot that scrubs through layers; each settle
+        re-queries that layer (debounced) via ``layerChanged``."""
+        bar = QHBoxLayout()
+        bar.setContentsMargins(12, 2, 14, 6)
+        bar.setSpacing(8)
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setRange(0, max(0, len(self._layers) - 1))
+        self._layer_label = QLabel("")
+        self._layer_label.setMinimumWidth(78)
+        start = (self._layers.index(self._current_layer)
+                 if self._current_layer in self._layers else 0)
+        self._slider.setValue(start)
+        self._update_layer_label(start)
+        self._slider.valueChanged.connect(self._on_scrub)
+        bar.addWidget(QLabel("Layer"))
+        bar.addWidget(self._slider, 1)
+        bar.addWidget(self._layer_label)
+        holder = QWidget()
+        holder.setLayout(bar)
+        self._lay.addWidget(holder)
+        # Debounce: re-query once the slider settles, not on every tick.
+        self._scrub_timer = QTimer(self)
+        self._scrub_timer.setSingleShot(True)
+        self._scrub_timer.setInterval(80)
+        self._scrub_timer.timeout.connect(self._emit_scrub)
+
+    def _on_scrub(self, idx: int) -> None:
+        self._update_layer_label(idx)  # label tracks the handle immediately
+        self._scrub_timer.start()      # fires 80 ms after the last move
+
+    def _emit_scrub(self) -> None:
+        i = self._slider.value()
+        if 0 <= i < len(self._layers):
+            self._current_layer = self._layers[i]
+            self.layerChanged.emit(self._current_layer)
+
+    def _update_layer_label(self, idx: int) -> None:
+        if 0 <= idx < len(self._layers):
+            self._layer_label.setText(f"Layer {self._layers[idx]}")
 
     # -- canvas --------------------------------------------------------
     def _build_canvas(self) -> QWidget:
