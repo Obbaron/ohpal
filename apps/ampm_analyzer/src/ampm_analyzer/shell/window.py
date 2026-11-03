@@ -580,7 +580,39 @@ class MainWindow(QMainWindow):
                 on_grid=lambda v: p and p.set_grid_visible(v),
                 on_bbox=lambda v: p and p.set_bbox_visible(v),
                 on_legend=lambda v: p and p.set_legend_visible(v),
+                on_screenshot=self._screenshot_plot,
             )
+
+    def _screenshot_plot(self) -> None:
+        """Save the active plot to an image file (location + type via dialog)."""
+        p = self._active_plot
+        if p is None:
+            return
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+        safe = "".join(
+            c if (c.isalnum() or c in " -_") else "_" for c in p.title
+        ).strip() or "plot"
+        start = str(Path.home() / f"{safe}.png")
+        path, selected = QFileDialog.getSaveFileName(
+            self, "Save plot image", start,
+            "PNG image (*.png);;JPEG image (*.jpg *.jpeg);;"
+            "Bitmap (*.bmp);;TIFF image (*.tif *.tiff)",
+        )
+        if not path:
+            return
+        if not Path(path).suffix:  # user typed a bare name — honour the filter
+            path += {
+                "JPEG image (*.jpg *.jpeg)": ".jpg",
+                "Bitmap (*.bmp)": ".bmp",
+                "TIFF image (*.tif *.tiff)": ".tif",
+            }.get(selected, ".png")
+        if p.save_image(path):
+            self.statusBar().showMessage(f"Saved {Path(path).name}", 4000)
+        else:
+            QMessageBox.warning(self, "Screenshot",
+                                "Couldn't save the plot image.")
 
     def _on_layer_changed(self, layer: int) -> None:
         self.controller.show_layer(layer)

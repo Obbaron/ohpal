@@ -260,6 +260,7 @@ def populate_plot(
     toolbar: QToolBar, *, color: str, sidebar_open: bool = False,
     on_toggle_sidebar=None, states: dict | None = None,
     on_reset_view=None, on_axes=None, on_grid=None, on_bbox=None, on_legend=None,
+    on_screenshot=None,
 ) -> None:
     states = states or {}
 
@@ -296,4 +297,6 @@ def populate_plot(
     _action(toolbar, "Invert", "invert_sel", color)
     toolbar.addSeparator()
     # Export
-    _action(toolbar, "Screenshot", "screenshot", color)
+    shot = _action(toolbar, "Screenshot", "screenshot", color)
+    if on_screenshot is not None:
+        shot.triggered.connect(lambda: on_screenshot())

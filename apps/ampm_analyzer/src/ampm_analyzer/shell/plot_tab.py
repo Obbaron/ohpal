@@ -863,6 +863,26 @@ class PlotTab(QWidget):
         if self._tooltip is not None:
             self._tooltip.hide()
 
+    # -- export --------------------------------------------------------
+    def save_image(self, path: str) -> bool:
+        """Render the current canvas to an image file.
+
+        The format is chosen from the file extension (PNG, JPEG, …). Returns
+        True on success. The alpha channel is rendered opaque (the canvas has a
+        solid background), so formats without alpha (JPEG) come out correctly.
+        """
+        if self._canvas is None:
+            return False
+        try:
+            arr = np.ascontiguousarray(self._canvas.render(alpha=True))
+        except Exception:  # noqa: BLE001 - GL read failure -> report to caller
+            return False
+        from PyQt6.QtGui import QImage
+
+        h, w = arr.shape[:2]
+        img = QImage(arr.data, w, h, 4 * w, QImage.Format.Format_RGBA8888)
+        return bool(img.copy().save(path))  # copy() owns the pixels past scope
+
     # -- teardown ------------------------------------------------------
     def release(self) -> None:
         """Free render arrays and close the canvas (called on tab close)."""
