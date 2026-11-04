@@ -134,10 +134,9 @@ class FilterConditionDialog(QDialog):
         self.expr_edit = FormulaEdit(self._columns)
         if initial:
             self.expr_edit.setPlainText(initial)
-        self.expr_edit.setPlaceholderText(
-            "e.g. click a template on the left, or type a condition — "
-            "columns in [brackets], type [ to autocomplete"
-        )
+        self.expr_edit.setPlaceholderText(self._resolve(
+            "[Demand X] > 30 and [Demand Y] < -21 and [layer] >= 10"
+        ))
         dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
         self._highlighter = FormulaHighlighter(
             self.expr_edit.document(), self._columns, dark=dark)
