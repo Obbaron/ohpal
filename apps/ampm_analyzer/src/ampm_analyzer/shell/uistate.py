@@ -28,7 +28,7 @@ def _empty() -> dict:
     return {
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
-        "part_method": "",
+        "part_method": "", "renames": {},
     }
 
 
@@ -54,6 +54,8 @@ def load_state(cache_dir: Path) -> dict:
             # config.toml doesn't record it, so it's persisted here and re-applied
             # on open (else a reopened cached build loses its part_id column).
             "part_method": data.get("part_method") or "",
+            # Column renames: original datastore name -> current display name.
+            "renames": data.get("renames") or {},
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -78,6 +80,7 @@ def save_state(
     grid_order: list | None = None,
     grid_hidden: list | None = None,
     part_method: str | None = None,
+    renames: dict | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
     try:
@@ -97,6 +100,7 @@ def save_state(
             "grid_order": list(grid_order or []),
             "grid_hidden": list(grid_hidden or []),
             "part_method": part_method or "",
+            "renames": dict(renames or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
@@ -120,4 +124,5 @@ def set_part_method(cache_dir: Path, method: str) -> None:
         grid_order=st["grid_order"],
         grid_hidden=st["grid_hidden"],
         part_method=method,
+        renames=st["renames"],
     )

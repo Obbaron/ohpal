@@ -56,6 +56,10 @@ class BuildSession(QObject):
         # Source columns removed from the view — projected out of every result
         # (distinct from hiding, which keeps them in the data). Controller-owned.
         self.removed: list[str] = []
+        # Column renames, keyed by the *original* datastore name -> current
+        # display name. Applied as the first step of shaping, so a renamed
+        # source column reads as its new name everywhere. Controller-owned.
+        self.renames: dict[str, str] = {}
 
     # -- writers (controller-only) -------------------------------------
     def begin_load(self, label: str) -> None:
@@ -71,6 +75,7 @@ class BuildSession(QObject):
         self.result = None
         self.derivations = []  # derived columns don't carry across builds
         self.removed = []
+        self.renames = {}  # renames don't carry across builds
         self.buildLoaded.emit(store)
 
     def require_setup(

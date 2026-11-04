@@ -45,6 +45,7 @@ class DetachedPlotWindow(QMainWindow):
         self._derivations = list(context.get("derivations") or [])
         self._removed = list(context.get("removed") or [])
         self._row_filter = list(context.get("row_filter") or [])
+        self._renames = dict(context.get("renames") or {})
         self._build_name = context.get("build_name") or "build"
         self._icon_color = icon_color
         self._thread = None
@@ -113,6 +114,7 @@ class DetachedPlotWindow(QMainWindow):
                 "derivations": self._derivations,
                 "removed": self._removed,
                 "row_filter": self._row_filter,
+                "renames": self._renames,
             },
         }
 
@@ -137,7 +139,7 @@ class DetachedPlotWindow(QMainWindow):
     def _feed(self, raw) -> None:
         self._tab.raw = raw
         shaped = derive.shape(raw, self._derivations, self._removed,
-                              self._row_filter)
+                              self._row_filter, self._renames)
         self._tab.set_dataframe(shaped)
         if self._panel.isVisible():
             self._panel.sync_plot(self._tab.panel_state())

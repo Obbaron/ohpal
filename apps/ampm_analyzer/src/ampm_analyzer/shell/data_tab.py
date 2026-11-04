@@ -11,14 +11,16 @@ widget is only the grid surface.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QEvent, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableView,
     QToolButton,
@@ -27,6 +29,28 @@ from PyQt6.QtWidgets import (
 )
 
 from .grid_model import DataFrameModel
+
+
+class _HeaderRenameEdit(QLineEdit):
+    """A transient editor floated over a header section to rename a column.
+
+    Enter commits, Esc or clicking away cancels — all funnelled through one
+    ``done(bool)`` signal (True = commit)."""
+
+    done = pyqtSignal(bool)
+
+    def keyPressEvent(self, e) -> None:  # noqa: N802 (Qt override)
+        if e.key() == Qt.Key.Key_Escape:
+            self.done.emit(False)
+            return
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.done.emit(True)
+            return
+        super().keyPressEvent(e)
+
+    def focusOutEvent(self, e) -> None:  # noqa: N802
+        super().focusOutEvent(e)
+        self.done.emit(False)  # click away cancels
 
 
 class ReorderHeader(QHeaderView):
@@ -97,6 +121,8 @@ class DataTab(QWidget):
     # Emitted when the user changes the column layout (reorder / show-hide /
     # resize) — the window persists it per build.
     layoutChanged = pyqtSignal()
+    # Emitted when a column header is renamed inline (old name, new name).
+    renameRequested = pyqtSignal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -127,6 +153,16 @@ class DataTab(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.sectionMoved.connect(self._on_header_changed)
         header.sectionResized.connect(lambda *_: self._on_header_changed())
+        header.sectionClicked.connect(self._on_section_clicked)
+        header.sectionDoubleClicked.connect(self._begin_rename)
+
+        # Clicking empty grid space clears the column selection.
+        self.table.viewport().installEventFilter(self)
+
+        # Inline column-rename state.
+        self._rename_armed = False
+        self._editor: _HeaderRenameEdit | None = None
+        self._editing_old = ""
 
         lay.addWidget(self.table)
 
@@ -208,6 +244,97 @@ class DataTab(QWidget):
         cols = sorted(idx.column() for idx in sel.selectedColumns())
         names = self.model.columns
         return [names[c] for c in cols if c < len(names)]
+
+    # -- inline column rename ------------------------------------------
+    def start_rename(self) -> None:
+        """Toolbar entry: rename the selected column now; with no selection, arm
+        click-to-rename (the next header click opens the editor)."""
+        cols = self.selected_columns()
+        if cols:
+            try:
+                self._begin_rename(self.model.columns.index(cols[0]))
+                return
+            except ValueError:
+                pass
+        self._arm_rename()
+
+    def _arm_rename(self) -> None:
+        if self._rename_armed:
+            return
+        self._rename_armed = True
+        # Whole-window I-beam (not just the header), and watch for the click
+        # that lands somewhere other than a header — that cancels rename mode.
+        QApplication.setOverrideCursor(Qt.CursorShape.IBeamCursor)
+        QApplication.instance().installEventFilter(self)
+
+    def _disarm_rename(self) -> None:
+        if not self._rename_armed:
+            return
+        self._rename_armed = False
+        QApplication.restoreOverrideCursor()
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() == QEvent.Type.MouseButtonPress:
+            # Deselect: a press on empty grid space clears the selection.
+            if obj is self.table.viewport():
+                pos = event.position().toPoint()
+                if not self.table.indexAt(pos).isValid():
+                    self.table.clearSelection()
+            # Armed: anything but a header press cancels rename mode (the header
+            # press is handled by sectionClicked, which renames).
+            if self._rename_armed:
+                header = self.table.horizontalHeader()
+                if obj is not header.viewport() and obj is not header:
+                    self._disarm_rename()
+        return False  # never consume — just observe
+
+    def _on_section_clicked(self, logical: int) -> None:
+        if self._rename_armed:
+            self._disarm_rename()
+            self._begin_rename(logical)
+
+    def _begin_rename(self, logical: int) -> None:
+        self._disarm_rename()
+        cols = self.model.columns
+        if not (0 <= logical < len(cols)):
+            return
+        if self._editor is not None:
+            self._finish_rename(False)
+        header = self.table.horizontalHeader()
+        self._editing_old = cols[logical]
+        ed = _HeaderRenameEdit(header)
+        ed.setText(self._editing_old)
+        ed.selectAll()
+        ed.setGeometry(
+            header.sectionViewportPosition(logical), 0,
+            header.sectionSize(logical), header.height())
+        ed.done.connect(self._finish_rename)
+        self._editor = ed
+        ed.show()
+        ed.setFocus()
+
+    def _finish_rename(self, commit: bool) -> None:
+        ed = self._editor
+        if ed is None:
+            return
+        self._editor = None  # guard re-entry (hide() can fire focusOut)
+        new = ed.text().strip()
+        old = self._editing_old
+        ed.hide()
+        ed.deleteLater()
+        if commit and new and new != old:
+            self.renameRequested.emit(old, new)
+
+    def rename_in_layout(self, old: str, new: str) -> None:
+        """Swap a column name in the name-based layout snapshots. Call this just
+        *before* the grid refresh that carries the renamed column: with
+        ``_last_cols`` already holding the new name, the refresh sees an
+        unchanged column set and restores the exact header state (order / hidden
+        / widths) by index — so only the label changes, nothing moves."""
+        self._order_names = [new if c == old else c for c in self._order_names]
+        self._hidden_names = {new if c == old else c for c in self._hidden_names}
+        self._last_cols = [new if c == old else c for c in self._last_cols]
 
     def set_dataframe(self, df) -> None:
         """Show a Polars DataFrame; (re)apply the column layout."""

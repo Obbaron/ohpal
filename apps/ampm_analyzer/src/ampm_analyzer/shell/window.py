@@ -215,6 +215,7 @@ class MainWindow(QMainWindow):
             self._data_tab.set_persisted_state(
                 self._pending_grid_state, *self._pending_grid_layout)
             self._data_tab.layoutChanged.connect(self._save_ui)
+            self._data_tab.renameRequested.connect(self._rename_column)
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
         return self._data_tab
@@ -236,6 +237,7 @@ class MainWindow(QMainWindow):
             grid_order=order,
             grid_hidden=hidden,
             part_method=(self.controller.current_config() or {}).get("METHOD") or "",
+            renames=self.session.renames,
         )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
@@ -265,6 +267,7 @@ class MainWindow(QMainWindow):
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
         self.session.removed = list(state["removed"])
+        self.session.renames = dict(state["renames"])  # restore column renames
         self.controller.set_filters(state["filters"])  # restore persisted filters
         self._pending_grid_state = state["grid_header"]
         self._pending_grid_layout = (
@@ -431,6 +434,7 @@ class MainWindow(QMainWindow):
             "derivations": list(self.session.derivations),
             "removed": list(self.session.removed),
             "row_filter": list(p.row_filter),
+            "renames": dict(self.session.renames),
         }
         win = DetachedPlotWindow(
             spec=p.spec, span=p.span, layers=layers, raw=p.raw,
@@ -488,7 +492,7 @@ class MainWindow(QMainWindow):
         if ctx is not None:
             from . import derive
             return derive.shape(raw_df, ctx["derivations"], ctx["removed"],
-                                ctx["row_filter"])
+                                ctx["row_filter"], ctx.get("renames"))
         return self.controller.shape_filtered(raw_df, tab.row_filter)
 
     def _reshape_plots(self) -> None:
@@ -502,6 +506,35 @@ class MainWindow(QMainWindow):
                 tab.set_dataframe(
                     self.controller.shape_filtered(tab.raw, tab.row_filter)
                 )
+
+    def _start_rename_column(self) -> None:
+        """Toolbar 'Rename column': rename the selected column, or arm
+        click-to-rename if nothing is selected (handled by the grid)."""
+        if self._data_tab is not None:
+            self._data_tab.start_rename()
+
+    def _rename_column(self, old: str, new: str) -> None:
+        """Commit an inline column rename across the whole app: controller state
+        (renames map / derivation names / references), open plots, the grid
+        layout, and persistence."""
+        err = self.controller.rename_error(old, new)
+        if err:
+            self.set_status(f"Rename failed: {err}")
+            return
+        # Pre-swap the grid's name layout so the controller's refresh keeps the
+        # column exactly where it is (only the label changes).
+        if self._data_tab is not None:
+            self._data_tab.rename_in_layout(old, new)
+        self.controller.rename_column(old, new)  # validated above; mutates + refreshes
+        # Live (session-linked) plots follow the rename; frozen detached plots
+        # keep their own names.
+        from . import colref
+        for tab in self._plot_tabs:
+            if getattr(tab, "context", None) is None:
+                tab.spec = colref.rename_spec(tab.spec, old, new)
+        self._reshape_plots()
+        self._save_ui()
+        self.set_status(f"Renamed '{old}' to '{new}'.")
 
     def _close_tab(self, index: int) -> None:
         widget = self.stack.widget(index)
@@ -671,6 +704,7 @@ class MainWindow(QMainWindow):
                 on_column_visibility=(
                     (lambda n, v: dt.set_column_visible(n, v)) if dt else None
                 ),
+                on_rename=self._start_rename_column,
                 on_add_derive=self._add_derive_column,
                 on_add_label=self._add_group_label,
                 on_add_excel=self._add_excel_column,

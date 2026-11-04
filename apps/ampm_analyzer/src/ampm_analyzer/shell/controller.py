@@ -18,7 +18,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from . import derive, uistate
+from . import colref, derive, uistate
 from .datastore_settings import REQUIRED_COLUMNS
 from .recents import RecentStore
 from .state import BuildSession, QueryResult
@@ -512,7 +512,70 @@ class AppController(QObject):
         """Shape, then apply a plot's snapshotted row filter (after derivation)."""
         return derive.filter_rows(self._shape(df), conditions or [])
 
+    def current_columns(self) -> list[str]:
+        """Column names currently shown in the grid (after rename + derive, less
+        removed) — the set a rename validates against."""
+        if self._base_df is None:
+            return [d["name"] for d in self.session.derivations]
+        cols = [self.session.renames.get(c, c) for c in self._base_df.columns]
+        cols += [d["name"] for d in self.session.derivations]
+        return [c for c in cols if c not in self.session.removed]
+
+    def _original_source_name(self, display: str) -> str:
+        """The original datastore name whose current display is ``display``
+        (or ``display`` itself if it was never renamed)."""
+        for orig, cur in self.session.renames.items():
+            if cur == display:
+                return orig
+        return display
+
+    def rename_error(self, old: str, new: str) -> str | None:
+        """Validate a rename without mutating — lets the window pre-check before
+        it touches the grid layout. Returns an error message, or None."""
+        old, new = (old or "").strip(), (new or "").strip()
+        if not new:
+            return "Give the column a name."
+        if new == old:
+            return "That's already the column's name."
+        current = self.current_columns()
+        if old not in current:
+            return f"Column {old!r} isn't in the grid."
+        if new in current or new in self.session.removed:
+            return f"A column named {new!r} already exists."
+        return None
+
+    def rename_column(self, old: str, new: str) -> str | None:
+        """Rename a column everywhere: the renames map (source columns) or the
+        derivation name (derived columns), plus every ``[old]`` reference in
+        derivations and filters, and the removed list. Returns error / None.
+
+        The caller (window) also rewrites open plot specs and the grid layout,
+        then persists — this method owns only controller-side state.
+        """
+        old, new = (old or "").strip(), (new or "").strip()
+        err = self.rename_error(old, new)
+        if err:
+            return err
+        derived = {d["name"] for d in self.session.derivations}
+        if old not in derived:
+            # Source column: record the remap keyed by the original datastore
+            # name, composing with any earlier rename of the same column.
+            self.session.renames[self._original_source_name(old)] = new
+        self.session.derivations = colref.rename_derivations(
+            self.session.derivations, old, new)
+        self._filter = colref.rename_filters(self._filter, old, new)
+        self.session.removed = colref.rename_names(self.session.removed, old, new)
+        self._refresh_derived()
+        return None
+
     def _shape(self, df):
+        # Renames first: a source column reads as its new name through the whole
+        # pipeline (derivations, removed, filters, grid, plots).
+        if self.session.renames:
+            rmap = {o: n for o, n in self.session.renames.items()
+                    if o in df.columns and n != o}
+            if rmap:
+                df = df.rename(rmap)
         if self.session.derivations:
             df = derive.apply(df, self.session.derivations)
         drop = [c for c in self.session.removed if c in df.columns]

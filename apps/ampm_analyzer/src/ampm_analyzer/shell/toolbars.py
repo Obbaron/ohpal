@@ -160,6 +160,7 @@ def populate_data(
     on_toggle_sidebar=None,
     on_layer_changed=None,
     on_column_visibility=None,
+    on_rename=None,
     on_add_derive=None,
     on_add_label=None,
     on_add_excel=None,
@@ -203,7 +204,9 @@ def populate_data(
         a.setChecked(name not in hidden)
         if on_column_visibility is not None:
             a.toggled.connect(lambda vis, n=name: on_column_visibility(n, vis))
-    _action(toolbar, "Rename column", "rename_column", color)
+    rename = _action(toolbar, "Rename column", "rename_column", color)
+    if on_rename is not None:
+        rename.triggered.connect(lambda: on_rename())
     # Add column — a menu of sources. "Derive column" is a row-wise formula over
     # existing columns; "Add from Excel" joins external key/value data.
     add_btn = _menu_button(toolbar, "Add column", "add_column", color)

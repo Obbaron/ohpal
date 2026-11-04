@@ -489,12 +489,20 @@ def apply(df, derivations):
     return out
 
 
-def shape(df, derivations, removed, filters):
-    """Apply derivations, drop ``removed`` columns, then filter rows.
+def shape(df, derivations, removed, filters, renames=None):
+    """Apply renames, then derivations, drop ``removed`` columns, then filter.
 
     The same pipeline the controller runs, but driven by explicit snapshots
     rather than the live session — so a detached plot can shape its own data.
+    ``renames`` maps original datastore name -> current display name, applied
+    first (like the controller) so a detached plot of a renamed column still
+    resolves it.
     """
+    if renames:
+        rmap = {o: n for o, n in renames.items()
+                if o in df.columns and n != o}
+        if rmap:
+            df = df.rename(rmap)
     out = apply(df, derivations) if derivations else df
     if removed:
         drop = [c for c in removed if c in out.columns]
