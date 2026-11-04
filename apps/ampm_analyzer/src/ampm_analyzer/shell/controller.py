@@ -519,25 +519,36 @@ class AppController(QObject):
         return df.drop(drop) if drop else df
 
     def add_derivation(
-        self, name: str, expr_text: str, group: str = ""
+        self, name: str, expr_text: str, group: str = "", *, overwrite: bool = False
     ) -> str | None:
         """Register a derived column and refresh the grid.
 
-        ``group`` (optional) is a column to aggregate within. Returns an error
-        message, or None on success.
+        ``group`` (optional) is a column to aggregate within. ``overwrite`` lets
+        the formula target an existing column: a source column is shadowed by a
+        same-named formula (reversible by removing the derivation), and an
+        existing derived column has its definition replaced in place. Returns an
+        error message, or None on success.
         """
         base = self._base_df
-        names = list(base.columns) if base is not None else []
-        names += [d["name"] for d in self.session.derivations]
-        if name in names:
+        base_names = list(base.columns) if base is not None else []
+        derived_names = [d["name"] for d in self.session.derivations]
+        names = base_names + derived_names
+        if name in names and not overwrite:
             return f"A column named {name!r} already exists."
         try:
+            # Compile against all names; for overwrite the target is in scope, so
+            # a self-referential formula (e.g. `[x] / 365` onto `x`) is allowed.
             derive.compile_expr(expr_text, names)
         except derive.DeriveError as exc:
             return str(exc)
-        self.session.derivations.append(
-            {"kind": "formula", "name": name, "expr": expr_text, "group": group}
-        )
+        entry = {"kind": "formula", "name": name, "expr": expr_text, "group": group}
+        if overwrite and name in derived_names:
+            for i, d in enumerate(self.session.derivations):
+                if d["name"] == name:
+                    self.session.derivations[i] = entry  # replace definition
+                    break
+        else:
+            self.session.derivations.append(entry)  # new, or shadow a source col
         self._refresh_derived()
         return None
 

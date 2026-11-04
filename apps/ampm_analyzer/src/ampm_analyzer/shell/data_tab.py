@@ -317,6 +317,32 @@ class DataTab(QWidget):
         self._last_state = bytes(self.table.horizontalHeader().saveState())
         self.layoutChanged.emit()
 
+    def place_after(self, name: str, after: str) -> None:
+        """Move column ``name`` to directly follow ``after`` in the visual order,
+        and persist it (via the name snapshot). No-op if either is missing."""
+        header = self.table.horizontalHeader()
+        cols = list(self.model.columns)
+        if name not in cols or after not in cols or name == after:
+            return
+        order = [c for c in self._order_names if c in cols]
+        order += [c for c in cols if c not in order]  # fold in any un-snapshotted
+        if name in order:
+            order.remove(name)
+        idx = order.index(after) + 1 if after in order else len(order)
+        order.insert(idx, name)
+        logical = {n: i for i, n in enumerate(cols)}
+        self._applying = True
+        try:
+            for target_vis, n in enumerate(order):
+                cur_vis = header.visualIndex(logical[n])
+                if cur_vis != target_vis:
+                    header.moveSection(cur_vis, target_vis)
+        finally:
+            self._applying = False
+            self._capture_names()
+            self._last_state = bytes(header.saveState())
+        self.layoutChanged.emit()
+
     def current_state(self) -> bytes:
         return bytes(self.table.horizontalHeader().saveState())
 

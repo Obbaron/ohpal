@@ -1,60 +1,127 @@
-"""Dialog for defining a row-wise derived column (name + formula).
+"""Dialog for creating or overwriting a column from a row-wise formula.
 
-Columns are referenced in the formula in ``[brackets]`` — type ``[`` for an
-autocomplete list. The formula is validated live and again on OK against the
-available columns; errors are shown inline and keep the dialog open.
+The top controls choose the target: a **new** column (named, with an optional
+grid position via "After this column") or an **existing** column to
+**overwrite**. Columns are referenced in ``[brackets]`` — type ``[`` for an
+autocomplete list. The formula is validated live and again on OK.
+
+The dialog is a frameless card (no window chrome) with an accent-coloured
+primary button, to match the in-app calculation-editor styling.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QRadioButton,
+    QStackedWidget,
     QVBoxLayout,
 )
 
 from .derive import DeriveError, compile_expr
 from .derive_editor import FormulaEdit, FormulaHighlighter
+from .widgets import fix_combo
+
+_AT_END = "— at end —"
+
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
 
 
 class DeriveColumnDialog(QDialog):
     def __init__(self, columns, parent=None, *, taken=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Derive column")
         self._columns = list(columns)
         self._taken = set(taken or [])
 
-        lay = QVBoxLayout(self)
+        # Frameless card: drop the window chrome; a translucent window lets the
+        # rounded QFrame show its corners.
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("DeriveCard")
+        card.setStyleSheet(
+            "#DeriveCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
 
-        form = QFormLayout()
+        title = QLabel("Derive column")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
+
+        # -- target: new vs overwrite, and placement -------------------
+        self.radio_new = QRadioButton("Create new column")
+        self.radio_over = QRadioButton("Overwrite existing column")
+        self.radio_new.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self.radio_new)
+        grp.addButton(self.radio_over)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.radio_new)
+        mode_row.addWidget(self.radio_over)
+        mode_row.addStretch(1)
+        lay.addLayout(mode_row)
+
+        # Left target — stacked: a name field (new) or a column picker (overwrite).
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("new column name")
-        form.addRow("Name", self.name_edit)
+        self.target_combo = fix_combo(QComboBox())
+        self.target_combo.addItems(self._columns)
+        self.target_stack = QStackedWidget()
+        self.target_stack.addWidget(self.name_edit)     # 0 = new
+        self.target_stack.addWidget(self.target_combo)  # 1 = overwrite
 
-        lay.addLayout(form)
+        # Right — placement (only meaningful for a new column).
+        self.after_label = QLabel("After this column")
+        self.after_combo = fix_combo(QComboBox())
+        self.after_combo.addItem(_AT_END)
+        self.after_combo.addItems(self._columns)
 
-        # Multi-line formula box (supports long / nested formulas), with syntax
-        # highlighting + column/function autocomplete (type '[' for columns).
+        target_row = QHBoxLayout()
+        target_row.addWidget(self.target_stack, 1)
+        target_row.addSpacing(12)
+        target_row.addWidget(self.after_label)
+        target_row.addWidget(self.after_combo)
+        lay.addLayout(target_row)
+
+        self.radio_over.toggled.connect(self._sync_mode)
+
+        # -- formula ---------------------------------------------------
         lay.addWidget(QLabel("Formula"))
         self.expr_edit = FormulaEdit(self._columns)
         self.expr_edit.setPlaceholderText(
-            "e.g. cov([LaserVIEW (mean)])\n"
+            "e.g. [availability_365] / 365\n"
             "     where([Z] > 0.5, \"high\", \"low\")\n"
             "     mean([mp] where [side] == \"A\") by [part]"
         )
-        self.expr_edit.setMinimumHeight(150)
+        self.expr_edit.setMinimumHeight(140)
         dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
         self._highlighter = FormulaHighlighter(
             self.expr_edit.document(), self._columns, dark=dark)
         lay.addWidget(self.expr_edit, 1)
 
-        # Live validation: debounce typing, then compile against the columns and
-        # report inline (amber while in-progress, green when valid).
+        # Live validation (debounced).
         self._live = QTimer(self)
         self._live.setSingleShot(True)
         self._live.setInterval(250)
@@ -63,30 +130,50 @@ class DeriveColumnDialog(QDialog):
 
         self.error = QLabel("")
         self.error.setWordWrap(True)
-        self.error.setStyleSheet("color: #d9534f;")
         self.error.setVisible(False)
         lay.addWidget(self.error)
 
+        # -- buttons (accent primary) ----------------------------------
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
         lay.addWidget(buttons)
 
-        self.resize(520, 360)
+        self._sync_mode()
+        self.resize(560, 420)
 
+    # -- mode handling -------------------------------------------------
+    def _sync_mode(self, *_a) -> None:
+        over = self.radio_over.isChecked()
+        self.target_stack.setCurrentIndex(1 if over else 0)
+        self.after_label.setVisible(not over)   # placement is new-column only
+        self.after_combo.setVisible(not over)
+        self._validate_live()
+
+    def _is_overwrite(self) -> bool:
+        return self.radio_over.isChecked()
+
+    def _target_name(self) -> str:
+        if self._is_overwrite():
+            return self.target_combo.currentText().strip()
+        return self.name_edit.text().strip()
+
+    # -- validation ----------------------------------------------------
     def _validate_live(self) -> None:
-        """Compile as the user types; amber for in-progress problems, green when
-        the formula is valid. The OK handler stays the authoritative check."""
+        """Compile as the user types; amber while in-progress, green when valid.
+        The OK handler stays the authoritative check."""
         text = self.expr_edit.toPlainText().strip()
         if not text:
             self.error.setVisible(False)
             return
-        # Don't nag while the formula is visibly mid-entry: an unclosed bracket
-        # (you're picking a column) or the completion popup still open. Wait for
-        # it to settle before reporting anything.
+        # Stay quiet while the formula is visibly mid-entry (unclosed bracket or
+        # the completion popup still open).
         if text.count("[") != text.count("]") or self.expr_edit.completer_active():
             self.error.setVisible(False)
             return
@@ -100,11 +187,15 @@ class DeriveColumnDialog(QDialog):
             self._set_status("✓ valid expression", "ok")
 
     def _accept(self) -> None:
-        name = self.name_edit.text().strip()
+        name = self._target_name()
         if not name:
-            self._show_error("Give the column a name.")
+            self._show_error(
+                "Pick a column to overwrite." if self._is_overwrite()
+                else "Give the column a name.")
             return
-        if name in self._columns or name in self._taken:
+        if not self._is_overwrite() and (
+            name in self._columns or name in self._taken
+        ):
             self._show_error(f"A column named {name!r} already exists.")
             return
         try:
@@ -124,7 +215,18 @@ class DeriveColumnDialog(QDialog):
     def _show_error(self, text: str) -> None:
         self._set_status(text, "error")
 
+    # -- results -------------------------------------------------------
     def result_values(self) -> tuple[str, str, str]:
-        # group is always "" now — scope aggregates inline with `by [cols]`.
-        return (self.name_edit.text().strip(),
+        # group is always "" — aggregates scope inline with `by [cols]`.
+        return (self._target_name(),
                 self.expr_edit.toPlainText().strip(), "")
+
+    def is_overwrite(self) -> bool:
+        return self._is_overwrite()
+
+    def after_column(self) -> str | None:
+        """The column the new one should follow, or None for end / overwrite."""
+        if self._is_overwrite():
+            return None
+        v = self.after_combo.currentText()
+        return None if v == _AT_END else v

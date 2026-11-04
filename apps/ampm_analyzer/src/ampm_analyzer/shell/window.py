@@ -782,12 +782,16 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, expr, group = dlg.result_values()
-        err = self.controller.add_derivation(name, expr, group)
+        overwrite = dlg.is_overwrite()
+        after = dlg.after_column()
+        err = self.controller.add_derivation(name, expr, group, overwrite=overwrite)
         if err:
             self.set_status(f"Derive column failed: {err}")
         else:
-            by = f" by {group}" if group else ""
-            self.set_status(f"Added derived column '{name}'{by}.")
+            verb = "Overwrote" if overwrite else "Added derived"
+            self.set_status(f"{verb} column '{name}'.")
+            if not overwrite and after:
+                dt.place_after(name, after)  # position the new column in the grid
             self._save_ui()
             self._reshape_plots()
 
