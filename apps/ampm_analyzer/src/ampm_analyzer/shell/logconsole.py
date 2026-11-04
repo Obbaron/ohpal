@@ -15,8 +15,10 @@ from collections import deque
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -98,6 +100,9 @@ class LogWindow(QMainWindow):
 
         row = QHBoxLayout()
         row.addStretch(1)
+        export = QPushButton("Export log")
+        export.clicked.connect(self._export)
+        row.addWidget(export)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear)
         row.addWidget(clear)
@@ -114,6 +119,21 @@ class LogWindow(QMainWindow):
     def _scroll_to_end(self) -> None:
         sb = self.view.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _export(self) -> None:
+        from datetime import datetime
+        from pathlib import Path
+
+        start = str(Path.home() / f"ampm-log-{datetime.now():%Y%m%d-%H%M%S}.txt")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export log", start, "Text files (*.txt *.log);;All files (*)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(self._bus.history(), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export log",
+                                f"Couldn't save the log:\n{exc}")
 
     def _clear(self) -> None:
         self._bus.clear()

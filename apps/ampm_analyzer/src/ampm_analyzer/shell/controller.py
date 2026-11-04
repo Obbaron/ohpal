@@ -93,8 +93,13 @@ class AppController(QObject):
 
     # -- load/prepare --------------------------------------------------
     def _load(self, build_root: Path, mode: str) -> None:
+        import time
+
         self._busy = True
         self.session.begin_load(build_root.name)
+        self._pump()  # paint "Loading <build>…" before the synchronous load work
+        timings: dict[str, float] = {}
+        t0 = time.perf_counter()
         try:
             if mode == "new":
                 config = self._ensure_and_load_config(build_root)
@@ -112,7 +117,10 @@ class AppController(QObject):
                     config = self._guarded(lambda: self._load_config(build_root))
             source_dir = Path(config["SOURCE"])
             thickness = float(config.get("LAYER_THICKNESS") or 0.03) or 0.03
+            timings["config"] = time.perf_counter() - t0
+            t0 = time.perf_counter()
             store = self._construct_store(source_dir, thickness)
+            timings["construct_store"] = time.perf_counter() - t0
         except Exception as exc:  # noqa: BLE001
             self._finish_idle(None)
             self.session.fail(str(exc))
@@ -125,19 +133,27 @@ class AppController(QObject):
         # (persisted per-build) — config.toml doesn't record it, so without this
         # a reopened cached build loses its part_id. Set before set_store so the
         # setup form it repopulates also shows the real choice.
+        t0 = time.perf_counter()
         saved_method = uistate.load_state(store.cache_dir).get("part_method")
         if saved_method:
             self._config["METHOD"] = saved_method
+        # Cache status is computed once and reused (it was being stat-scanned
+        # twice per load); scandir-based, so one directory read, not N exists().
+        cached, _total = self._cache_status(store)
+        timings["cache_status"] = time.perf_counter() - t0
         # Record this build in the recents list (before set_store so the
         # backstage refresh triggered by the load already sees it).
-        cached_now, _ = self._cache_status(store)
-        self._recents.record(build_root, has_cache=cached_now > 0)
+        self._recents.record(build_root, has_cache=cached > 0)
+        t0 = time.perf_counter()
         self.session.set_store(store, source_dir, build_root.name, thickness)
+        timings["set_store"] = time.perf_counter() - t0
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
+        t0 = time.perf_counter()
         self._apply_part_assignment(store, self._config.get("METHOD"))
+        timings["part_assign"] = time.perf_counter() - t0
+        self._log_timings(timings)
 
-        cached, _total = self._cache_status(store)
         exists = cached > 0
 
         if mode == "open":
@@ -288,8 +304,39 @@ class AppController(QObject):
 
     @staticmethod
     def _cache_status(store) -> tuple[int, int]:
-        cached = sum(1 for L in store.layers if store._cache_path(L).exists())
-        return cached, len(store.layers)
+        """(cached_layers, total_layers). One directory read instead of a
+        ``.exists()`` stat per layer — far cheaper as the layer count grows."""
+        import os
+
+        layers = store.layers
+        try:
+            present = {e.name for e in os.scandir(store.cache_dir)
+                       if e.name.endswith(".parquet")}
+        except OSError:
+            present = set()
+        cached = sum(1 for L in layers if store._cache_path(L).name in present)
+        return cached, len(layers)
+
+    @staticmethod
+    def _pump() -> None:
+        """Flush pending UI events so a just-set status / spinner actually paints
+        before a blocking stretch of work on the main thread."""
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
+    def _log_timings(self, timings: dict) -> None:
+        """Log per-phase load timings to the log console (diagnostic)."""
+        if not timings:
+            return
+        line = "Load timing — " + ", ".join(
+            f"{k} {v * 1000:.0f}ms" for k, v in timings.items())
+        try:
+            self._window.log_bus.log_line(line)
+        except Exception:  # noqa: BLE001 — logging must never break a load
+            pass
 
     def current_config(self) -> dict:
         return self._config
