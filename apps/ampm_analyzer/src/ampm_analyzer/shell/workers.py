@@ -12,12 +12,59 @@ killing anything.
 
 from __future__ import annotations
 
+import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from .state import QueryResult
+
+
+class LoadWorker(QObject):
+    """Loads (or creates) a build's config and constructs its DataStore, off the
+    UI thread.
+
+    This is where the first ``import ohpal`` happens — which cascades into
+    ``polars`` / ``pyarrow`` and costs ~2s cold on the first build open. Running
+    it here keeps the window responsive instead of freezing. Emits
+    ``(config, store, source_dir, thickness, elapsed_ms)``; a ``create`` flag
+    (decided on the main thread) says whether a missing config should be made.
+    """
+
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, build_root, *, create: bool) -> None:
+        super().__init__()
+        self._build_root = Path(build_root)
+        self._create = create
+
+    @pyqtSlot()
+    def run(self) -> None:
+        t = time.perf_counter()
+        try:
+            if self._create and not (self._build_root / "config.toml").exists():
+                from ohpal.ampm.setup_build import create_config
+
+                create_config(self._build_root)
+            from ohpal.ampm.config import load_config
+
+            config = load_config(self._build_root)
+            source_dir = Path(config["SOURCE"])
+            thickness = float(config.get("LAYER_THICKNESS") or 0.03) or 0.03
+            from ohpal.ampm import DataStore
+
+            store = DataStore(source_dir, layer_thickness=thickness)
+        except SystemExit as exc:  # ohpal config helpers can call sys.exit()
+            self.error.emit(f"Load aborted: {exc}")
+        except Exception:  # noqa: BLE001 - surface any failure as a message
+            self.error.emit(traceback.format_exc())
+        else:
+            self.finished.emit(
+                (config, store, source_dir, thickness,
+                 (time.perf_counter() - t) * 1000))
 
 
 class QueryWorker(QObject):

@@ -93,39 +93,46 @@ class AppController(QObject):
 
     # -- load/prepare --------------------------------------------------
     def _load(self, build_root: Path, mode: str) -> None:
-        import time
-
+        """Begin loading a build. The expensive part — loading/creating the config
+        and constructing the DataStore, where the ~2s cold ``import ohpal`` (->
+        polars) happens — runs on a worker thread so the window never freezes. The
+        rest resumes on the main thread in ``_on_load_done``."""
         self._busy = True
-        self.session.begin_load(build_root.name)
-        self._pump()  # paint "Loading <build>…" before the synchronous load work
-        timings: dict[str, float] = {}
-        t0 = time.perf_counter()
-        try:
-            if mode == "new":
-                config = self._ensure_and_load_config(build_root)
-            else:  # open
-                if not (build_root / "config.toml").exists():
-                    # Not a prepared build — offer to set one up.
-                    if not self._confirm(
-                        "No DataStore found for this build.\n\n"
-                        "Would you like to create one?"
-                    ):
-                        self._finish_idle("Open cancelled — no DataStore.")
-                        return
-                    config = self._ensure_and_load_config(build_root)
-                else:
-                    config = self._guarded(lambda: self._load_config(build_root))
-            source_dir = Path(config["SOURCE"])
-            thickness = float(config.get("LAYER_THICKNESS") or 0.03) or 0.03
-            timings["config"] = time.perf_counter() - t0
-            t0 = time.perf_counter()
-            store = self._construct_store(source_dir, thickness)
-            timings["construct_store"] = time.perf_counter() - t0
-        except Exception as exc:  # noqa: BLE001
-            self._finish_idle(None)
-            self.session.fail(str(exc))
+        # A build with no config.toml needs one created. For Open, confirm first
+        # (on the main thread, before the worker starts).
+        create = not (build_root / "config.toml").exists()
+        if mode == "open" and create and not self._confirm(
+            "No DataStore found for this build.\n\n"
+            "Would you like to create one?"
+        ):
+            self._finish_idle("Open cancelled — no DataStore.")
             return
+        self.session.begin_load(build_root.name)
+        self._pump()  # paint "Loading <build>…" before the (threaded) heavy work
+        self._start_load(build_root, mode, create)
 
+    def _start_load(self, build_root: Path, mode: str, create: bool) -> None:
+        from .workers import LoadWorker
+
+        thread = QThread(self)
+        worker = LoadWorker(build_root, create=create)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(
+            lambda res: self._on_load_done(build_root, mode, res))
+        worker.error.connect(self._on_load_error)
+        self._wire_teardown(thread, worker)
+        self._thread, self._worker = thread, worker
+        thread.start()
+
+    def _on_load_error(self, message: str) -> None:
+        self._finish_idle(None)
+        self.session.fail(message)
+
+    def _on_load_done(self, build_root: Path, mode: str, result) -> None:
+        """Main-thread continuation once the worker has the config + store: set up
+        session state, then decide whether to query the cache or go to setup."""
+        config, store, source_dir, thickness, _elapsed = result
         self._config = config
         self._columns = None  # default to all; the setup page's build may narrow it
         self._filter = []     # a fresh build starts unfiltered
@@ -133,26 +140,17 @@ class AppController(QObject):
         # (persisted per-build) — config.toml doesn't record it, so without this
         # a reopened cached build loses its part_id. Set before set_store so the
         # setup form it repopulates also shows the real choice.
-        t0 = time.perf_counter()
         saved_method = uistate.load_state(store.cache_dir).get("part_method")
         if saved_method:
             self._config["METHOD"] = saved_method
-        # Cache status is computed once and reused (it was being stat-scanned
-        # twice per load); scandir-based, so one directory read, not N exists().
         cached, _total = self._cache_status(store)
-        timings["cache_status"] = time.perf_counter() - t0
-        # Record this build in the recents list (before set_store so the
-        # backstage refresh triggered by the load already sees it).
+        # Record this build in the recents list (before set_store so the backstage
+        # refresh triggered by the load already sees it).
         self._recents.record(build_root, has_cache=cached > 0)
-        t0 = time.perf_counter()
         self.session.set_store(store, source_dir, build_root.name, thickness)
-        timings["set_store"] = time.perf_counter() - t0
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
-        t0 = time.perf_counter()
         self._apply_part_assignment(store, self._config.get("METHOD"))
-        timings["part_assign"] = time.perf_counter() - t0
-        self._log_timings(timings)
 
         exists = cached > 0
 
@@ -326,17 +324,6 @@ class AppController(QObject):
         app = QApplication.instance()
         if app is not None:
             app.processEvents()
-
-    def _log_timings(self, timings: dict) -> None:
-        """Log per-phase load timings to the log console (diagnostic)."""
-        if not timings:
-            return
-        line = "Load timing — " + ", ".join(
-            f"{k} {v * 1000:.0f}ms" for k, v in timings.items())
-        try:
-            self._window.log_bus.log_line(line)
-        except Exception:  # noqa: BLE001 — logging must never break a load
-            pass
 
     def current_config(self) -> dict:
         return self._config
