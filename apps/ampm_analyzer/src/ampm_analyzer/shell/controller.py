@@ -16,9 +16,10 @@ import re
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
+from PyQt6.QtWidgets import QFileDialog, QWidget
 
 from . import colref, derive, uistate
+from .message_dialog import ask as _ask, tell as _tell
 from .datastore_settings import REQUIRED_COLUMNS
 from .recents import RecentStore
 from .state import BuildSession, QueryResult
@@ -103,7 +104,8 @@ class AppController(QObject):
         create = not (build_root / "config.toml").exists()
         if mode == "open" and create and not self._confirm(
             "No DataStore found for this build.\n\n"
-            "Would you like to create one?"
+            "Would you like to create one?",
+            ok_text="Create",
         ):
             self._finish_idle("Open cancelled — no DataStore.")
             return
@@ -160,7 +162,8 @@ class AppController(QObject):
             else:
                 if self._confirm(
                     "No DataStore found for this build.\n\n"
-                    "Would you like to create one?"
+                    "Would you like to create one?",
+                    ok_text="Create",
                 ):
                     self._setup_force = False
                     self._finish_idle(None)
@@ -173,7 +176,8 @@ class AppController(QObject):
         if exists:
             if self._confirm(
                 "Existing DataStore found for this build.\n\n"
-                "Would you like to overwrite it?"
+                "Would you like to overwrite it?",
+                ok_text="Overwrite",
             ):
                 self._setup_force = True
                 self._finish_idle(None)
@@ -208,7 +212,7 @@ class AppController(QObject):
         # Part assignment (dhxml → part_id) per the chosen recipe, else config.
         method = (recipe or {}).get("part_method") or self._config.get("METHOD")
         if (method or "").lower() == "dbscan":
-            QMessageBox.information(
+            _tell(
                 self._window, "Part assignment",
                 "DBSCAN part assignment isn't implemented yet.\n\n"
                 "Building without a part assignment.",
@@ -335,16 +339,9 @@ class AppController(QObject):
         return self._cache_status(store)[0] > 0
 
     # -- prompts / state -----------------------------------------------
-    def _confirm(self, text: str) -> bool:
-        return (
-            QMessageBox.question(
-                self._window,
-                "DataStore",
-                text,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            == QMessageBox.StandardButton.Yes
-        )
+    def _confirm(self, text: str, *, ok_text: str = "Yes") -> bool:
+        return _ask(self._window, "DataStore", text,
+                    ok_text=ok_text, cancel_text="Cancel")
 
     def _finish_idle(self, status: str | None) -> None:
         self._busy = False

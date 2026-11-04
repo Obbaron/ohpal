@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -36,10 +36,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 
 from . import colref, export
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
+
+# Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
+
+
+def _section(text: str) -> QLabel:
+    """A bold section header (replaces the old group-box frames)."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet("font-weight: 600;")
+    return lbl
 
 
 class ExcelExportDialog(QDialog):
@@ -55,7 +71,27 @@ class ExcelExportDialog(QDialog):
         self._value_rows: list = []
         self._result = None
 
-        lay = QVBoxLayout(self)
+        # Frameless card (matches the calculation / filter / new-plot dialogs).
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("ExportCard")
+        card.setStyleSheet(
+            "#ExportCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        title = QLabel("Export to Excel")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
 
         # -- Mode: Summary vs Raw -------------------------------------
         mode_row = QHBoxLayout()
@@ -87,8 +123,7 @@ class ExcelExportDialog(QDialog):
         lay.addWidget(self.chk_filters)
 
         # -- Output file + sheet --------------------------------------
-        out = QGroupBox("Output")
-        of = QVBoxLayout(out)
+        lay.addWidget(_section("Output"))
         file_row = QHBoxLayout()
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("choose where to save…")
@@ -96,13 +131,12 @@ class ExcelExportDialog(QDialog):
         browse.clicked.connect(self._browse)
         file_row.addWidget(self.path_edit, 1)
         file_row.addWidget(browse)
-        of.addLayout(file_row)
+        lay.addLayout(file_row)
         sheet_row = QHBoxLayout()
         sheet_row.addWidget(QLabel("Sheet"))
         self.sheet_edit = QLineEdit("Export")
         sheet_row.addWidget(self.sheet_edit, 1)
-        of.addLayout(sheet_row)
-        lay.addWidget(out)
+        lay.addLayout(sheet_row)
 
         self.msg = QLabel("")
         self.msg.setWordWrap(True)
@@ -113,9 +147,16 @@ class ExcelExportDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Export")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Export")
+        ok.setIcon(QIcon())      # drop the themed check icon
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())  # drop the themed cross icon
         lay.addWidget(buttons)
 
         # Seed one value row (a melt-pool column if present, else the first);
@@ -186,8 +227,12 @@ class ExcelExportDialog(QDialog):
         return page
 
     def _scope_box(self) -> QWidget:
-        box = QGroupBox("Scope")
-        row = QHBoxLayout(box)
+        wrap = QWidget()
+        v = QVBoxLayout(wrap)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(4)
+        v.addWidget(_section("Scope"))
+        row = QHBoxLayout()
         self.scope_current = QRadioButton("Current view")
         self.scope_all = QRadioButton("All layers")
         self.scope_range = QRadioButton("Range")
@@ -211,7 +256,8 @@ class ExcelExportDialog(QDialog):
         row.addWidget(QLabel("to"))
         row.addWidget(self.hi_spin)
         row.addStretch(1)
-        return box
+        v.addLayout(row)
+        return wrap
 
     # -- value rows ---------------------------------------------------
     def _add_value_row(self, col=None, agg="mean") -> None:
