@@ -3,27 +3,39 @@
 Each rule is a boolean condition and a text label; the first matching rule wins,
 and rows matching none get the default label. Conditions reference columns in
 [brackets] and use comparisons with and / or / not. Validated on OK.
+
+Styled to match the calculation dialog: a frameless card with an accent-coloured
+primary button, Functions / Columns insert menus, and the rules listed directly
+(no surrounding box).
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
-    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .derive import DeriveError, compile_predicate
-from .widgets import fix_combo
+from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_predicate
+
+# Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
 
 
 class _Rule(QWidget):
@@ -57,13 +69,32 @@ class _Rule(QWidget):
 class GroupLabelDialog(QDialog):
     def __init__(self, columns, parent=None, *, taken=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Group label")
         self._columns = list(columns)
         self._taken = set(taken or [])
         self._rules: list[_Rule] = []
         self._active_cond: QLineEdit | None = None
 
-        lay = QVBoxLayout(self)
+        # Frameless card (matches the calculation dialog).
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("LabelCard")
+        card.setStyleSheet(
+            "#LabelCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        title = QLabel("Create label")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
 
         name_row = QHBoxLayout()
         name_row.addWidget(QLabel("Name"))
@@ -72,26 +103,20 @@ class GroupLabelDialog(QDialog):
         name_row.addWidget(self.name_edit, 1)
         lay.addLayout(name_row)
 
-        # Column inserter — inserts [name] into the last-focused condition.
-        pick = QHBoxLayout()
-        self.col_combo = fix_combo(QComboBox())
-        self.col_combo.addItems(self._columns)
-        insert = QPushButton("Insert column")
-        insert.clicked.connect(self._insert_column)
-        pick.addWidget(self.col_combo, 1)
-        pick.addWidget(insert)
-        lay.addLayout(pick)
+        # Rules header with Functions / Columns insert menus (into the active
+        # condition field).
+        rhdr = QHBoxLayout()
+        rhdr.addWidget(QLabel("Rules"))
+        rhdr.addStretch(1)
+        rhdr.addWidget(self._inserter("Functions", self._function_menu()))
+        rhdr.addWidget(self._inserter("Columns", self._column_menu()))
+        lay.addLayout(rhdr)
 
-        # Scrollable list of rule rows.
+        # Rules listed directly — no surrounding box / scroll area.
         self._rules_box = QVBoxLayout()
         self._rules_box.setContentsMargins(0, 0, 0, 0)
-        holder = QWidget()
-        holder.setLayout(self._rules_box)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(holder)
-        scroll.setMinimumHeight(140)
-        lay.addWidget(scroll, 1)
+        self._rules_box.setSpacing(4)
+        lay.addLayout(self._rules_box)
 
         add_rule = QPushButton("Add rule")
         add_rule.clicked.connect(lambda: self._add_rule())
@@ -109,11 +134,11 @@ class GroupLabelDialog(QDialog):
             "Chaining works: 0 < [Z] < 1."
         )
         hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(placeholder-text);")
         lay.addWidget(hint)
 
         self.error = QLabel("")
         self.error.setWordWrap(True)
-        self.error.setStyleSheet("color: #d9534f;")
         self.error.setVisible(False)
         lay.addWidget(self.error)
 
@@ -123,10 +148,51 @@ class GroupLabelDialog(QDialog):
         )
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Run")
+        ok.setIcon(QIcon())
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())
         lay.addWidget(buttons)
 
         self._add_rule()  # start with one empty rule
         self.resize(560, self.sizeHint().height())
+
+    # -- Functions / Columns insert menus ------------------------------
+    def _inserter(self, label: str, menu: QMenu) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn.setAutoRaise(True)
+        btn.setMenu(menu)
+        return btn
+
+    def _function_menu(self) -> QMenu:
+        m = QMenu(self)
+        for i, group in enumerate((_AGGREGATE, _ELEMENTWISE, ("where",))):
+            if i:
+                m.addSeparator()
+            for name in group:
+                m.addAction(name).triggered.connect(
+                    lambda _c=False, n=name: self._insert(f"{n}("))
+        return m
+
+    def _column_menu(self) -> QMenu:
+        m = QMenu(self)
+        for name in self._columns:
+            m.addAction(name).triggered.connect(
+                lambda _c=False, n=name: self._insert(f"[{n}]"))
+        return m
+
+    def _insert(self, text: str) -> None:
+        target = self._active_cond or (self._rules[-1].cond if self._rules else None)
+        if target is not None:
+            target.insert(text)
+            target.setFocus()
 
     # -- rule rows -----------------------------------------------------
     def _add_rule(self) -> _Rule:
@@ -144,15 +210,6 @@ class GroupLabelDialog(QDialog):
 
     def _set_active_cond(self, edit: QLineEdit) -> None:
         self._active_cond = edit
-
-    def _insert_column(self) -> None:
-        name = self.col_combo.currentText()
-        if not name:
-            return
-        target = self._active_cond or (self._rules[-1].cond if self._rules else None)
-        if target is not None:
-            target.insert(f"[{name}]")
-            target.setFocus()
 
     # -- result --------------------------------------------------------
     def _accept(self) -> None:
@@ -176,6 +233,7 @@ class GroupLabelDialog(QDialog):
         self.accept()
 
     def _show_error(self, text: str) -> None:
+        self.error.setStyleSheet("color: #d9534f;")
         self.error.setText(text)
         self.error.setVisible(True)
 
