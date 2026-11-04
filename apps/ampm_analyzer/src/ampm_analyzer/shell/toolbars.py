@@ -22,9 +22,11 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
     QMenu,
+    QSizePolicy,
     QSpinBox,
     QToolBar,
     QToolButton,
+    QWidget,
 )
 
 from . import icons
@@ -288,14 +290,6 @@ def populate_plot(
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
     toolbar.addSeparator()
-    # Pop out into its own window (docked plots) / dock back (floating windows).
-    if on_popout is not None:
-        pop = _action(toolbar, "Pop out", "popout", color)
-        pop.triggered.connect(lambda: on_popout())
-    if on_dock is not None:
-        dock = _action(toolbar, "Dock in", "dockin", color)
-        dock.triggered.connect(lambda: on_dock())
-    toolbar.addSeparator()
     # View
     reset = _action(toolbar, "Reset view", "reset_view", color)
     if on_reset_view is not None:
@@ -318,3 +312,13 @@ def populate_plot(
     shot = _action(toolbar, "Screenshot", "screenshot", color)
     if on_screenshot is not None:
         shot.triggered.connect(lambda: on_screenshot())
+    # Pop out / dock in — pushed to the far right with an expanding spacer.
+    spacer = QWidget()
+    spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    toolbar.addWidget(spacer)
+    if on_popout is not None:
+        pop = _action(toolbar, "Pop out", "popout", color)
+        pop.triggered.connect(lambda: on_popout())
+    if on_dock is not None:
+        dock = _action(toolbar, "Dock in", "dockin", color)
+        dock.triggered.connect(lambda: on_dock())
