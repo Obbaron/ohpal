@@ -6,12 +6,15 @@ or the colour. Defaults come from plotspec.default_spec but are freely changed.
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QRadioButton,
@@ -24,6 +27,14 @@ from .toolbars import LayerSpinBox
 from .widgets import fix_combo
 
 _NONE = "— none —"
+
+# Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
 
 
 class NewPlotDialog(QDialog):
@@ -40,7 +51,29 @@ class NewPlotDialog(QDialog):
         )
         base = default_spec(kind, self._columns, renames)
 
-        lay = QVBoxLayout(self)
+        # Frameless card (matches the calculation / filter dialogs): drop the
+        # window chrome; a translucent window lets the rounded QFrame show.
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("NewPlotCard")
+        card.setStyleSheet(
+            "#NewPlotCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        title = QLabel(f"New {kind}")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
+
         form = QFormLayout()
 
         def axis_combo(selected: str | None) -> QComboBox:
@@ -94,10 +127,8 @@ class NewPlotDialog(QDialog):
         # layer.
         self._is_layer_viewer = base.is_layer_viewer
         if self._is_layer_viewer:
-            note = QLabel("Scrub through layers with the slider on the plot.")
-            note.setWordWrap(True)
-            lay.addWidget(note)
             self._add_buttons(lay)
+            self.setMinimumWidth(440)
             return
 
         # Layer span this plot queries — its own, independent of the grid.
@@ -143,6 +174,7 @@ class NewPlotDialog(QDialog):
         lay.addLayout(span_row)
 
         self._add_buttons(lay)
+        self.setMinimumWidth(480)
 
     def _add_buttons(self, lay) -> None:
         buttons = QDialogButtonBox(
@@ -151,6 +183,14 @@ class NewPlotDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Plot")
+        ok.setIcon(QIcon())      # drop the themed check icon
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())  # drop the themed cross icon
         lay.addWidget(buttons)
 
     def _sync_span_enabled(self) -> None:
