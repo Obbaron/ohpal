@@ -1,47 +1,88 @@
 """Dialog for adding a row filter condition.
 
 A condition is a boolean predicate in the same DSL as derived columns, e.g.
-``[Demand X] >= -32 and [Demand X] <= -28``. Columns insert in ``[brackets]``.
-A "Spatial box" helper fills the common X/Y-bounds case. Validated on OK against
-the available columns (including derived ones); errors keep the dialog open.
+``[Demand X] >= -32 and [Demand X] <= -28``. Columns are referenced in
+``[brackets]`` — type ``[`` for an autocomplete list. A "Spatial box" helper
+fills the common X/Y-bounds case. The condition is validated live and again on
+OK against the available columns (including derived ones).
+
+Styled to match the calculation / label dialogs: a frameless card with an
+accent-coloured primary button, syntax highlighting and autocomplete, and
+Functions / Columns insert menus.
 """
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QIcon, QPalette
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
+    QMenu,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
 )
 
-from .derive import DeriveError, compile_predicate
-from .widgets import fix_combo
+from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_predicate
+from .derive_editor import FormulaEdit, FormulaHighlighter
 
 _X = "Demand X"
 _Y = "Demand Y"
+
+# Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
 
 
 class FilterConditionDialog(QDialog):
     def __init__(self, columns, parent=None, *, initial: str = "",
                  renames=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit filter condition" if initial
-                            else "Add filter condition")
         self._columns = list(columns)
         self._renames = dict(renames or {})
 
-        lay = QVBoxLayout(self)
+        # Frameless card (matches the calculation / label dialogs).
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("FilterCard")
+        card.setStyleSheet(
+            "#FilterCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
 
-        lay.addWidget(QLabel("Condition (keeps rows where this is true)"))
-        self.expr_edit = QPlainTextEdit()
+        title = QLabel("Edit filter" if initial else "Add filter")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
+
+        # Condition header: label + Functions / Columns insert menus.
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel("Condition (keeps rows where this is true)"))
+        hdr.addStretch(1)
+        hdr.addWidget(self._inserter("Functions", self._function_menu()))
+        hdr.addWidget(self._inserter("Columns", self._column_menu()))
+        lay.addLayout(hdr)
+
+        self.expr_edit = FormulaEdit(self._columns)
         if initial:
             self.expr_edit.setPlainText(initial)
         self.expr_edit.setPlaceholderText(
@@ -50,22 +91,22 @@ class FilterConditionDialog(QDialog):
             '     [region] == "R1"'
         )
         self.expr_edit.setMinimumHeight(110)
+        dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
+        self._highlighter = FormulaHighlighter(
+            self.expr_edit.document(), self._columns, dark=dark)
         lay.addWidget(self.expr_edit, 1)
 
-        pick = QHBoxLayout()
-        self.col_combo = fix_combo(QComboBox())
-        self.col_combo.addItems(self._columns)
-        insert = QPushButton("Insert column")
-        insert.clicked.connect(self._insert_column)
-        pick.addWidget(self.col_combo, 1)
-        pick.addWidget(insert)
-        lay.addLayout(pick)
+        # Live validation (debounced).
+        self._live = QTimer(self)
+        self._live.setSingleShot(True)
+        self._live.setInterval(250)
+        self._live.timeout.connect(self._validate_live)
+        self.expr_edit.textChanged.connect(lambda: self._live.start())
 
         lay.addWidget(self._spatial_box())
 
         self.error = QLabel("")
         self.error.setWordWrap(True)
-        self.error.setStyleSheet("color: #d9534f;")
         self.error.setVisible(False)
         lay.addWidget(self.error)
 
@@ -75,9 +116,48 @@ class FilterConditionDialog(QDialog):
         )
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Run")
+        ok.setIcon(QIcon())
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())
         lay.addWidget(buttons)
 
-        self.resize(520, 380)
+        self.resize(540, 400)
+
+    # -- Functions / Columns insert menus ------------------------------
+    def _inserter(self, label: str, menu: QMenu) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn.setAutoRaise(True)
+        btn.setMenu(menu)
+        return btn
+
+    def _function_menu(self) -> QMenu:
+        m = QMenu(self)
+        for i, group in enumerate((_AGGREGATE, _ELEMENTWISE, ("where",))):
+            if i:
+                m.addSeparator()
+            for name in group:
+                m.addAction(name).triggered.connect(
+                    lambda _c=False, n=name: self._insert(f"{n}("))
+        return m
+
+    def _column_menu(self) -> QMenu:
+        m = QMenu(self)
+        for name in self._columns:
+            m.addAction(name).triggered.connect(
+                lambda _c=False, n=name: self._insert(f"[{n}]"))
+        return m
+
+    def _insert(self, text: str) -> None:
+        self.expr_edit.insertPlainText(text)
+        self.expr_edit.setFocus()
 
     # -- spatial-box helper --------------------------------------------
     def _spatial_box(self) -> QGroupBox:
@@ -120,17 +200,32 @@ class FilterConditionDialog(QDialog):
         self.expr_edit.setPlainText(expr)
         self.expr_edit.setFocus()
 
-    def _insert_column(self) -> None:
-        name = self.col_combo.currentText()
-        if name:
-            self.expr_edit.insertPlainText(f"[{name}]")
-            self.expr_edit.setFocus()
+    # -- validation ----------------------------------------------------
+    def _validate_live(self) -> None:
+        """Compile as the user types; amber while in-progress, green when valid.
+        The OK handler stays the authoritative check."""
+        text = self.expr_edit.toPlainText().strip()
+        if not text:
+            self.error.setVisible(False)
+            return
+        # Stay quiet while the condition is visibly mid-entry (unclosed bracket
+        # or the completion popup still open).
+        if text.count("[") != text.count("]") or self.expr_edit.completer_active():
+            self.error.setVisible(False)
+            return
+        try:
+            compile_predicate(text, self._columns)
+        except DeriveError as exc:
+            self._set_status(str(exc), "warn")
+        except Exception as exc:  # noqa: BLE001 — never let typing raise
+            self._set_status(str(exc), "warn")
+        else:
+            self._set_status("✓ valid condition", "ok")
 
-    # -- accept / result -----------------------------------------------
     def _accept(self) -> None:
         text = self.expr_edit.toPlainText().strip()
         if not text:
-            self._show_error("Enter a condition (or Cancel).")
+            self._show_error("Enter a condition (or Close).")
             return
         try:
             compile_predicate(text, self._columns)
@@ -139,9 +234,15 @@ class FilterConditionDialog(QDialog):
             return
         self.accept()
 
-    def _show_error(self, text: str) -> None:
+    _STATUS_COLOR = {"error": "#d9534f", "warn": "#c08a2e", "ok": "#3c9a5f"}
+
+    def _set_status(self, text: str, level: str) -> None:
+        self.error.setStyleSheet(f"color: {self._STATUS_COLOR[level]};")
         self.error.setText(text)
         self.error.setVisible(True)
+
+    def _show_error(self, text: str) -> None:
+        self._set_status(text, "error")
 
     def condition(self) -> str:
         return self.expr_edit.toPlainText().strip()
