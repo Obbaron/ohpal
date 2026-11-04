@@ -17,7 +17,7 @@ SCATTER_KINDS = (SCATTER_2D, SCATTER_3D)
 # the wired plot types
 PLOT_KINDS = (SCATTER_2D, SCATTER_3D, LAYER_VIEWER, BAR, HISTOGRAM)
 
-BAR_AGGS = ("mean", "median", "sum", "min", "max", "count", "first")
+BAR_AGGS = ("as-is", "mean", "median", "sum", "min", "max", "count", "first")
 
 
 @dataclass

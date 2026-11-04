@@ -124,19 +124,38 @@ def build_bars(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
         if c and c not in df.columns:
             raise KeyError(f"Column {c!r} is not in the data.")
 
-    reduce = {
-        "mean": pl.col(val).mean(), "median": pl.col(val).median(),
-        "sum": pl.col(val).sum(), "min": pl.col(val).min(),
-        "max": pl.col(val).max(), "count": pl.len(),
-        "first": pl.col(val).first(),
-    }.get(agg, pl.col(val).mean())
-
-    g = (
-        df.filter(pl.col(cat).is_not_null())
-        .group_by(cat, maintain_order=True)
-        .agg(reduce.alias("_v"))
-        .sort(cat)
-    )
+    rows = df.filter(pl.col(cat).is_not_null())
+    if agg == "as-is":
+        # The value is already one-per-category (e.g. a metric derived
+        # ``by [region]``), so take it directly instead of reducing every row.
+        # Guard: a category that actually carries differing values would be
+        # silently mis-summarised, so flag it and point at a real aggregate.
+        g = (
+            rows.group_by(cat, maintain_order=True)
+            .agg(pl.col(val).first().alias("_v"),
+                 pl.col(val).n_unique().alias("_nu"))
+            .sort(cat)
+        )
+        bad = g.filter(pl.col("_nu") > 1)[cat].to_list()
+        if bad:
+            shown = ", ".join(str(b) for b in bad[:3])
+            more = "" if len(bad) <= 3 else f" (+{len(bad) - 3} more)"
+            raise ValueError(
+                f"“as-is” expects a single {val} per {cat}, but these carry "
+                f"several: {shown}{more}. Pick an aggregate (mean, median, …)."
+            )
+    else:
+        reduce = {
+            "mean": pl.col(val).mean(), "median": pl.col(val).median(),
+            "sum": pl.col(val).sum(), "min": pl.col(val).min(),
+            "max": pl.col(val).max(), "count": pl.len(),
+            "first": pl.col(val).first(),
+        }.get(agg, pl.col(val).mean())
+        g = (
+            rows.group_by(cat, maintain_order=True)
+            .agg(reduce.alias("_v"))
+            .sort(cat)
+        )
     labels = [str(v) for v in g[cat].to_list()]
     heights = g["_v"].to_numpy().astype("float32")
     colors, lo, hi = _bar_colors(heights, cmap, crange)

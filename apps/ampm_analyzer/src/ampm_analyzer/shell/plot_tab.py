@@ -254,8 +254,9 @@ class PlotTab(QWidget):
         self._axis_labels: list = []
         self._status: QLabel | None = None
 
-        # Bar plot visuals (a quad mesh + per-bar category labels).
+        # Bar plot visuals (a quad mesh + a baseline x-axis + category labels).
         self._bars = None
+        self._bar_axis = None   # horizontal baseline (the x axis) under the bars
         self._bar_labels: list = []
         self._bar_data = None
 
@@ -532,10 +533,16 @@ class PlotTab(QWidget):
         ymax = max(0.0, float(hvals.max()) if hvals.size else 1.0)
         if ymax <= ymin:  # flat/degenerate heights → give the view a real span
             ymax = ymin + 1.0
-        if data.categorical and data.labels:  # category text under each bar
+        # The x axis is a rule just below the bars' baseline (ymin); category
+        # labels drop a further gap below that rule so they read as tick labels
+        # rather than text sitting inside the bars.
+        gap = 0.045 * (ymax - ymin)
+        axis_y = ymin - 0.35 * gap
+        label_y = ymin - gap
+        if data.categorical and data.labels:  # category text under the x axis
             for i, label in enumerate(data.labels):
                 t = scene.visuals.Text(
-                    label, pos=(float(data.centers[i]), ymin), color=_AXIS_TEXT,
+                    label, pos=(float(data.centers[i]), label_y), color=_AXIS_TEXT,
                     anchor_x="center", anchor_y="top", font_size=9,
                     parent=self._view.scene)
                 self._bar_labels.append(t)
@@ -546,7 +553,27 @@ class PlotTab(QWidget):
         self._set_colorbar(clo, chi, data.value_name)
         xlo = float(data.centers.min()) - w / 2
         xhi = float(data.centers.max()) + w / 2
-        self._data_bounds = (np.array([xlo, ymin], "float32"),
+        # A visible rule is the category x-axis; the region labels (at y=label_y)
+        # then sit just below this line. Histograms keep the numeric x axis
+        # (the AxisWidget), so the rule is category-bar only.
+        if data.categorical:
+            axis_pos = np.array([[xlo, axis_y], [xhi, axis_y]], "float32")
+            if self._bar_axis is None:
+                self._bar_axis = scene.visuals.Line(
+                    pos=axis_pos, color=_AXIS_TICK, width=1.0,
+                    parent=self._view.scene)
+            else:
+                self._bar_axis.set_data(pos=axis_pos)
+                if self._bar_axis.parent is None:
+                    self._bar_axis.parent = self._view.scene
+            self._bar_axis.visible = self._show_axes
+            y_lo = label_y  # frame the labels in (reset_view adds glyph room)
+        elif self._bar_axis is not None:  # histogram → no baseline rule
+            self._bar_axis.parent = None
+            y_lo = ymin
+        else:
+            y_lo = ymin
+        self._data_bounds = (np.array([xlo, y_lo], "float32"),
                              np.array([xhi, ymax], "float32"))
         self._apply_visibility()
         first = not self._rendered_once
@@ -707,6 +734,8 @@ class PlotTab(QWidget):
             self._bbox.visible = self._show_bbox
         for t in self._axis_labels:
             t.visible = self._show_axes
+        if self._bar_axis is not None:
+            self._bar_axis.visible = self._show_axes
         for t in self._bar_labels:
             t.visible = self._show_axes
         if self._cbar is not None:
@@ -1112,6 +1141,7 @@ class PlotTab(QWidget):
         self._title_label = None
         self._last_pos = self._last_colors = None
         self._bars = None
+        self._bar_axis = None
         self._bar_labels = []
         self._bar_data = None
         self._hide_tooltip()
