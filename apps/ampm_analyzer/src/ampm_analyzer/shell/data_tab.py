@@ -163,6 +163,7 @@ class DataTab(QWidget):
         self._rename_armed = False
         self._editor: _HeaderRenameEdit | None = None
         self._editing_old = ""
+        self._renames: dict[str, str] = {}  # original -> display, for defaults
 
         lay.addWidget(self.table)
 
@@ -257,6 +258,11 @@ class DataTab(QWidget):
             except ValueError:
                 pass
         self._arm_rename()
+
+    def set_renames(self, renames) -> None:
+        """Hand the current rename map (original -> display) so default layout
+        picks resolve renamed columns."""
+        self._renames = dict(renames or {})
 
     def _arm_rename(self) -> None:
         if self._rename_armed:
@@ -427,13 +433,18 @@ class DataTab(QWidget):
         header = self.table.horizontalHeader()
         cols = self.model.columns
         logical = {name: i for i, name in enumerate(cols)}
-        desired = [n for n in DEFAULT_ORDER if n in logical]
-        desired += [n for n in cols if n not in DEFAULT_ORDER]
+        # Map the default order/hidden (raw names) through the rename map, so a
+        # renamed column still gets its default position / hidden state.
+        ren = self._renames
+        default_order = [ren.get(n, n) for n in DEFAULT_ORDER]
+        default_hidden = {ren.get(n, n) for n in DEFAULT_HIDDEN}
+        desired = [n for n in default_order if n in logical]
+        desired += [n for n in cols if n not in default_order]
         for target_vis, name in enumerate(desired):
             cur_vis = header.visualIndex(logical[name])
             if cur_vis != target_vis:
                 header.moveSection(cur_vis, target_vis)
-        for name in DEFAULT_HIDDEN:
+        for name in default_hidden:
             if name in logical:
                 header.setSectionHidden(logical[name], True)
 

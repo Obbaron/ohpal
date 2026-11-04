@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
                 self._pending_grid_state, *self._pending_grid_layout)
             self._data_tab.layoutChanged.connect(self._save_ui)
             self._data_tab.renameRequested.connect(self._rename_column)
+            self._data_tab.set_renames(self.session.renames)  # for default layout
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
         return self._data_tab
@@ -367,7 +368,8 @@ class MainWindow(QMainWindow):
         store = self.session.store
         columns = list(self.session.result.df.columns)
         layers = list(store.layers) if store is not None else []
-        dlg = NewPlotDialog(kind, columns, layers, self.session.current_layer, self)
+        dlg = NewPlotDialog(kind, columns, layers, self.session.current_layer,
+                            self, renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.spec()
@@ -533,6 +535,8 @@ class MainWindow(QMainWindow):
             if getattr(tab, "context", None) is None:
                 tab.spec = colref.rename_spec(tab.spec, old, new)
         self._reshape_plots()
+        if self._data_tab is not None:
+            self._data_tab.set_renames(self.session.renames)  # keep defaults current
         self._save_ui()
         self.set_status(f"Renamed '{old}' to '{new}'.")
 
@@ -774,7 +778,8 @@ class MainWindow(QMainWindow):
             return
         from .filter_dialog import FilterConditionDialog
 
-        dlg = FilterConditionDialog(dt._columns, self)
+        dlg = FilterConditionDialog(dt._columns, self,
+                                    renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.controller.add_filter(dlg.condition())
@@ -787,7 +792,8 @@ class MainWindow(QMainWindow):
             return
         from .filter_dialog import FilterConditionDialog
 
-        dlg = FilterConditionDialog(dt._columns, self, initial=conditions[index])
+        dlg = FilterConditionDialog(dt._columns, self, initial=conditions[index],
+                                    renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.controller.edit_filter(index, dlg.condition())
@@ -881,6 +887,7 @@ class MainWindow(QMainWindow):
             dt._columns, self,
             layers=list(store.layers) if store is not None else [],
             current_layer=self.session.current_layer,
+            renames=self.session.renames,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return

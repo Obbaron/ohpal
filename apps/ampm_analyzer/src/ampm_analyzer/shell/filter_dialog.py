@@ -30,11 +30,13 @@ _Y = "Demand Y"
 
 
 class FilterConditionDialog(QDialog):
-    def __init__(self, columns, parent=None, *, initial: str = "") -> None:
+    def __init__(self, columns, parent=None, *, initial: str = "",
+                 renames=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit filter condition" if initial
                             else "Add filter condition")
         self._columns = list(columns)
+        self._renames = dict(renames or {})
 
         lay = QVBoxLayout(self)
 
@@ -109,9 +111,11 @@ class FilterConditionDialog(QDialog):
     def _insert_bounds(self) -> None:
         lo_x, hi_x = sorted((self.x_min.value(), self.x_max.value()))
         lo_y, hi_y = sorted((self.y_min.value(), self.y_max.value()))
+        x = self._renames.get(_X, _X)  # follow a renamed Demand X / Demand Y
+        y = self._renames.get(_Y, _Y)
         expr = (
-            f"[{_X}] >= {lo_x:g} and [{_X}] <= {hi_x:g} "
-            f"and [{_Y}] >= {lo_y:g} and [{_Y}] <= {hi_y:g}"
+            f"[{x}] >= {lo_x:g} and [{x}] <= {hi_x:g} "
+            f"and [{y}] >= {lo_y:g} and [{y}] <= {hi_y:g}"
         )
         self.expr_edit.setPlainText(expr)
         self.expr_edit.setFocus()

@@ -28,7 +28,7 @@ _NONE = "— none —"
 
 class NewPlotDialog(QDialog):
     def __init__(self, kind: str, columns, layers=None, current_layer=None,
-                 parent=None) -> None:
+                 parent=None, *, renames=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"New {kind}")
         self._kind = kind
@@ -38,7 +38,7 @@ class NewPlotDialog(QDialog):
             current_layer if current_layer is not None
             else (self._layers[0] if self._layers else None)
         )
-        base = default_spec(kind, self._columns)
+        base = default_spec(kind, self._columns, renames)
 
         lay = QVBoxLayout(self)
         form = QFormLayout()

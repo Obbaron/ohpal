@@ -51,38 +51,46 @@ class PlotSpec:
         return [self.x, self.y, self.z] if self.is_3d else [self.x, self.y]
 
 
-def default_spec(kind: str, columns: list[str]) -> PlotSpec:
-    """A reasonable starting spec — preferred names if present, else positional."""
+def default_spec(kind: str, columns: list[str], renames=None) -> PlotSpec:
+    """A reasonable starting spec — preferred names if present, else positional.
+
+    ``renames`` (original datastore name -> current display name) maps the
+    hardcoded preferred names, so a renamed column is still picked as a default.
+    """
     cols = list(columns)
+    ren = renames or {}
 
     def pick(preferred: str, index: int) -> str:
-        if preferred in cols:
-            return preferred
+        disp = ren.get(preferred, preferred)
+        if disp in cols:
+            return disp
         return cols[index] if index < len(cols) else (cols[0] if cols else "")
 
     if kind == BAR:
         # Category: a label-ish column if present; Value: melt pool (mean).
-        cat = next((c for c in ("region", "side", "part_id") if c in cols),
-                   cols[0] if cols else "")
-        val = _default_color(cols) or pick("Z", 1)
+        cat = next((ren.get(c, c) for c in ("region", "side", "part_id")
+                    if ren.get(c, c) in cols), cols[0] if cols else "")
+        val = _default_color(cols, ren) or pick("Z", 1)
         return PlotSpec(kind=kind, x=cat, y=val, agg="mean")
 
     if kind == HISTOGRAM:
         # Bin a numeric column; Y is the count.
-        col = _default_color(cols) or pick("Z", 0)
+        col = _default_color(cols, ren) or pick("Z", 0)
         return PlotSpec(kind=kind, x=col, y="count", bins=30)
 
     x = pick("Demand X", 0)
     y = pick("Demand Y", 1)
     z = pick("Z", 2) if kind == SCATTER_3D else None
-    color = _default_color(cols)
+    color = _default_color(cols, ren)
     return PlotSpec(kind=kind, x=x, y=y, z=z, color=color)
 
 
-def _default_color(columns: list[str]) -> str | None:
+def _default_color(columns: list[str], renames=None) -> str | None:
     """Default colour channel: the melt-pool (mean) column when present."""
-    if "MeltVIEW melt pool (mean)" in columns:
-        return "MeltVIEW melt pool (mean)"
+    mp = (renames or {}).get("MeltVIEW melt pool (mean)",
+                             "MeltVIEW melt pool (mean)")
+    if mp in columns:
+        return mp
     for c in columns:  # tolerate a differently-prefixed name
         if "melt pool (mean)" in c.lower():
             return c

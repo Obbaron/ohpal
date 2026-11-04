@@ -44,10 +44,11 @@ from .widgets import fix_combo
 
 class ExcelExportDialog(QDialog):
     def __init__(self, columns, parent=None, *, layers=None, current_layer=None,
-                 key_default="part_id", start_dir=None) -> None:
+                 key_default="part_id", start_dir=None, renames=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Export to Excel")
         self._columns = list(columns)
+        self._renames = dict(renames or {})
         self._layers = list(layers or [])
         self._current = current_layer
         self._start_dir = start_dir or str(Path.home())
@@ -117,9 +118,13 @@ class ExcelExportDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
 
-        # Seed one value row (a melt-pool column if present, else the first).
-        seed = next((c for c in self._columns if "melt pool (mean)" in c.lower()),
-                    self._columns[0] if self._columns else None)
+        # Seed one value row (a melt-pool column if present, else the first);
+        # follow a renamed melt-pool column.
+        mp = self._renames.get("MeltVIEW melt pool (mean)",
+                               "MeltVIEW melt pool (mean)")
+        seed = (mp if mp in self._columns else
+                next((c for c in self._columns if "melt pool (mean)" in c.lower()),
+                     self._columns[0] if self._columns else None))
         self._add_value_row(seed, "mean")
 
     # -- pages --------------------------------------------------------
@@ -132,8 +137,9 @@ class ExcelExportDialog(QDialog):
         self.key_combo = fix_combo(QComboBox())
         self.key_combo.addItems(self._columns)
         for cand in ("part_id", "region", "side"):  # a sensible default key
-            if cand in self._columns:
-                self.key_combo.setCurrentText(cand)
+            disp = self._renames.get(cand, cand)  # follow a renamed key column
+            if disp in self._columns:
+                self.key_combo.setCurrentText(disp)
                 break
         key_row.addWidget(self.key_combo, 1)
         v.addLayout(key_row)

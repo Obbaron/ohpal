@@ -521,6 +521,16 @@ class AppController(QObject):
         cols += [d["name"] for d in self.session.derivations]
         return [c for c in cols if c not in self.session.removed]
 
+    def _derivable_columns(self) -> list[str]:
+        """Names a new derivation / filter may reference and collide with:
+        renamed source columns plus derived names. Unlike ``current_columns``
+        this keeps *removed* columns, because the removed drop happens after
+        derivations run, so a derivation may still reference them."""
+        base = []
+        if self._base_df is not None:
+            base = [self.session.renames.get(c, c) for c in self._base_df.columns]
+        return base + [d["name"] for d in self.session.derivations]
+
     def _original_source_name(self, display: str) -> str:
         """The original datastore name whose current display is ``display``
         (or ``display`` itself if it was never renamed)."""
@@ -592,10 +602,8 @@ class AppController(QObject):
         existing derived column has its definition replaced in place. Returns an
         error message, or None on success.
         """
-        base = self._base_df
-        base_names = list(base.columns) if base is not None else []
         derived_names = [d["name"] for d in self.session.derivations]
-        names = base_names + derived_names
+        names = self._derivable_columns()  # renamed source cols + derived names
         if name in names and not overwrite:
             return f"A column named {name!r} already exists."
         try:
@@ -619,9 +627,7 @@ class AppController(QObject):
         self, name: str, rules: list[dict], default: str = ""
     ) -> str | None:
         """Register a label column from if/elif/else rules. Returns error/None."""
-        base = self._base_df
-        names = list(base.columns) if base is not None else []
-        names += [d["name"] for d in self.session.derivations]
+        names = self._derivable_columns()  # renamed source cols + derived names
         if name in names:
             return f"A column named {name!r} already exists."
         if not rules:
@@ -643,14 +649,12 @@ class AppController(QObject):
         """Register an Excel-imported column: a key->value map left-joined onto
         the grid on ``key``. ``mapping`` is pre-normalised (canonical string
         keys). Returns an error message, or None on success."""
-        base = self._base_df
-        cols = list(base.columns) if base is not None else []
-        names = cols + [d["name"] for d in self.session.derivations]
+        names = self._derivable_columns()  # renamed source cols + derived names
         if name in names:
             return f"A column named {name!r} already exists."
         # The key may be a source column or an already-derived one (the join is
         # appended last, so earlier derivations are in scope at join time).
-        if base is not None and key not in names:
+        if self._base_df is not None and key not in names:
             return f"Key column {key!r} isn't in this build."
         if not mapping:
             return "No key/value rows to import."
@@ -674,7 +678,13 @@ class AppController(QObject):
         Required columns can't be removed. Returns the names that were blocked.
         """
         deriv_names = {d["name"] for d in self.session.derivations}
-        base_cols = set(self._base_df.columns) if self._base_df is not None else set()
+        # Source columns by their current (possibly renamed) display name, since
+        # names here come from the grid and removed entries are dropped after the
+        # rename remap in _shape.
+        base_cols = set()
+        if self._base_df is not None:
+            base_cols = {self.session.renames.get(c, c)
+                         for c in self._base_df.columns}
         blocked, changed = [], False
         for n in names:
             if n in deriv_names:
@@ -682,8 +692,8 @@ class AppController(QObject):
                     d for d in self.session.derivations if d["name"] != n
                 ]
                 changed = True
-            elif n in REQUIRED_COLUMNS:
-                blocked.append(n)
+            elif self._original_source_name(n) in REQUIRED_COLUMNS:
+                blocked.append(n)  # guard the original even if it was renamed
             elif n in base_cols and n not in self.session.removed:
                 self.session.removed.append(n)
                 changed = True
