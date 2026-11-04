@@ -14,12 +14,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -31,12 +34,19 @@ from PyQt6.QtWidgets import (
 from .derive import norm_key
 from .widgets import fix_combo
 
+# Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
+_PRIMARY_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 6px 20px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
+
 
 class ExcelImportDialog(QDialog):
     def __init__(self, grid_columns, parent=None, *, taken=None,
                  start_dir=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Add column from Excel")
         self._grid_columns = list(grid_columns)
         self._taken = set(taken or [])
         self._start_dir = start_dir or str(Path.home())
@@ -44,7 +54,28 @@ class ExcelImportDialog(QDialog):
         self._name_edited = False
         self._result = None
 
-        lay = QVBoxLayout(self)
+        # Frameless card (matches the calculation / label dialogs).
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("ExcelCard")
+        card.setStyleSheet(
+            "#ExcelCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        title = QLabel("Add from Excel")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
+
         form = QFormLayout()
 
         file_row = QHBoxLayout()
@@ -84,21 +115,22 @@ class ExcelImportDialog(QDialog):
         self.msg.setStyleSheet("color: #c0392b;")
         lay.addWidget(self.msg)
 
-        hint = QLabel(
-            'Rows match on text form, so 1, 1.0 and "1" align. Unmatched grid '
-            "rows get a blank; duplicate keys are rejected. All-numeric values "
-            "import as numbers, otherwise as text."
-        )
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Run")
+        ok.setIcon(QIcon())
+        ok.setDefault(True)
+        ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())
         lay.addWidget(buttons)
+        self.resize(520, self.sizeHint().height())
 
     # -- small helpers -------------------------------------------------
     @staticmethod

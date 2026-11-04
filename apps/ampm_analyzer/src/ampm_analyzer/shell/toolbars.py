@@ -213,7 +213,7 @@ def populate_data(
     a_label = add_btn.menu().addAction("Label")
     if on_add_label is not None:
         a_label.triggered.connect(lambda: on_add_label())
-    a_excel = add_btn.menu().addAction("Add from Excel")
+    a_excel = add_btn.menu().addAction("Excel")
     if on_add_excel is not None:
         a_excel.triggered.connect(lambda: on_add_excel())
     else:
