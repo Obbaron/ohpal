@@ -2,39 +2,49 @@
 
 A condition is a boolean predicate in the same DSL as derived columns, e.g.
 ``[Demand X] >= -32 and [Demand X] <= -28``. Columns are referenced in
-``[brackets]`` — type ``[`` for an autocomplete list. A "Spatial box" helper
-fills the common X/Y-bounds case. The condition is validated live and again on
-OK against the available columns (including derived ones).
+``[brackets]`` — type ``[`` for an autocomplete list. A scrollable column of
+common **templates** (previews of the filter text) seeds the box on click. The
+condition is validated live and again on OK against the available columns
+(including derived ones).
 
 Styled to match the calculation / label dialogs: a frameless card with an
-accent-coloured primary button, syntax highlighting and autocomplete, and
+accent-coloured primary button, syntax highlighting, autocomplete, and
 Functions / Columns insert menus.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPalette
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
+from . import colref
 from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_predicate
 from .derive_editor import FormulaEdit, FormulaHighlighter
 
-_X = "Demand X"
-_Y = "Demand Y"
+# Common filter templates (raw column names; resolved through the rename map
+# before display). Each is a preview the user clicks to seed the editor.
+_TEMPLATES = [
+    ("Spatial box + layer",
+     "[Demand X] >= -32 and [Demand X] <= -28 and "
+     "[Demand Y] >= -8 and [Demand Y] <= -7 and [layer] == 1"),
+    ("Value threshold", "[MeltVIEW melt pool (mean)] >= 500"),
+    ("Category match", '[region] == "R1"'),
+    ("Z range", "0 < [Z] and [Z] < 1"),
+    ("Single layer", "[layer] == 1"),
+]
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
@@ -43,6 +53,38 @@ _PRIMARY_QSS = (
     "QPushButton:hover { background: palette(link); }"
     "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
 )
+
+
+class _TemplateCard(QFrame):
+    """A clickable preview of a filter template; emits its text on click."""
+
+    clicked = pyqtSignal(str)
+
+    def __init__(self, name: str, text: str) -> None:
+        super().__init__()
+        self._text = text
+        self.setObjectName("TplCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            "#TplCard { border: 1px solid palette(mid); border-radius: 6px; "
+            "background: palette(base); } "
+            "#TplCard:hover { border: 1px solid palette(highlight); }"
+        )
+        v = QVBoxLayout(self)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(2)
+        head = QLabel(name)
+        head.setStyleSheet("font-weight: 600; font-size: 9pt;")
+        preview = QLabel(text)
+        preview.setWordWrap(True)
+        preview.setStyleSheet(
+            "font-family: monospace; font-size: 8.5pt; "
+            "color: palette(placeholder-text);")
+        v.addWidget(head)
+        v.addWidget(preview)
+
+    def mousePressEvent(self, e) -> None:  # noqa: N802 (Qt override)
+        self.clicked.emit(self._text)
 
 
 class FilterConditionDialog(QDialog):
@@ -74,27 +116,38 @@ class FilterConditionDialog(QDialog):
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         lay.addWidget(title)
 
-        # Condition header: label + Functions / Columns insert menus.
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self._templates_column())
+
+        # Right side: condition header + editor + inline status.
+        right = QVBoxLayout()
+        right.setSpacing(8)
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel("Condition (keeps rows where this is true)"))
         hdr.addStretch(1)
         hdr.addWidget(self._inserter("Functions", self._function_menu()))
         hdr.addWidget(self._inserter("Columns", self._column_menu()))
-        lay.addLayout(hdr)
+        right.addLayout(hdr)
 
         self.expr_edit = FormulaEdit(self._columns)
         if initial:
             self.expr_edit.setPlainText(initial)
         self.expr_edit.setPlaceholderText(
-            'e.g. [Demand X] >= -32 and [Demand X] <= -28\n'
-            '     [MeltVIEW melt pool (mean)] >= 500\n'
-            '     [region] == "R1"'
+            "e.g. click a template on the left, or type a condition — "
+            "columns in [brackets], type [ to autocomplete"
         )
-        self.expr_edit.setMinimumHeight(110)
         dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
         self._highlighter = FormulaHighlighter(
             self.expr_edit.document(), self._columns, dark=dark)
-        lay.addWidget(self.expr_edit, 1)
+        right.addWidget(self.expr_edit, 1)
+
+        self.error = QLabel("")
+        self.error.setWordWrap(True)
+        self.error.setVisible(False)
+        right.addWidget(self.error)
+        body.addLayout(right, 1)
+        lay.addLayout(body, 1)
 
         # Live validation (debounced).
         self._live = QTimer(self)
@@ -103,13 +156,6 @@ class FilterConditionDialog(QDialog):
         self._live.timeout.connect(self._validate_live)
         self.expr_edit.textChanged.connect(lambda: self._live.start())
 
-        lay.addWidget(self._spatial_box())
-
-        self.error = QLabel("")
-        self.error.setWordWrap(True)
-        self.error.setVisible(False)
-        lay.addWidget(self.error)
-
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -117,16 +163,59 @@ class FilterConditionDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok.setText("Run")
+        ok.setText("Filter")
         ok.setIcon(QIcon())
         ok.setDefault(True)
         ok.setStyleSheet(_PRIMARY_QSS)
         cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel.setText("Close")
         cancel.setIcon(QIcon())
-        lay.addWidget(buttons)
+        # Bottom row: "Clear" on the left, Filter / Close on the right.
+        clear = QPushButton("Clear")
+        clear.setToolTip("Clear the condition")
+        clear.clicked.connect(lambda: self.expr_edit.setPlainText(""))
+        bottom = QHBoxLayout()
+        bottom.addWidget(clear)
+        bottom.addStretch(1)
+        bottom.addWidget(buttons)
+        lay.addLayout(bottom)
 
-        self.resize(540, 400)
+        self.resize(820, 520)
+
+    # -- templates column ----------------------------------------------
+    def _templates_column(self) -> QWidget:
+        col = QWidget()
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(QLabel("Templates"))
+        inner = QVBoxLayout()
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(6)
+        for name, raw in _TEMPLATES:
+            card = _TemplateCard(name, self._resolve(raw))
+            card.clicked.connect(self._apply_template)
+            inner.addWidget(card)
+        inner.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(inner)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(holder)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFixedWidth(230)
+        v.addWidget(scroll, 1)
+        return col
+
+    def _resolve(self, text: str) -> str:
+        """Map a template's raw column names to their current display names."""
+        for orig, disp in self._renames.items():
+            text = colref.rewrite_refs(text, orig, disp)
+        return text
+
+    def _apply_template(self, text: str) -> None:
+        self.expr_edit.setPlainText(text)
+        self.expr_edit.setFocus()
 
     # -- Functions / Columns insert menus ------------------------------
     def _inserter(self, label: str, menu: QMenu) -> QToolButton:
@@ -159,47 +248,6 @@ class FilterConditionDialog(QDialog):
         self.expr_edit.insertPlainText(text)
         self.expr_edit.setFocus()
 
-    # -- spatial-box helper --------------------------------------------
-    def _spatial_box(self) -> QGroupBox:
-        box = QGroupBox("Spatial box (X/Y bounds)")
-        grid = QGridLayout(box)
-
-        def spin() -> QDoubleSpinBox:
-            s = QDoubleSpinBox()
-            s.setRange(-100000.0, 100000.0)
-            s.setDecimals(3)
-            s.setFixedWidth(100)
-            return s
-
-        self.x_min, self.x_max = spin(), spin()
-        self.y_min, self.y_max = spin(), spin()
-        grid.addWidget(QLabel("X"), 0, 0)
-        grid.addWidget(self.x_min, 0, 1)
-        grid.addWidget(QLabel("to"), 0, 2)
-        grid.addWidget(self.x_max, 0, 3)
-        grid.addWidget(QLabel("Y"), 1, 0)
-        grid.addWidget(self.y_min, 1, 1)
-        grid.addWidget(QLabel("to"), 1, 2)
-        grid.addWidget(self.y_max, 1, 3)
-        insert = QPushButton("Insert bounds")
-        insert.setToolTip("Build the X/Y-range expression into the box above")
-        insert.clicked.connect(self._insert_bounds)
-        grid.addWidget(insert, 0, 4, 2, 1)
-        grid.setColumnStretch(5, 1)
-        return box
-
-    def _insert_bounds(self) -> None:
-        lo_x, hi_x = sorted((self.x_min.value(), self.x_max.value()))
-        lo_y, hi_y = sorted((self.y_min.value(), self.y_max.value()))
-        x = self._renames.get(_X, _X)  # follow a renamed Demand X / Demand Y
-        y = self._renames.get(_Y, _Y)
-        expr = (
-            f"[{x}] >= {lo_x:g} and [{x}] <= {hi_x:g} "
-            f"and [{y}] >= {lo_y:g} and [{y}] <= {hi_y:g}"
-        )
-        self.expr_edit.setPlainText(expr)
-        self.expr_edit.setFocus()
-
     # -- validation ----------------------------------------------------
     def _validate_live(self) -> None:
         """Compile as the user types; amber while in-progress, green when valid.
@@ -208,8 +256,6 @@ class FilterConditionDialog(QDialog):
         if not text:
             self.error.setVisible(False)
             return
-        # Stay quiet while the condition is visibly mid-entry (unclosed bracket
-        # or the completion popup still open).
         if text.count("[") != text.count("]") or self.expr_edit.completer_active():
             self.error.setVisible(False)
             return
