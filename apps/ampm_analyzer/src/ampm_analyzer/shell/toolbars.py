@@ -207,7 +207,7 @@ def populate_data(
     # Add column — a menu of sources. "Derive column" is a row-wise formula over
     # existing columns; "Add from Excel" joins external key/value data.
     add_btn = _menu_button(toolbar, "Add column", "add_column", color)
-    a_derive = add_btn.menu().addAction("Derive column")
+    a_derive = add_btn.menu().addAction("Calculation")
     if on_add_derive is not None:
         a_derive.triggered.connect(lambda: on_add_derive())
     a_label = add_btn.menu().addAction("Group label")

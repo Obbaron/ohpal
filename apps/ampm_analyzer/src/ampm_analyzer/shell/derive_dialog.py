@@ -12,7 +12,7 @@ primary button, to match the in-app calculation-editor styling.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPalette
+from PyQt6.QtGui import QIcon, QPalette
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -22,12 +22,14 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QRadioButton,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
 )
 
-from .derive import DeriveError, compile_expr
+from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_expr
 from .derive_editor import FormulaEdit, FormulaHighlighter
 from .widgets import fix_combo
 
@@ -66,7 +68,7 @@ class DeriveColumnDialog(QDialog):
         lay.setContentsMargins(18, 16, 18, 14)
         lay.setSpacing(10)
 
-        title = QLabel("Derive column")
+        title = QLabel("Create calculation")
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         lay.addWidget(title)
 
@@ -108,7 +110,14 @@ class DeriveColumnDialog(QDialog):
         self.radio_over.toggled.connect(self._sync_mode)
 
         # -- formula ---------------------------------------------------
-        lay.addWidget(QLabel("Formula"))
+        # Header: "Formula" with Functions / Columns insert menus on the right.
+        fhdr = QHBoxLayout()
+        fhdr.addWidget(QLabel("Formula"))
+        fhdr.addStretch(1)
+        fhdr.addWidget(self._inserter("Functions", self._function_menu()))
+        fhdr.addWidget(self._inserter("Columns", self._column_menu()))
+        lay.addLayout(fhdr)
+
         self.expr_edit = FormulaEdit(self._columns)
         self.expr_edit.setPlaceholderText(
             "e.g. [availability_365] / 365\n"
@@ -141,12 +150,49 @@ class DeriveColumnDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setText("Run")
+        ok.setIcon(QIcon())  # drop the themed check icon
         ok.setDefault(True)
         ok.setStyleSheet(_PRIMARY_QSS)
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText("Close")
+        cancel.setIcon(QIcon())  # drop the themed cross icon
         lay.addWidget(buttons)
 
         self._sync_mode()
         self.resize(560, 420)
+
+    # -- Functions / Columns insert menus ------------------------------
+    def _inserter(self, label: str, menu: QMenu) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn.setAutoRaise(True)
+        btn.setMenu(menu)
+        return btn
+
+    def _function_menu(self) -> QMenu:
+        m = QMenu(self)
+        groups = (_AGGREGATE, _ELEMENTWISE, ("where",))
+        for i, group in enumerate(groups):
+            if i:
+                m.addSeparator()
+            for name in group:
+                m.addAction(name).triggered.connect(
+                    lambda _c=False, n=name: self._insert(f"{n}("))
+        return m
+
+    def _column_menu(self) -> QMenu:
+        m = QMenu(self)
+        for name in self._columns:
+            m.addAction(name).triggered.connect(
+                lambda _c=False, n=name: self._insert(f"[{n}]"))
+        return m
+
+    def _insert(self, text: str) -> None:
+        self.expr_edit.insertPlainText(text)
+        self.expr_edit.setFocus()
 
     # -- mode handling -------------------------------------------------
     def _sync_mode(self, *_a) -> None:
