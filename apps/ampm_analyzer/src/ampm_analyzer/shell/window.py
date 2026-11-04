@@ -394,9 +394,23 @@ class MainWindow(QMainWindow):
         if tab not in self._plot_tabs:
             return
         tab.span = ("single", layer, layer)
-        self.controller.query_for(
-            "single", layer, layer, lambda raw, t=tab: self._feed_plot(t, raw)
-        )
+        if tab.context is not None:
+            # Self-contained: query the tab's own build directly (synchronous —
+            # a single cached layer is cheap, and this is a rare docked-back
+            # interaction) and shape it with the tab's frozen context.
+            try:
+                from .controller import _PLOT_SAMPLE_ROWS
+                df = tab.context["store"].query(
+                    layers=(layer, layer), columns=None,
+                    sample_to=_PLOT_SAMPLE_ROWS)
+            except Exception as exc:  # noqa: BLE001
+                self.set_status(f"Couldn't re-query that layer: {exc}")
+                return
+            self._feed_plot(tab, df)
+        else:
+            self.controller.query_for(
+                "single", layer, layer,
+                lambda raw, t=tab: self._feed_plot(t, raw))
 
     def _popout_plot(self) -> None:
         """Detach the active plot into its own window — a self-contained copy
@@ -424,6 +438,7 @@ class MainWindow(QMainWindow):
             icon_color=self._icon_color(),
         )
         win.closed.connect(self._on_detached_closed)
+        win.dockRequested.connect(self._dock_plot)
         self._detached.append(win)
         win.show()
         # Remove the original docked tab (the window now owns this plot).
@@ -435,21 +450,54 @@ class MainWindow(QMainWindow):
         if win in self._detached:
             self._detached.remove(win)
 
+    def _dock_plot(self, win) -> None:
+        """Re-add a floating window's plot as a self-contained tab, then close
+        the window. The tab keeps the window's frozen context, so a plot from
+        another build docks in cleanly alongside the current one."""
+        if self.session.result is None:
+            self.set_status("Load a build before docking a plot in.")
+            return
+        payload = win.dock_payload()
+        self._ensure_data_tab()
+        spec = payload["spec"]
+        tab = PlotTab(spec, span=payload["span"], layers=payload["layers"])
+        tab.row_filter = payload["context"]["row_filter"]
+        tab.context = payload["context"]
+        tab.apply_appearance(payload["appearance"])
+        self._plot_tabs.append(tab)
+        if spec.is_layer_viewer:
+            tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
+        tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
+        index = self._add_page(tab, tab.title, closable=True)
+        self.tabbar.setCurrentIndex(index)
+        self._feed_plot(tab, payload["raw"])  # shape via context + render
+        win.close()  # fires closed -> _on_detached_closed drops the reference
+
     def _feed_plot(self, tab, raw_df) -> None:
         if tab not in self._plot_tabs:
             return  # closed before the query returned
         tab.raw = raw_df
-        tab.set_dataframe(self.controller.shape_filtered(raw_df, tab.row_filter))
+        tab.set_dataframe(self._shape_for(tab, raw_df))
         if tab is self._active_plot:  # data just arrived — refresh Min/Max etc.
             self.panel.sync_plot(tab.panel_state())
 
-    def _reshape_plots(self) -> None:
-        """Re-shape open plots from their raw span after a column change.
+    def _shape_for(self, tab, raw_df):
+        """Shape a plot's raw frame: a self-contained tab uses its frozen
+        context; a session-linked tab follows the live session."""
+        ctx = tab.context
+        if ctx is not None:
+            from . import derive
+            return derive.shape(raw_df, ctx["derivations"], ctx["removed"],
+                                ctx["row_filter"])
+        return self.controller.shape_filtered(raw_df, tab.row_filter)
 
-        Column shaping propagates live; each plot keeps its own snapshotted
-        row filter (captured at creation), so filtered plots stay filtered.
-        """
+    def _reshape_plots(self) -> None:
+        """Re-shape session-linked plots after a column change. Self-contained
+        tabs (docked back from a floating window) are frozen to their own
+        context and skipped, so a derivation edit never disturbs them."""
         for tab in self._plot_tabs:
+            if tab.context is not None:
+                continue
             if getattr(tab, "raw", None) is not None:
                 tab.set_dataframe(
                     self.controller.shape_filtered(tab.raw, tab.row_filter)

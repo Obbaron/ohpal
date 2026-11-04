@@ -35,6 +35,7 @@ class DetachedPlotWindow(QMainWindow):
     main window and its build."""
 
     closed = pyqtSignal(object)  # emits self so the owner can drop its reference
+    dockRequested = pyqtSignal(object)  # emits self when "Dock in" is clicked
 
     def __init__(self, *, spec, span, layers, raw, appearance, context,
                  icon_color: str, parent=None) -> None:
@@ -91,8 +92,29 @@ class DetachedPlotWindow(QMainWindow):
             on_legend=t.set_legend_visible,
             on_title=t.set_title_visible,
             on_screenshot=self._screenshot,
+            on_dock=self._request_dock,  # re-dock into the main window as a tab
             # no on_popout — a detached plot is already its own window
         )
+
+    def _request_dock(self) -> None:
+        self.dockRequested.emit(self)
+
+    def dock_payload(self) -> dict:
+        """Everything the main window needs to re-create this plot as a tab."""
+        return {
+            "spec": self._tab.spec,
+            "span": self._tab.span,
+            "layers": list(self._tab._layers),
+            "raw": self._tab.raw,
+            "appearance": self._tab.appearance(),
+            "context": {
+                "store": self._store,
+                "build_name": self._build_name,
+                "derivations": self._derivations,
+                "removed": self._removed,
+                "row_filter": self._row_filter,
+            },
+        }
 
     def _wire_panel(self) -> None:
         p, t = self._panel, self._tab

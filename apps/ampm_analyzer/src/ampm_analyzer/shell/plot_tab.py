@@ -214,6 +214,11 @@ class PlotTab(QWidget):
         self.span = span or ("all", None, None)
         self.title = title or f"{spec.kind} {PlotTab._counter}"
         self.row_filter: list[str] = []  # snapshot of the data filter at creation
+        # A self-contained plot (docked back from a floating window) carries its
+        # own frozen context {store, build_name, derivations, removed,
+        # row_filter}; a session-linked plot leaves this None and follows the
+        # live session.
+        self.context = None
         self._layers = list(layers or [])  # Layer Viewer: the scrub range
         self._current_layer = self.span[1]  # ("single", L, L) for a Layer Viewer
 
