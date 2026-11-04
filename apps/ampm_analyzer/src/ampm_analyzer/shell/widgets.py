@@ -6,18 +6,17 @@ from PyQt6.QtWidgets import QComboBox
 
 
 def fix_combo(cb: QComboBox) -> QComboBox:
-    """Pass a combo through unchanged (native behaviour).
+    """Pass a combo through unchanged, and return it.
 
-    This used to swap in a plain ``QListView`` popup to work around a supposed
-    "popup won't close on click" bug under the app's Fusion style + global
-    stylesheet. That evidence came from the headless/offscreen Qt platform,
-    which can't render real popups — so the bug may never have existed in a
-    real X11 session, and the view-swap (replacing Qt's purpose-built
-    ``QComboBoxListView`` with a generic list) may itself have been what broke
-    closing. We're now letting combos behave natively to find out.
+    This was once a workaround for "combo popup won't close on click". That
+    turned out to be a WSLg/XWayland bug, not ours: a bare-Qt repro (no app
+    code, with and without our Fusion style + stylesheet) showed QComboBox
+    popups failing to grab/dismiss, while QMenu popups behaved — classic
+    Wayland popup-grab failure under WSLg. It does not occur on native Windows
+    (the shipped build) or a normal X11/Wayland desktop. For WSL dev, force the
+    platform instead: ``QT_QPA_PLATFORM=xcb``.
 
-    Kept as a wrapper (rather than removing all 18 call sites) so the fix is a
-    one-line revert if native closing really does fail here. If it does, the
-    proper fix is scoping the stylesheet off combo popups, not per-combo hacks.
+    Kept as a no-op wrapper so the 18 call sites stay tidy and so there's an
+    obvious place to hang a real per-combo fix if one is ever needed.
     """
     return cb
