@@ -238,10 +238,12 @@ class PlotTab(QWidget):
         self._scatter = None
         self._grid = None
         self._cbar_col = 2
+        self._cbar_label_col = None  # thin column holding the colourbar's name
         self._xaxis = self._yaxis = None
         self._gridlines = None  # 2D screen-aligned gridlines
         self._floor = None      # 3D grid on the X-Y plane
         self._cbar = None
+        self._cbar_label = None  # the signal name, left of the bar (no overlap)
         self._bbox = None
         self._axis_labels: list = []
         self._status: QLabel | None = None
@@ -348,12 +350,15 @@ class PlotTab(QWidget):
             canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
             grid = canvas.central_widget.add_grid(margin=6)
             self._grid = grid
-            # Title strip inside the canvas (so it's part of screenshots), full
-            # width at row 0; the plot + axes + colourbar live from row 1 down.
+            # Title strip inside the canvas (so it's part of screenshots) at
+            # row 0, over the plot's own column — col 0 for 3D, col 1 for 2D
+            # (right of the y-axis). Spanning into the colourbar/empty columns
+            # would invent a stretchy phantom column that steals half the width.
             self._title_label = scene.Label(
                 self.title, color=_TITLE_TEXT, font_size=13)
             self._title_label.height_max = 28
-            grid.add_widget(self._title_label, row=0, col=0, col_span=3)
+            grid.add_widget(self._title_label, row=0,
+                            col=0 if self.spec.is_3d else 1)
             self._title_label.visible = self._show_title
             if self.spec.is_3d:
                 # No left axis column in 3D — an empty grid column would take an
@@ -392,6 +397,16 @@ class PlotTab(QWidget):
                     color=(0, 0, 0, 0.12), parent=view.scene
                 )
                 self._gridlines.visible = self._show_grid
+            # The colourbar's name lives in its own thin column just left of the
+            # bar (vertical text), so it sits in whitespace and never overlaps
+            # the bar. The bar itself then moves one column to the right.
+            self._cbar_label_col = self._cbar_col
+            self._cbar_col += 1
+            self._cbar_label = scene.Label(
+                "", rotation=-90, color=_AXIS_TEXT, font_size=9)
+            self._cbar_label.width_max = 18
+            grid.add_widget(self._cbar_label, row=1, col=self._cbar_label_col)
+            self._cbar_label.visible = False
             self._scatter = scene.visuals.Markers()
             view.add(self._scatter)
             self._canvas, self._view = canvas, view
@@ -638,6 +653,8 @@ class PlotTab(QWidget):
             self._set_colorbar(lo, hi, name)
         elif self._cbar is not None:
             self._cbar.visible = False  # categorical/none: no colourbar (yet)
+            if self._cbar_label is not None:
+                self._cbar_label.visible = False
 
     def _set_colorbar(self, lo, hi, name) -> None:
         from vispy import scene
@@ -645,20 +662,23 @@ class PlotTab(QWidget):
 
         cm = Colormap(colormap_stops(self.cmap))
         if self._cbar is None:
-            # orientation="left": axis label sits to the LEFT of the bar, clim
-            # numbers at the ends — and nothing runs off the right edge.
+            # No built-in label: the name is a separate vertical Label in the
+            # column to the left (see _build_canvas). The bar carries only the
+            # clim numbers at its ends, so it needs much less width.
             self._cbar = scene.ColorBarWidget(
-                cmap=cm, orientation="left", label=str(name),
+                cmap=cm, orientation="left", label="",
                 clim=(_sig(lo), _sig(hi)), border_width=1,
                 border_color="#888888",
             )
-            self._cbar.width_max = 120  # room for label + 4-sig numbers, no clip
+            self._cbar.width_max = 74  # bar + end numbers (name is its own col)
             self._cbar.bgcolor = _BG
             self._grid.add_widget(self._cbar, row=1, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
             self._cbar.clim = (_sig(lo), _sig(hi))
-            self._cbar.label.text = str(name)
+        if self._cbar_label is not None:
+            self._cbar_label.text = str(name)
+            self._cbar_label.visible = self._show_legend
         self._cbar.visible = self._show_legend
 
     def _apply_visibility(self) -> None:
@@ -680,6 +700,8 @@ class PlotTab(QWidget):
             t.visible = self._show_axes
         if self._cbar is not None:
             self._cbar.visible = self._show_legend
+        if self._cbar_label is not None:
+            self._cbar_label.visible = self._show_legend and self._cbar is not None
 
     # -- toolbar-driven controls ---------------------------------------
     def set_axes_visible(self, on: bool) -> None:
