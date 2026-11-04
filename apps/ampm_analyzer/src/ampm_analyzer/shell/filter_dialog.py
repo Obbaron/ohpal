@@ -108,23 +108,24 @@ class FilterConditionDialog(QDialog):
             "border: 1px solid palette(mid); border-radius: 10px; }"
         )
         outer.addWidget(card)
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(18, 16, 18, 14)
-        lay.setSpacing(10)
+        # Horizontal: a full-height templates panel on the left, and the rest
+        # (title, header, editor, buttons) stacked on the right.
+        lay = QHBoxLayout(card)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(12)
+        lay.addWidget(self._templates_column())
+
+        right_col = QWidget()
+        right = QVBoxLayout(right_col)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(10)
 
         title = QLabel("Edit filter" if initial else "Add filter")
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
-        lay.addWidget(title)
+        right.addWidget(title)
 
-        body = QHBoxLayout()
-        body.setSpacing(12)
-        body.addWidget(self._templates_column())
-
-        # Right side: condition header + editor + inline status.
-        right = QVBoxLayout()
-        right.setSpacing(8)
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("Condition (keeps rows where this is true)"))
+        hdr.addWidget(QLabel("Filter"))
         hdr.addStretch(1)
         hdr.addWidget(self._inserter("Functions", self._function_menu()))
         hdr.addWidget(self._inserter("Columns", self._column_menu()))
@@ -146,8 +147,6 @@ class FilterConditionDialog(QDialog):
         self.error.setWordWrap(True)
         self.error.setVisible(False)
         right.addWidget(self.error)
-        body.addLayout(right, 1)
-        lay.addLayout(body, 1)
 
         # Live validation (debounced).
         self._live = QTimer(self)
@@ -170,7 +169,7 @@ class FilterConditionDialog(QDialog):
         cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel.setText("Close")
         cancel.setIcon(QIcon())
-        # Bottom row: "Clear" on the left, Filter / Close on the right.
+        # Bottom row (over the entry area): "Clear" left, Filter / Close right.
         clear = QPushButton("Clear")
         clear.setToolTip("Clear the condition")
         clear.clicked.connect(lambda: self.expr_edit.setPlainText(""))
@@ -178,34 +177,37 @@ class FilterConditionDialog(QDialog):
         bottom.addWidget(clear)
         bottom.addStretch(1)
         bottom.addWidget(buttons)
-        lay.addLayout(bottom)
+        right.addLayout(bottom)
+
+        lay.addWidget(right_col, 1)
 
         self.resize(820, 520)
 
-    # -- templates column ----------------------------------------------
+    # -- templates side panel ------------------------------------------
     def _templates_column(self) -> QWidget:
-        col = QWidget()
-        v = QVBoxLayout(col)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(6)
-        v.addWidget(QLabel("Templates"))
+        """A full-height side panel of clickable template previews."""
         inner = QVBoxLayout()
-        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setContentsMargins(8, 8, 8, 8)
         inner.setSpacing(6)
         for name, raw in _TEMPLATES:
             card = _TemplateCard(name, self._resolve(raw))
             card.clicked.connect(self._apply_template)
             inner.addWidget(card)
-        inner.addStretch(1)
+        inner.addStretch(1)  # cards sit at the top; panel fills the rest
         holder = QWidget()
         holder.setLayout(inner)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(holder)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setFixedWidth(230)
-        v.addWidget(scroll, 1)
-        return col
+        scroll.setFixedWidth(240)
+        scroll.setObjectName("TplPanel")
+        scroll.setStyleSheet(
+            "#TplPanel, #TplPanel > QWidget > QWidget "
+            "{ background: palette(alternate-base); } "
+            "#TplPanel { border-radius: 8px; }"
+        )
+        return scroll
 
     def _resolve(self, text: str) -> str:
         """Map a template's raw column names to their current display names."""
