@@ -5,13 +5,12 @@ and rows matching none get the default label. Conditions reference columns in
 [brackets] and use comparisons with and / or / not. Validated on OK.
 
 Styled to match the calculation dialog: a frameless card with an accent-coloured
-primary button, Functions / Columns insert menus, and the rules listed directly
-(no surrounding box).
+primary button, and the rules listed directly (no surrounding box).
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
@@ -20,14 +19,13 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QPushButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_predicate
+from .derive import DeriveError, compile_predicate
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
@@ -39,14 +37,12 @@ _PRIMARY_QSS = (
 
 
 class _Rule(QWidget):
-    def __init__(self, on_remove, on_focus) -> None:
+    def __init__(self, on_remove) -> None:
         super().__init__()
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         self.cond = QLineEdit()
         self.cond.setPlaceholderText("[Demand X] > 30 and [Demand Y] < -21")
-        self.cond.installEventFilter(self)
-        self._on_focus = on_focus
         self.label = QLineEdit()
         self.label.setPlaceholderText("label")
         self.label.setFixedWidth(120)
@@ -60,11 +56,6 @@ class _Rule(QWidget):
         row.addWidget(self.label)
         row.addWidget(rm)
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
-        if obj is self.cond and event.type() == QEvent.Type.FocusIn:
-            self._on_focus(self.cond)
-        return super().eventFilter(obj, event)
-
 
 class GroupLabelDialog(QDialog):
     def __init__(self, columns, parent=None, *, taken=None) -> None:
@@ -72,7 +63,6 @@ class GroupLabelDialog(QDialog):
         self._columns = list(columns)
         self._taken = set(taken or [])
         self._rules: list[_Rule] = []
-        self._active_cond: QLineEdit | None = None
 
         # Frameless card (matches the calculation dialog).
         self.setWindowFlags(
@@ -103,24 +93,13 @@ class GroupLabelDialog(QDialog):
         name_row.addWidget(self.name_edit, 1)
         lay.addLayout(name_row)
 
-        # Rules header with Functions / Columns insert menus (into the active
-        # condition field).
-        rhdr = QHBoxLayout()
-        rhdr.addWidget(QLabel("Rules"))
-        rhdr.addStretch(1)
-        rhdr.addWidget(self._inserter("Functions", self._function_menu()))
-        rhdr.addWidget(self._inserter("Columns", self._column_menu()))
-        lay.addLayout(rhdr)
+        lay.addWidget(QLabel("Rules"))
 
         # Rules listed directly — no surrounding box / scroll area.
         self._rules_box = QVBoxLayout()
         self._rules_box.setContentsMargins(0, 0, 0, 0)
         self._rules_box.setSpacing(4)
         lay.addLayout(self._rules_box)
-
-        add_rule = QPushButton("Add rule")
-        add_rule.clicked.connect(lambda: self._add_rule())
-        lay.addWidget(add_rule, alignment=Qt.AlignmentFlag.AlignLeft)
 
         default_row = QHBoxLayout()
         default_row.addWidget(QLabel("Otherwise"))
@@ -129,19 +108,14 @@ class GroupLabelDialog(QDialog):
         default_row.addWidget(self.default_edit, 1)
         lay.addLayout(default_row)
 
-        hint = QLabel(
-            "Columns in [brackets]. Conditions: < > <= >= == != , and, or, not. "
-            "Chaining works: 0 < [Z] < 1."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(placeholder-text);")
-        lay.addWidget(hint)
-
         self.error = QLabel("")
         self.error.setWordWrap(True)
         self.error.setVisible(False)
         lay.addWidget(self.error)
 
+        # Bottom row: "Add rule" on the left, Run / Close on the right.
+        add_rule = QPushButton("Add rule")
+        add_rule.clicked.connect(lambda: self._add_rule())
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -156,47 +130,18 @@ class GroupLabelDialog(QDialog):
         cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel.setText("Close")
         cancel.setIcon(QIcon())
-        lay.addWidget(buttons)
+        bottom = QHBoxLayout()
+        bottom.addWidget(add_rule)
+        bottom.addStretch(1)
+        bottom.addWidget(buttons)
+        lay.addLayout(bottom)
 
         self._add_rule()  # start with one empty rule
         self.resize(560, self.sizeHint().height())
 
-    # -- Functions / Columns insert menus ------------------------------
-    def _inserter(self, label: str, menu: QMenu) -> QToolButton:
-        btn = QToolButton()
-        btn.setText(label)
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        btn.setAutoRaise(True)
-        btn.setMenu(menu)
-        return btn
-
-    def _function_menu(self) -> QMenu:
-        m = QMenu(self)
-        for i, group in enumerate((_AGGREGATE, _ELEMENTWISE, ("where",))):
-            if i:
-                m.addSeparator()
-            for name in group:
-                m.addAction(name).triggered.connect(
-                    lambda _c=False, n=name: self._insert(f"{n}("))
-        return m
-
-    def _column_menu(self) -> QMenu:
-        m = QMenu(self)
-        for name in self._columns:
-            m.addAction(name).triggered.connect(
-                lambda _c=False, n=name: self._insert(f"[{n}]"))
-        return m
-
-    def _insert(self, text: str) -> None:
-        target = self._active_cond or (self._rules[-1].cond if self._rules else None)
-        if target is not None:
-            target.insert(text)
-            target.setFocus()
-
     # -- rule rows -----------------------------------------------------
     def _add_rule(self) -> _Rule:
-        rule = _Rule(self._remove_rule, self._set_active_cond)
+        rule = _Rule(self._remove_rule)
         self._rules.append(rule)
         self._rules_box.addWidget(rule)
         return rule
@@ -207,9 +152,6 @@ class GroupLabelDialog(QDialog):
         self._rules.remove(rule)
         self._rules_box.removeWidget(rule)
         rule.deleteLater()
-
-    def _set_active_cond(self, edit: QLineEdit) -> None:
-        self._active_cond = edit
 
     # -- result --------------------------------------------------------
     def _accept(self) -> None:
