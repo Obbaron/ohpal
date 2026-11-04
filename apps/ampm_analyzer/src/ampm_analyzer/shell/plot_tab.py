@@ -219,6 +219,7 @@ class PlotTab(QWidget):
         # row_filter}; a session-linked plot leaves this None and follows the
         # live session.
         self.context = None
+        self._renames: dict = {}  # original -> display, for the hover extras
         self._layers = list(layers or [])  # Layer Viewer: the scrub range
         self._current_layer = self.span[1]  # ("single", L, L) for a Layer Viewer
 
@@ -423,6 +424,11 @@ class PlotTab(QWidget):
             return _placeholder(f"Could not start the canvas:\n{exc}")
 
     # -- data ----------------------------------------------------------
+    def set_renames(self, renames) -> None:
+        """Hand the current rename map (original -> display), used to resolve the
+        hover tooltip's part_id / layer extras to their renamed names."""
+        self._renames = dict(renames or {})
+
     def set_dataframe(self, df) -> None:
         """(Re)render with a new dataframe, keeping the same spec."""
         self._df = df
@@ -1045,10 +1051,13 @@ class PlotTab(QWidget):
         rows = self._hover_rows
         if rows is None or i < 0 or i >= rows.height:
             return ""
+        # Axis/colour columns follow renames via the spec; the part_id / layer
+        # extras are raw, so map them through the rename map too.
+        extras = [self._renames.get(c, c) for c in ("part_id", "layer")]
         cols = list(dict.fromkeys(
             [*self.spec.axes]
             + ([self.spec.color] if self.spec.color else [])
-            + [c for c in ("part_id", "layer") if c in rows.columns]
+            + [c for c in extras if c in rows.columns]
         ))
         row = rows.row(i, named=True)
         return "\n".join(f"{c}: {_fmt(row.get(c))}" for c in cols)

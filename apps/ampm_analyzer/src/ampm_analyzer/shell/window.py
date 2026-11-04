@@ -483,6 +483,10 @@ class MainWindow(QMainWindow):
         if tab not in self._plot_tabs:
             return  # closed before the query returned
         tab.raw = raw_df
+        # Hover extras (part_id/layer) resolve through the rename map: a
+        # self-contained tab uses its frozen one, a live tab the session's.
+        ctx = getattr(tab, "context", None)
+        tab.set_renames(ctx.get("renames", {}) if ctx else self.session.renames)
         tab.set_dataframe(self._shape_for(tab, raw_df))
         if tab is self._active_plot:  # data just arrived — refresh Min/Max etc.
             self.panel.sync_plot(tab.panel_state())
@@ -818,7 +822,8 @@ class MainWindow(QMainWindow):
         from .derive_dialog import DeriveColumnDialog
 
         taken = [d["name"] for d in self.session.derivations]
-        dlg = DeriveColumnDialog(dt._columns, self, taken=taken)
+        dlg = DeriveColumnDialog(dt._columns, self, taken=taken,
+                                 renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, expr, group = dlg.result_values()
@@ -842,7 +847,8 @@ class MainWindow(QMainWindow):
         from .label_dialog import GroupLabelDialog
 
         taken = [d["name"] for d in self.session.derivations]
-        dlg = GroupLabelDialog(dt._columns, self, taken=taken)
+        dlg = GroupLabelDialog(dt._columns, self, taken=taken,
+                               renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, rules, default = dlg.result_values()

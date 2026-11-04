@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from . import export
+from . import colref, export
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
 
@@ -152,10 +152,11 @@ class ExcelExportDialog(QDialog):
         add.clicked.connect(lambda: self._add_value_row())
         v.addWidget(add, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        hint = QLabel(
+        hint = QLabel(colref.resolve_all(
             "“as-is” takes each key’s single value — use it for a column already "
-            "computed per key (e.g. a CoV derived “by [part_id]”)."
-        )
+            "computed per key (e.g. a CoV derived “by [part_id]”).",
+            self._renames,
+        ))
         hint.setWordWrap(True)
         v.addWidget(hint)
         v.addStretch(1)

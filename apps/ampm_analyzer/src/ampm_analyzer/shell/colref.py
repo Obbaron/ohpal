@@ -37,6 +37,17 @@ def rewrite_refs(text: str, old: str, new: str) -> str:
     return _BRACKET.sub(sub, text)
 
 
+def resolve_all(text: str, renames) -> str:
+    """Rewrite every renamed column (original -> display) in a DSL string.
+
+    Used to run hardcoded example / template text through the rename map so a
+    renamed column shows under its current name wherever columns are displayed.
+    """
+    for orig, disp in (renames or {}).items():
+        text = rewrite_refs(text, orig, disp)
+    return text
+
+
 def rename_derivations(derivations, old: str, new: str) -> list[dict]:
     """Return a copy of ``derivations`` with ``old`` renamed to ``new``.
 

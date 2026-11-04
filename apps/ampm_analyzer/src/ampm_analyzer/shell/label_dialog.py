@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import colref
 from .derive import DeriveError, compile_predicate
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
@@ -37,12 +38,13 @@ _PRIMARY_QSS = (
 
 
 class _Rule(QWidget):
-    def __init__(self, on_remove) -> None:
+    def __init__(self, on_remove, placeholder: str = "") -> None:
         super().__init__()
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         self.cond = QLineEdit()
-        self.cond.setPlaceholderText("[Demand X] > 30 and [Demand Y] < -21")
+        self.cond.setPlaceholderText(
+            placeholder or "[Demand X] > 30 and [Demand Y] < -21")
         self.label = QLineEdit()
         self.label.setPlaceholderText("label")
         self.label.setFixedWidth(120)
@@ -58,11 +60,13 @@ class _Rule(QWidget):
 
 
 class GroupLabelDialog(QDialog):
-    def __init__(self, columns, parent=None, *, taken=None) -> None:
+    def __init__(self, columns, parent=None, *, taken=None, renames=None) -> None:
         super().__init__(parent)
         self._columns = list(columns)
         self._taken = set(taken or [])
         self._rules: list[_Rule] = []
+        self._cond_ph = colref.resolve_all(  # rename-aware rule placeholder
+            "[Demand X] > 30 and [Demand Y] < -21", renames)
 
         # Frameless card (matches the calculation dialog).
         self.setWindowFlags(
@@ -141,7 +145,7 @@ class GroupLabelDialog(QDialog):
 
     # -- rule rows -----------------------------------------------------
     def _add_rule(self) -> _Rule:
-        rule = _Rule(self._remove_rule)
+        rule = _Rule(self._remove_rule, self._cond_ph)
         self._rules.append(rule)
         self._rules_box.addWidget(rule)
         return rule

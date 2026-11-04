@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from . import colref
 from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_expr
 from .derive_editor import FormulaEdit, FormulaHighlighter
 from .widgets import fix_combo
@@ -44,10 +45,11 @@ _PRIMARY_QSS = (
 
 
 class DeriveColumnDialog(QDialog):
-    def __init__(self, columns, parent=None, *, taken=None) -> None:
+    def __init__(self, columns, parent=None, *, taken=None, renames=None) -> None:
         super().__init__(parent)
         self._columns = list(columns)
         self._taken = set(taken or [])
+        self._renames = dict(renames or {})
 
         # Frameless card: drop the window chrome; a translucent window lets the
         # rounded QFrame show its corners.
@@ -119,11 +121,12 @@ class DeriveColumnDialog(QDialog):
         lay.addLayout(fhdr)
 
         self.expr_edit = FormulaEdit(self._columns)
-        self.expr_edit.setPlaceholderText(
+        self.expr_edit.setPlaceholderText(colref.resolve_all(
             "e.g. [availability_365] / 365\n"
             "     where([Z] > 0.5, \"high\", \"low\")\n"
-            "     mean([mp] where [side] == \"A\") by [part]"
-        )
+            "     mean([mp] where [side] == \"A\") by [part]",
+            self._renames,
+        ))
         self.expr_edit.setMinimumHeight(140)
         dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
         self._highlighter = FormulaHighlighter(

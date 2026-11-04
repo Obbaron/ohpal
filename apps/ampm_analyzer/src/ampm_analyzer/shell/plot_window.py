@@ -138,6 +138,7 @@ class DetachedPlotWindow(QMainWindow):
     # -- data ----------------------------------------------------------
     def _feed(self, raw) -> None:
         self._tab.raw = raw
+        self._tab.set_renames(self._renames)  # resolve hover extras
         shaped = derive.shape(raw, self._derivations, self._removed,
                               self._row_filter, self._renames)
         self._tab.set_dataframe(shaped)
