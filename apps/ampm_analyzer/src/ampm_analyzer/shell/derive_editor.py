@@ -115,6 +115,10 @@ class FormulaEdit(QPlainTextEdit):
     def set_columns(self, columns) -> None:
         self._columns = list(columns)
 
+    def completer_active(self) -> bool:
+        """True while the completion popup is open (mid-token entry)."""
+        return self._completer.popup().isVisible()
+
     # -- completion context -------------------------------------------
     def _context(self):
         """('col'|'id', prefix, start_index) for the token under the cursor, or

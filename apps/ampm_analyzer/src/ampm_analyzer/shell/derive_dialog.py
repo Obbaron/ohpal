@@ -1,8 +1,8 @@
 """Dialog for defining a row-wise derived column (name + formula).
 
-Columns are inserted into the formula in ``[brackets]`` (click Insert or type
-them). The formula is validated on OK against the available columns; errors are
-shown inline and keep the dialog open.
+Columns are referenced in the formula in ``[brackets]`` — type ``[`` for an
+autocomplete list. The formula is validated live and again on OK against the
+available columns; errors are shown inline and keep the dialog open.
 """
 
 from __future__ import annotations
@@ -10,20 +10,16 @@ from __future__ import annotations
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QVBoxLayout,
 )
 
 from .derive import DeriveError, compile_expr
 from .derive_editor import FormulaEdit, FormulaHighlighter
-from .widgets import fix_combo
 
 
 class DeriveColumnDialog(QDialog):
@@ -65,15 +61,6 @@ class DeriveColumnDialog(QDialog):
         self._live.timeout.connect(self._validate_live)
         self.expr_edit.textChanged.connect(lambda: self._live.start())
 
-        pick = QHBoxLayout()
-        self.col_combo = fix_combo(QComboBox())
-        self.col_combo.addItems(self._columns)
-        insert = QPushButton("Insert column")
-        insert.clicked.connect(self._insert_column)
-        pick.addWidget(self.col_combo, 1)
-        pick.addWidget(insert)
-        lay.addLayout(pick)
-
         self.error = QLabel("")
         self.error.setWordWrap(True)
         self.error.setStyleSheet("color: #d9534f;")
@@ -90,17 +77,17 @@ class DeriveColumnDialog(QDialog):
 
         self.resize(520, 360)
 
-    def _insert_column(self) -> None:
-        name = self.col_combo.currentText()
-        if name:
-            self.expr_edit.insertPlainText(f"[{name}]")
-            self.expr_edit.setFocus()
-
     def _validate_live(self) -> None:
         """Compile as the user types; amber for in-progress problems, green when
         the formula is valid. The OK handler stays the authoritative check."""
         text = self.expr_edit.toPlainText().strip()
         if not text:
+            self.error.setVisible(False)
+            return
+        # Don't nag while the formula is visibly mid-entry: an unclosed bracket
+        # (you're picking a column) or the completion popup still open. Wait for
+        # it to settle before reporting anything.
+        if text.count("[") != text.count("]") or self.expr_edit.completer_active():
             self.error.setVisible(False)
             return
         try:
