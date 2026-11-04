@@ -139,12 +139,23 @@ class FormulaEdit(QPlainTextEdit):
     # -- key handling -------------------------------------------------
     def keyPressEvent(self, e) -> None:  # noqa: N802 (Qt override)
         popup = self._completer.popup()
-        if popup.isVisible() and e.key() in (
-            Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape,
-            Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
-        ):
-            e.ignore()  # let the popup accept/dismiss
-            return
+        if popup.isVisible():
+            # Tab accepts the highlighted (top) suggestion — Qt's completer only
+            # does this on Enter, so we handle Tab ourselves.
+            if e.key() == Qt.Key.Key_Tab:
+                idx = popup.currentIndex()
+                completion = (idx.data() if idx.isValid()
+                              else self._completer.currentCompletion())
+                if completion:
+                    self._insert_completion(completion)
+                    e.accept()
+                    return
+            if e.key() in (
+                Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape,
+                Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
+            ):
+                e.ignore()  # let the popup accept/dismiss
+                return
         super().keyPressEvent(e)
         self._maybe_complete()
 
