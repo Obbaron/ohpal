@@ -487,3 +487,17 @@ def apply(df, derivations):
         except Exception:  # noqa: BLE001 — skip a bad derivation, keep the rest
             continue
     return out
+
+
+def shape(df, derivations, removed, filters):
+    """Apply derivations, drop ``removed`` columns, then filter rows.
+
+    The same pipeline the controller runs, but driven by explicit snapshots
+    rather than the live session — so a detached plot can shape its own data.
+    """
+    out = apply(df, derivations) if derivations else df
+    if removed:
+        drop = [c for c in removed if c in out.columns]
+        if drop:
+            out = out.drop(drop)
+    return filter_rows(out, filters or [])

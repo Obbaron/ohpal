@@ -152,6 +152,7 @@ class MainWindow(QMainWindow):
 
         self._data_tab: DataTab | None = None
         self._plot_tabs: list = []  # open plot tabs, re-fed the shared result
+        self._detached: list = []  # popped-out plot windows (kept from GC)
         self._active_plot = None  # the plot tab the toolbar/panel controls drive
         self._pending_grid_state: bytes | None = None  # per-build column layout
         self._pending_grid_layout = ([], [], [])  # (columns, order, hidden) by name
@@ -397,6 +398,43 @@ class MainWindow(QMainWindow):
             "single", layer, layer, lambda raw, t=tab: self._feed_plot(t, raw)
         )
 
+    def _popout_plot(self) -> None:
+        """Detach the active plot into its own window — a self-contained copy
+        that keeps its build, so it survives the main window switching builds."""
+        p = self._active_plot
+        if p is None:
+            return
+        if getattr(p, "raw", None) is None:
+            self.set_status("Let the plot finish loading before popping it out.")
+            return
+        from .plot_window import DetachedPlotWindow
+
+        store = self.session.store
+        layers = list(p._layers) or (list(store.layers) if store else [])
+        context = {
+            "store": store,
+            "build_name": self.session.build_name,
+            "derivations": list(self.session.derivations),
+            "removed": list(self.session.removed),
+            "row_filter": list(p.row_filter),
+        }
+        win = DetachedPlotWindow(
+            spec=p.spec, span=p.span, layers=layers, raw=p.raw,
+            appearance=p.appearance(), context=context,
+            icon_color=self._icon_color(),
+        )
+        win.closed.connect(self._on_detached_closed)
+        self._detached.append(win)
+        win.show()
+        # Remove the original docked tab (the window now owns this plot).
+        idx = self.stack.indexOf(p)
+        if idx >= 0:
+            self._close_tab(idx)
+
+    def _on_detached_closed(self, win) -> None:
+        if win in self._detached:
+            self._detached.remove(win)
+
     def _feed_plot(self, tab, raw_df) -> None:
         if tab not in self._plot_tabs:
             return  # closed before the query returned
@@ -611,6 +649,7 @@ class MainWindow(QMainWindow):
                 on_legend=lambda v: p and p.set_legend_visible(v),
                 on_title=lambda v: p and p.set_title_visible(v),
                 on_screenshot=self._screenshot_plot,
+                on_popout=self._popout_plot,
             )
 
     def _screenshot_plot(self) -> None:

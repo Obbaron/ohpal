@@ -876,6 +876,36 @@ class PlotTab(QWidget):
             "title": self._show_title, "is_3d": self.spec.is_3d,
         }
 
+    def appearance(self) -> dict:
+        """Full visual state, for cloning this plot into a detached window."""
+        return {
+            "cmap": self.cmap, "scale": self.scale, "crange": self.crange,
+            "size": self._base_size, "symbol": self._symbol,
+            "opacity": self._opacity, "axes": self._show_axes,
+            "grid": self._show_grid, "bbox": self._show_bbox,
+            "legend": self._show_legend, "title": self._show_title,
+            "title_text": self.title,
+        }
+
+    def apply_appearance(self, a: dict) -> None:
+        """Adopt a saved ``appearance`` before the first render (no re-render
+        here — the caller feeds data next)."""
+        self.cmap = a.get("cmap", self.cmap)
+        self.scale = a.get("scale", self.scale)
+        self.crange = a.get("crange", self.crange)
+        self._base_size = a.get("size", self._base_size)
+        self._symbol = a.get("symbol", self._symbol)
+        self._opacity = a.get("opacity", self._opacity)
+        self._show_axes = a.get("axes", self._show_axes)
+        self._show_grid = a.get("grid", self._show_grid)
+        self._show_bbox = a.get("bbox", self._show_bbox)
+        self._show_legend = a.get("legend", self._show_legend)
+        self._show_title = a.get("title", self._show_title)
+        self.title = a.get("title_text", self.title)
+        if self._title_label is not None:
+            self._title_label.text = self.title
+            self._title_label.visible = self._show_title
+
     # -- overlay (errors / empty) on top of the canvas -----------------
     def _show_overlay(self, text: str) -> None:
         if self._scatter is not None:

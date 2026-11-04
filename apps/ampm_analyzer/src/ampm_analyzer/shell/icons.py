@@ -54,6 +54,7 @@ UI = {
     "select": "select--01",
     "clear_sel": "close", "invert_sel": "select--02",
     "sel_box": "select--window", "sel_lasso": "lasso", "screenshot": "camera",
+    "popout": "custom/popout",
     # panel
     "marker": "dot-mark", "colormap": "color-palette",
     "scale": "chart--logistic-regression", "opacity": "opacity",
