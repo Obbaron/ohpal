@@ -570,6 +570,49 @@ class AppController(QObject):
                 return orig
         return display
 
+    # -- part assignment ------------------------------------------------
+    def part_id_display(self) -> str:
+        """The current (possibly renamed) display name of the ``part_id``
+        column — the name actions should reference."""
+        return self.session.renames.get("part_id", "part_id")
+
+    def has_part_assignment(self) -> bool:
+        """True when the loaded build has a usable ``part_id`` — i.e. a
+        successful part assignment, so the data carries real part values (not
+        all null / ``"noise"``). The contextual Parts toolbar group keys off
+        this. Checks the raw base frame, which still holds the original name."""
+        import polars as pl
+
+        df = self._base_df
+        if df is None or "part_id" not in df.columns:
+            return False
+        try:
+            real = df.select(
+                pl.col("part_id").is_not_null() & (pl.col("part_id") != "noise")
+            ).to_series()
+            return bool(real.any())
+        except Exception:  # noqa: BLE001 — never let a probe break the toolbar
+            return False
+
+    def has_laser_parameters(self) -> bool:
+        """True when this build has a QuantAM parts CSV to pull per-part laser
+        parameters from. (The dhxml carries only geometry, not parameters.)"""
+        return bool((self._config or {}).get("PARTS_CSV"))
+
+    def part_laser_parameters(self, *, variant: str = "1"):
+        """Load the per-part scan-volume laser parameters as a Polars frame
+        keyed by ``part_id`` (original name) from the QuantAM parts CSV.
+
+        Returns the frame, or raises with a clear message. The caller joins the
+        parameter columns onto the grid via ``add_join_derivation``."""
+        path = (self._config or {}).get("PARTS_CSV")
+        if not path:
+            raise ValueError("This build has no parts CSV configured.")
+        from ohpal.ampm.parts import QuantAMParts
+
+        return QuantAMParts.from_path(path).volume_parameters_with_speed(
+            variant=variant)
+
     def rename_error(self, old: str, new: str) -> str | None:
         """Validate a rename without mutating — lets the window pre-check before
         it touches the grid layout. Returns an error message, or None."""

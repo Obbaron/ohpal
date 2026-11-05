@@ -718,6 +718,10 @@ class MainWindow(QMainWindow):
                 on_add_excel=self._add_excel_column,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
+                has_parts=self.controller.has_part_assignment(),
+                part_has_params=self.controller.has_laser_parameters(),
+                on_part_calc=self._add_part_calc,
+                on_part_params=self._add_laser_parameters,
                 on_filter=self._on_filter,
                 on_remove_filter=self._on_remove_last_filter,
                 on_reset_filter=self._on_reset_filters,
@@ -880,6 +884,123 @@ class MainWindow(QMainWindow):
             )
             self._save_ui()
             self._reshape_plots()
+
+    # -- contextual part-wise actions ----------------------------------
+    def _add_part_calc(self) -> None:
+        """Quick per-part calculation → a derived column reduced by part_id."""
+        dt = self._data_tab
+        if dt is None:
+            return
+        from .part_calc_dialog import PartCalcDialog
+
+        pid = self.controller.part_id_display()  # rename-aware part column
+        taken = [d["name"] for d in self.session.derivations]
+        dlg = PartCalcDialog(dt._columns, pid, self, taken=taken)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, signal, reducer = dlg.result_values()
+        if reducer == "cov":
+            self._add_part_cov(signal, name, pid)
+            return
+        expr = f"{reducer}([{signal}]) by [{pid}]"
+        err = self.controller.add_derivation(name, expr)
+        if err:
+            self.set_status(f"Per-part calculation failed: {err}")
+        else:
+            self.set_status(f"Added per-part column '{name}'.")
+            self._save_ui()
+            self._reshape_plots()
+
+    def _add_part_cov(self, signal: str, cov_name: str, pid: str) -> None:
+        """CoV = per-part std / per-part mean, laid out as three columns:
+        a per-part mean, a per-part std, then their ratio. The mean/std
+        intermediates are reused if they already exist."""
+        dt = self._data_tab
+        existing = set(dt._columns) | {d["name"] for d in self.session.derivations}
+        mean_name = f"{signal} (mean/part)"
+        std_name = f"{signal} (std/part)"
+        if cov_name in existing:
+            self.set_status(f"A column named {cov_name!r} already exists.")
+            return
+        # Build the mean/std intermediates in order (cov references them).
+        plan = []
+        if mean_name not in existing:
+            plan.append((mean_name, f"mean([{signal}]) by [{pid}]"))
+        if std_name not in existing:
+            plan.append((std_name, f"std([{signal}]) by [{pid}]"))
+        for nm, expr in plan:
+            err = self.controller.add_derivation(nm, expr)
+            if err:
+                self.set_status(f"Per-part CoV failed on '{nm}': {err}")
+                return
+        err = self.controller.add_derivation(
+            cov_name, f"[{std_name}] / [{mean_name}]")
+        if err:
+            self.set_status(f"Per-part CoV failed: {err}")
+            return
+        self.set_status(
+            f"Added per-part CoV '{cov_name}' "
+            f"(+ {mean_name!r}, {std_name!r})."
+        )
+        self._save_ui()
+        self._reshape_plots()
+
+    def _add_laser_parameters(self) -> None:
+        """Join the QuantAM per-part scan-volume laser parameters onto the grid,
+        keyed on the (rename-aware) part_id. Each numeric parameter column is
+        added as its own join derivation; existing names are skipped."""
+        import polars as pl
+
+        from . import derive
+
+        dt = self._data_tab
+        if dt is None:
+            return
+        pid = self.controller.part_id_display()
+        try:
+            params = self.controller.part_laser_parameters()
+        except Exception as exc:  # noqa: BLE001 — surfaced, non-fatal
+            self.set_status(f"Couldn't load laser parameters: {exc}")
+            return
+        if params is None or "part_id" not in params.columns:
+            self.set_status("The parts CSV has no part_id column.")
+            return
+        keys = params["part_id"].cast(pl.Utf8).to_list()
+        taken = {d["name"] for d in self.session.derivations} | set(dt._columns)
+        added, skipped = [], []
+        for col in (c for c in params.columns if c != "part_id"):
+            if col in taken:
+                skipped.append(col)
+                continue
+            series = params[col]
+            if not series.dtype.is_numeric():
+                skipped.append(col)  # only numeric parameters join as f64
+                continue
+            vals = series.to_list()
+            mapping = {
+                derive.norm_key(k): float(v)
+                for k, v in zip(keys, vals)
+                if k is not None and v is not None
+            }
+            if not mapping:
+                continue
+            if self.controller.add_join_derivation(col, pid, mapping, "f64") is None:
+                added.append(col)
+                taken.add(col)
+            else:
+                skipped.append(col)
+        if added:
+            self.set_status(
+                f"Added {len(added)} laser-parameter column(s): "
+                f"{', '.join(added)}."
+            )
+            self._save_ui()
+            self._reshape_plots()
+        else:
+            self.set_status(
+                "No new laser-parameter columns to add"
+                + (" (all already present)." if skipped else ".")
+            )
 
     def _export_excel(self) -> None:
         dt = self._data_tab

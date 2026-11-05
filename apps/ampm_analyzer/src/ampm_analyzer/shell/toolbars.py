@@ -168,6 +168,10 @@ def populate_data(
     on_add_excel=None,
     on_remove_column=None,
     on_restore_column=None,
+    has_parts=False,
+    part_has_params=False,
+    on_part_calc=None,
+    on_part_params=None,
     on_filter=None,
     on_remove_filter=None,
     on_reset_filter=None,
@@ -237,6 +241,21 @@ def populate_data(
     if on_remove_column is not None:
         remove.triggered.connect(lambda: on_remove_column())
     toolbar.addSeparator()
+
+    # Parts — contextual: only shown once a successful part assignment gives a
+    # usable part_id, so these part-wise actions can count on it.
+    if has_parts:
+        parts_btn = _menu_button(toolbar, "Parts", "assign_parts", color)
+        pcalc = parts_btn.menu().addAction("Per-part calculation…")
+        if on_part_calc is not None:
+            pcalc.triggered.connect(lambda: on_part_calc())
+        pparams = parts_btn.menu().addAction("Add laser parameters…")
+        if on_part_params is not None and part_has_params:
+            pparams.triggered.connect(lambda: on_part_params())
+        else:
+            pparams.setEnabled(False)  # no parts CSV configured for this build
+            pparams.setToolTip("No QuantAM parts CSV configured for this build.")
+        toolbar.addSeparator()
 
     # Filters (query-time; on top of the cache). Mask / assign-parts /
     # correction are not here — they're defined with the DataStore in the
