@@ -65,6 +65,7 @@ PLOT_TYPE = {
     "3D Scatter": "chart--3D",
     "2D Scatter": "chart--scatter",
     "Bar": "chart--bar",
+    "Histogram": "chart--histogram",
     "K-Distance Curve": "chart--line",
     "KDE": "chart--area",
     "Contour": "contour-finding",

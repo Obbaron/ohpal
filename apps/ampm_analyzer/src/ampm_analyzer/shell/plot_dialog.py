@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -22,7 +23,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .plotspec import BAR_AGGS, PlotSpec, default_spec
+from .plotspec import BAR_AGGS, COV_MODES, PlotSpec, default_spec
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
 
@@ -87,6 +88,9 @@ class NewPlotDialog(QDialog):
         self.z_combo = None
         self.color_combo = None
         self.bins_spin = None
+        self.cov_mode_combo = None
+        self.show_points_chk = None
+        self.sl_layer = None
         if base.is_hist:
             # Histogram: one numeric column + a bin count.
             self.x_combo = axis_combo(base.x)
@@ -106,6 +110,27 @@ class NewPlotDialog(QDialog):
             self.agg_combo.addItems(BAR_AGGS)
             self.agg_combo.setCurrentText(base.agg)
             form.addRow("Aggregate", self.agg_combo)
+        elif base.is_cov:
+            # CoV Summary: one bar per group of a signal's CoV.
+            self.x_combo = axis_combo(base.group_by or base.x)
+            form.addRow("Group by", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Signal", self.y_combo)
+            self.cov_mode_combo = fix_combo(QComboBox())
+            self.cov_mode_combo.addItems(COV_MODES)
+            self.cov_mode_combo.setCurrentText(base.cov_mode)
+            form.addRow("Mode", self.cov_mode_combo)
+        elif base.is_contour:
+            # Contour: a value (z) gridded over an (x, y) parameter plane.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("X", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Y", self.y_combo)
+            self.z_combo = axis_combo(base.z)
+            form.addRow("Value (colour)", self.z_combo)
+            self.show_points_chk = QCheckBox("Show measured points")
+            self.show_points_chk.setChecked(bool(base.show_points))
+            form.addRow("", self.show_points_chk)
         else:
             self.x_combo = axis_combo(base.x)
             form.addRow("X", self.x_combo)
@@ -120,13 +145,24 @@ class NewPlotDialog(QDialog):
             if base.color in self._columns:
                 self.color_combo.setCurrentText(base.color)
             form.addRow("Colour by", self.color_combo)
+            if base.is_single_layer:
+                # Static 2D scatter of one chosen layer (no scrub slider).
+                self.sl_layer = LayerSpinBox()
+                if self._layers:
+                    self.sl_layer.set_layers(
+                        self._layers,
+                        self._current if self._current is not None
+                        else self._layers[0])
+                form.addRow("Layer", self.sl_layer)
         lay.addLayout(form)
 
-        # A Layer Viewer shows one layer at a time, scrubbed with a slider on the
-        # plot itself — so it has no layer-span row; it starts on the current
-        # layer.
+        # These kinds carry no layer-span row: a Layer Viewer scrubs with its own
+        # slider; Single Layer picks its layer above; CoV / Contour summarise the
+        # whole build (all layers).
         self._is_layer_viewer = base.is_layer_viewer
-        if self._is_layer_viewer:
+        self._is_single_layer = base.is_single_layer
+        if (self._is_layer_viewer or self._is_single_layer
+                or base.is_cov or base.is_contour):
             self._add_buttons(lay)
             self.setMinimumWidth(440)
             return
@@ -208,6 +244,16 @@ class NewPlotDialog(QDialog):
                 color=None,
                 bins=self.bins_spin.value(),
             )
+        if self.cov_mode_combo is not None:  # CoV summary
+            grp = self.x_combo.currentText()
+            return PlotSpec(
+                kind=self._kind,
+                x=grp,
+                y=self.y_combo.currentText(),
+                color=None,  # bars colour by their value
+                group_by=grp,
+                cov_mode=self.cov_mode_combo.currentText(),
+            )
         if self.agg_combo is not None:  # bar
             return PlotSpec(
                 kind=self._kind,
@@ -215,6 +261,15 @@ class NewPlotDialog(QDialog):
                 y=self.y_combo.currentText(),
                 color=None,  # bars colour by their value
                 agg=self.agg_combo.currentText(),
+            )
+        if self.show_points_chk is not None:  # contour
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y=self.y_combo.currentText(),
+                z=self.z_combo.currentText(),  # the contour value
+                color=None,
+                show_points=self.show_points_chk.isChecked(),
             )
         color = self.color_combo.currentText()
         return PlotSpec(
@@ -229,6 +284,11 @@ class NewPlotDialog(QDialog):
         """("single", L, L), ("all", None, None) or ("range", lo, hi)."""
         if self._is_layer_viewer:  # starts on the current layer; slider scrubs
             return ("single", self._current, self._current)
+        if self._is_single_layer:  # the layer chosen in the form
+            L = self.sl_layer.value() if self.sl_layer is not None else self._current
+            return ("single", L, L)
+        if not hasattr(self, "radio_single"):  # CoV / Contour: whole build
+            return ("all", None, None)
         if self.radio_single.isChecked():
             L = self.single_spin.value()
             return ("single", L, L)

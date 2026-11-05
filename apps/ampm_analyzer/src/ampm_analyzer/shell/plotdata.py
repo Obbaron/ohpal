@@ -187,6 +187,110 @@ def build_histogram(df, spec, *, cmap=None, scale="linear", crange=None) -> BarD
                    width, (lo, hi), (lo, hi), len(heights))
 
 
+def _short_part(s: str) -> str:
+    """``Part(12)`` → ``P12`` for compact bar labels; other labels untouched."""
+    return "P" + s[5:-1] if s.startswith("Part(") and s.endswith(")") else s
+
+
+def build_cov(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
+    """One bar per group of a signal's coefficient of variation.
+
+    Reduction mode (``overall`` / ``per_layer_mean`` / ``across_layers``) comes
+    from ``spec.cov_mode``; the CoV itself is computed by ``ohpal.ampm.stats``.
+    """
+    import polars as pl
+
+    from ohpal.ampm.stats import compute_cov
+
+    cmap = cmap or DEFAULT_COLORMAP
+    grp = spec.group_by or spec.x
+    sig = spec.y
+    for c in (grp, sig):
+        if not c or c not in df.columns:
+            raise KeyError(f"Column {c!r} is not in the data.")
+
+    work = df.filter(pl.col(grp).is_not_null())
+    cov_df = compute_cov(
+        work, [sig], group_by=grp, mode=(spec.cov_mode or "overall"),
+        drop_noise=True, noise_label="noise",
+    )
+    cov_col = f"cov_{sig}"
+    cov_df = cov_df.filter(pl.col(cov_col).is_not_null()).sort(grp)
+    value_name = f"CoV · {sig}"
+    if cov_df.height == 0:
+        empty = np.zeros((0, 4), "float32")
+        return BarData(np.zeros(0, "float32"), np.zeros(0, "float32"), empty,
+                       value_name, grp, None, True, 0.8, None, None, 0)
+    labels = [_short_part(str(v)) for v in cov_df[grp].to_list()]
+    heights = cov_df[cov_col].to_numpy().astype("float32")
+    colors, lo, hi = _bar_colors(heights, cmap, crange)
+    n = len(labels)
+    return BarData(np.arange(n, dtype="float32"), heights, colors,
+                   value_name, grp, labels, True, 0.8, (lo, hi), (lo, hi), n)
+
+
+@dataclass
+class ContourData:
+    z: np.ndarray          # (ny, nx) float32, NaN for empty grid cells
+    x_values: np.ndarray   # (nx,) sorted unique x (grid column coords)
+    y_values: np.ndarray   # (ny,) sorted unique y (grid row coords)
+    points: np.ndarray     # (M, 2) measured (x, y) for the overlay
+    value_name: str        # colourbar label (the z column)
+    x_name: str
+    y_name: str
+    crange: tuple
+    full_range: tuple
+    n: int                 # number of filled cells
+    show_points: bool = True
+
+
+def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> ContourData:
+    """Grid ``spec.z`` over the (``spec.x``, ``spec.y``) plane.
+
+    Long-form in: one row per measured (x, y). Each unique x is a grid column,
+    each unique y a grid row, the cell value the first z there; empty cells are
+    NaN (shown as gaps). Mirrors ``ohpal.ampm.plotting.contour``.
+    """
+    import polars as pl
+
+    x, y, z = spec.x, spec.y, spec.z
+    for c in (x, y, z):
+        if not c or c not in df.columns:
+            raise KeyError(f"Column {c!r} is not in the data.")
+    if not (df[x].dtype.is_numeric() and df[y].dtype.is_numeric()):
+        raise ValueError("Contour needs numeric X and Y columns.")
+
+    keep = pl.col(x).is_not_null() & pl.col(y).is_not_null() & pl.col(z).is_not_null()
+    sub = df.select([x, y, z]).filter(keep)
+    if sub.height == 0:
+        empty = np.zeros((0, 0), "float32")
+        return ContourData(empty, np.zeros(0, "float32"), np.zeros(0, "float32"),
+                           np.zeros((0, 2), "float32"), z, x, y, (0.0, 1.0),
+                           (0.0, 1.0), 0, spec.show_points)
+
+    xs = np.sort(sub[x].unique().to_numpy().astype("float64"))
+    ys = np.sort(sub[y].unique().to_numpy().astype("float64"))
+    xi = {float(v): i for i, v in enumerate(xs)}
+    yi = {float(v): i for i, v in enumerate(ys)}
+    grid = np.full((len(ys), len(xs)), np.nan, dtype="float32")
+    g = (sub.group_by([y, x], maintain_order=True)
+         .agg(pl.col(z).first().alias("_v")))
+    for row in g.iter_rows(named=True):
+        grid[yi[float(row[y])], xi[float(row[x])]] = row["_v"]
+
+    finite = np.isfinite(grid)
+    if crange is not None:
+        lo, hi = float(crange[0]), float(crange[1])
+    elif finite.any():
+        lo, hi = float(np.nanmin(grid)), float(np.nanmax(grid))
+    else:
+        lo, hi = 0.0, 1.0
+    pts = sub.select([x, y]).to_numpy().astype("float32")
+    return ContourData(grid, xs.astype("float32"), ys.astype("float32"), pts,
+                       z, x, y, (lo, hi), (lo, hi), int(finite.sum()),
+                       spec.show_points)
+
+
 def _apply_cmap(t: np.ndarray, name: str) -> np.ndarray:
     """Map t in [0,1] to rgba via the named colormap's stops."""
     lut = _LUTS.get(name, _LUTS[DEFAULT_COLORMAP])

@@ -260,6 +260,11 @@ class PlotTab(QWidget):
         self._bar_labels: list = []
         self._bar_data = None
 
+        # Contour visuals (a gridded image + the measured-point overlay).
+        self._contour_img = None
+        self._contour_pts = None
+        self._contour_data = None
+
         # Hover tooltip: the rows behind the drawn points + a floating label
         # near the cursor. 2D picks via a data-space KDTree; 3D projects the
         # points to the screen each move (the turntable camera rotates).
@@ -438,7 +443,10 @@ class PlotTab(QWidget):
     def _render(self) -> None:
         if self._df is None or self._scatter is None:
             return
-        if self.spec.is_bar or self.spec.is_hist:
+        if self.spec.is_contour:
+            self._render_contour()
+            return
+        if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._render_bars()
             return
         try:
@@ -474,7 +482,12 @@ class PlotTab(QWidget):
     def _render_bars(self) -> None:
         from vispy import scene
 
-        builder = plotdata.build_histogram if self.spec.is_hist else plotdata.build_bars
+        if self.spec.is_hist:
+            builder = plotdata.build_histogram
+        elif self.spec.is_cov:
+            builder = plotdata.build_cov
+        else:
+            builder = plotdata.build_bars
         try:
             data = builder(self._df, self.spec, cmap=self.cmap,
                            scale=self.scale, crange=self.crange)
@@ -503,6 +516,13 @@ class PlotTab(QWidget):
             self.crange = data.crange
         self._full_range = data.full_range
         self._bar_data = data
+        # The left axis measures the bar height (count / CoV / value), not the
+        # raw signal column — label it from what the bars actually are.
+        if self._yaxis is not None:
+            try:
+                self._yaxis.axis.axis_label = data.value_name
+            except Exception:  # noqa: BLE001 — labelling is cosmetic
+                pass
 
         n = data.n
         w = data.width or 0.8
@@ -575,6 +595,97 @@ class PlotTab(QWidget):
             y_lo = ymin
         self._data_bounds = (np.array([xlo, y_lo], "float32"),
                              np.array([xhi, ymax], "float32"))
+        self._apply_visibility()
+        first = not self._rendered_once
+        self._rendered_once = True
+        if self._view is not None and first:
+            QTimer.singleShot(0, self.reset_view)
+
+    # -- contour rendering ---------------------------------------------
+    def _render_contour(self) -> None:
+        from vispy import scene
+        from vispy.visuals.transforms import STTransform
+
+        try:
+            data = plotdata.build_contour(self._df, self.spec, cmap=self.cmap,
+                                          scale=self.scale, crange=self.crange)
+        except KeyError as exc:
+            self._show_overlay(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._show_overlay(f"Could not plot: {exc}")
+            return
+        if data.n == 0:
+            self._show_overlay("Nothing to plot for this selection.")
+            return
+        self._clear_overlay()
+        # Drop the (data-less) scatter from the scene so set_range can't crash.
+        if self._scatter is not None and self._scatter.parent is not None:
+            self._scatter.parent = None
+            self._scatter.visible = False
+        try:
+            self._view.camera.aspect = None  # free aspect — param axes differ
+        except Exception:  # noqa: BLE001
+            pass
+        if self.crange is None:
+            self.crange = data.crange
+        self._full_range = data.full_range
+        self._contour_data = data
+
+        # Colour the gridded field through the colormap; empty cells go clear.
+        lo, hi = float(data.crange[0]), float(data.crange[1])
+        span = (hi - lo) or 1.0
+        z = data.z
+        t = np.clip((z - lo) / span, 0.0, 1.0)
+        rgba = plotdata._apply_cmap(
+            np.nan_to_num(t).ravel(), self.cmap).reshape(z.shape[0], z.shape[1], 4)
+        rgba[~np.isfinite(z)] = 0.0  # transparent gaps
+        rgba = rgba.astype("float32")
+
+        xs, ys = data.x_values, data.y_values
+        nx, ny = len(xs), len(ys)
+        xmin, xmax = float(xs.min()), float(xs.max())
+        ymin, ymax = float(ys.min()), float(ys.max())
+        dx = (xmax - xmin) / (nx - 1) if nx > 1 else 1.0
+        dy = (ymax - ymin) / (ny - 1) if ny > 1 else 1.0
+        x0, y0 = xmin - dx / 2, ymin - dy / 2
+
+        if self._contour_img is None:
+            self._contour_img = scene.visuals.Image(
+                rgba, parent=self._view.scene, interpolation="nearest")
+        else:
+            self._contour_img.set_data(rgba)
+            if self._contour_img.parent is None:
+                self._contour_img.parent = self._view.scene
+        # Texel (col,row) centre -> data (x,y); row 0 = smallest y (y up).
+        self._contour_img.transform = STTransform(
+            scale=(dx, dy), translate=(x0, y0))
+        self._contour_img.order = 0
+        self._contour_img.visible = True
+
+        # Overlay the measured (x, y) samples, drawn above the field.
+        if data.show_points and data.points.shape[0]:
+            if self._contour_pts is None:
+                self._contour_pts = scene.visuals.Markers(parent=self._view.scene)
+                # Ignore depth so the overlay always wins over the opaque field.
+                self._contour_pts.set_gl_state("translucent", depth_test=False)
+            elif self._contour_pts.parent is None:
+                self._contour_pts.parent = self._view.scene
+            self._contour_pts.set_data(
+                data.points, face_color=(1, 1, 1, 0.9),
+                edge_color=(0, 0, 0, 0.7), edge_width=1, size=6, symbol="disc")
+            self._contour_pts.antialias = 1
+            self._contour_pts.order = 1   # draw on top of the image
+            self._contour_pts.visible = True
+        elif self._contour_pts is not None:
+            self._contour_pts.visible = False
+
+        clo, chi = lo, hi
+        if chi <= clo:  # flat field → a readable colourbar still needs a span
+            chi = clo + 1.0
+        self._set_colorbar(clo, chi, data.value_name)
+        self._data_bounds = (np.array([x0, y0], "float32"),
+                             np.array([xmax + dx / 2, ymax + dy / 2], "float32"))
         self._apply_visibility()
         first = not self._rendered_once
         self._rendered_once = True
@@ -725,7 +836,8 @@ class PlotTab(QWidget):
         if self._xaxis is not None:
             # Category bars use text labels, not the numeric x axis; histograms
             # keep the numeric x axis.
-            self._xaxis.visible = self._show_axes and not self.spec.is_bar
+            self._xaxis.visible = (
+                self._show_axes and not (self.spec.is_bar or self.spec.is_cov))
         if self._gridlines is not None:
             self._gridlines.visible = self._show_grid
         if self._floor is not None:
@@ -1013,7 +1125,7 @@ class PlotTab(QWidget):
             self._hover_pos = None
 
     def _on_mouse_move(self, event) -> None:
-        if self.spec.is_bar or self.spec.is_hist:
+        if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._bar_hover(event)
             return
         if self.spec.is_3d:
@@ -1144,6 +1256,9 @@ class PlotTab(QWidget):
         self._bar_axis = None
         self._bar_labels = []
         self._bar_data = None
+        self._contour_img = None
+        self._contour_pts = None
+        self._contour_data = None
         self._hide_tooltip()
         if self._canvas is not None:
             try:

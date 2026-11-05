@@ -13,11 +13,19 @@ SCATTER_3D = "3D Scatter"
 BAR = "Bar"
 HISTOGRAM = "Histogram"
 LAYER_VIEWER = "Layer Viewer"
+SINGLE_LAYER = "Single Layer"
+COV_SUMMARY = "CoV Summary"
+CONTOUR = "Contour"
 SCATTER_KINDS = (SCATTER_2D, SCATTER_3D)
 # the wired plot types
-PLOT_KINDS = (SCATTER_2D, SCATTER_3D, LAYER_VIEWER, BAR, HISTOGRAM)
+PLOT_KINDS = (
+    SCATTER_2D, SCATTER_3D, LAYER_VIEWER, SINGLE_LAYER,
+    BAR, HISTOGRAM, COV_SUMMARY, CONTOUR,
+)
 
 BAR_AGGS = ("as-is", "mean", "median", "sum", "min", "max", "count", "first")
+# CoV Summary: how the coefficient of variation is reduced per group.
+COV_MODES = ("overall", "per_layer_mean", "across_layers")
 
 
 @dataclass
@@ -28,7 +36,10 @@ class PlotSpec:
     z: str | None = None
     color: str | None = None  # None = single colour
     agg: str = "mean"         # bar only: how to reduce the value per category
-    bins: int = 30            # histogram only: number of bins
+    bins: int = 30            # histogram / contour: bin or contour-level count
+    group_by: str | None = None   # cov: the grouping column (x = one bar per)
+    cov_mode: str = "overall"     # cov: overall | per_layer_mean | across_layers
+    show_points: bool = True      # contour: overlay the measured (x, y) points
 
     @property
     def is_3d(self) -> bool:
@@ -45,6 +56,18 @@ class PlotSpec:
     @property
     def is_layer_viewer(self) -> bool:
         return self.kind == LAYER_VIEWER
+
+    @property
+    def is_single_layer(self) -> bool:
+        return self.kind == SINGLE_LAYER
+
+    @property
+    def is_cov(self) -> bool:
+        return self.kind == COV_SUMMARY
+
+    @property
+    def is_contour(self) -> bool:
+        return self.kind == CONTOUR
 
     @property
     def axes(self) -> list[str]:
@@ -77,6 +100,22 @@ def default_spec(kind: str, columns: list[str], renames=None) -> PlotSpec:
         # Bin a numeric column; Y is the count.
         col = _default_color(cols, ren) or pick("Z", 0)
         return PlotSpec(kind=kind, x=col, y="count", bins=30)
+
+    if kind == COV_SUMMARY:
+        # One bar per group (part) of a signal's coefficient of variation.
+        grp = next((ren.get(c, c) for c in ("part_id", "region", "side")
+                    if ren.get(c, c) in cols), cols[0] if cols else "")
+        sig = _default_color(cols, ren) or pick("Z", 1)
+        return PlotSpec(kind=kind, x=grp, y=sig, group_by=grp,
+                        cov_mode="overall")
+
+    if kind == CONTOUR:
+        # A value (z) over an (x, y) parameter grid; default to parametric
+        # process columns when present, else the first numeric columns.
+        cx = pick("Hatch Speed", 0)
+        cy = pick("Hatches Power", 1)
+        cz = _default_color(cols, ren) or pick("Z", 2)
+        return PlotSpec(kind=kind, x=cx, y=cy, z=cz, show_points=True, bins=14)
 
     x = pick("Demand X", 0)
     y = pick("Demand Y", 1)
