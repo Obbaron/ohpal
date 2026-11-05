@@ -123,6 +123,12 @@ class DataTab(QWidget):
     layoutChanged = pyqtSignal()
     # Emitted when a column header is renamed inline (old name, new name).
     renameRequested = pyqtSignal(str, str)
+    # Emitted when a column's cells are double-clicked (its display name) — the
+    # window opens the column-info panel. (Header double-click renames instead.)
+    columnActivated = pyqtSignal(str)
+    # Emitted when the column selection changes (current column's display name,
+    # or "" when nothing is selected) — an open column-info panel follows it.
+    columnSelectionChanged = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -154,7 +160,10 @@ class DataTab(QWidget):
         header.sectionMoved.connect(self._on_header_changed)
         header.sectionResized.connect(lambda *_: self._on_header_changed())
         header.sectionClicked.connect(self._on_section_clicked)
-        header.sectionDoubleClicked.connect(self._begin_rename)
+        header.sectionDoubleClicked.connect(self._begin_rename)  # header → rename
+        self.table.doubleClicked.connect(self._on_cell_double)   # cell → info panel
+        self.table.selectionModel().selectionChanged.connect(
+            self._on_selection_changed)                          # follow selection
 
         # Clicking empty grid space clears the column selection.
         self.table.viewport().installEventFilter(self)
@@ -263,6 +272,60 @@ class DataTab(QWidget):
         """Hand the current rename map (original -> display) so default layout
         picks resolve renamed columns."""
         self._renames = dict(renames or {})
+
+    # -- column info panel ---------------------------------------------
+    def _on_cell_double(self, index) -> None:
+        """Double-click in a column's cells → open its info panel."""
+        if not index.isValid():
+            return
+        cols = self.model.columns
+        c = index.column()
+        if 0 <= c < len(cols):
+            self.columnActivated.emit(cols[c])
+
+    def _on_selection_changed(self, *_a) -> None:
+        """Report the current column so an open info panel can follow it; ""
+        when the selection is cleared."""
+        sel = self.selected_columns()
+        if not sel:
+            self.columnSelectionChanged.emit("")
+            return
+        cols = self.model.columns
+        cur = self.table.selectionModel().currentIndex()
+        if cur.isValid() and 0 <= cur.column() < len(cols) and cols[cur.column()] in sel:
+            self.columnSelectionChanged.emit(cols[cur.column()])
+        else:
+            self.columnSelectionChanged.emit(sel[0])
+
+    def clear_selection(self) -> None:
+        """Toolbar 'Reset selection' — drop the column selection."""
+        self.table.clearSelection()
+
+    def column_info(self, name: str) -> dict | None:
+        """Name / rows / dtype / float-ness / sig figs for a column, for the
+        side panel. ``None`` if the column isn't in the current grid."""
+        cols = self.model.columns
+        if name not in cols:
+            return None
+        series = self.model._series[cols.index(name)]
+        rows = len(series)
+        try:
+            nonnull = rows - int(series.null_count())
+        except Exception:  # noqa: BLE001
+            nonnull = rows
+        is_float = bool(series.dtype.is_float())
+        return {
+            "name": name,
+            "rows": rows,
+            "nonnull": nonnull,
+            "dtype": str(series.dtype),
+            "is_float": is_float,
+            "sigfigs": self.model.sigfigs(name),
+        }
+
+    def set_column_sigfigs(self, name: str, n: int) -> None:
+        """Set a float column's display significant figures (live)."""
+        self.model.set_sigfigs(name, n)
 
     def _arm_rename(self) -> None:
         if self._rename_armed:

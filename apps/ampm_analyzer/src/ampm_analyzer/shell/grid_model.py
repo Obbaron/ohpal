@@ -20,6 +20,7 @@ class DataFrameModel(QAbstractTableModel):
         self._columns: list[str] = []
         self._series: list[Any] = []  # per-column Polars Series (fast access)
         self._is_float: list[bool] = []
+        self._sigfigs: dict[str, int] = {}  # column name -> float sig figs (def 4)
 
     def set_dataframe(self, df) -> None:
         self.beginResetModel()
@@ -52,8 +53,25 @@ class DataFrameModel(QAbstractTableModel):
         if value is None:
             return ""
         if self._is_float[c]:
-            return f"{value:.4g}"
+            n = self._sigfigs.get(self._columns[c], 4)
+            return f"{value:.{n}g}"
         return str(value)
+
+    # -- per-column float precision ------------------------------------
+    def sigfigs(self, name: str) -> int:
+        """Significant figures a float column renders at (default 4)."""
+        return self._sigfigs.get(name, 4)
+
+    def set_sigfigs(self, name: str, n: int) -> None:
+        """Set a float column's significant figures and repaint that column."""
+        self._sigfigs[name] = max(1, min(12, int(n)))
+        if name in self._columns:
+            c = self._columns.index(name)
+            rows = self.rowCount()
+            if rows:
+                self.dataChanged.emit(
+                    self.index(0, c), self.index(rows - 1, c),
+                    [Qt.ItemDataRole.DisplayRole])
 
     def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole

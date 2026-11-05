@@ -168,6 +168,7 @@ def populate_data(
     on_add_excel=None,
     on_remove_column=None,
     on_restore_column=None,
+    on_reset_selection=None,
     has_parts=False,
     part_has_params=False,
     on_part_calc=None,
@@ -240,6 +241,9 @@ def populate_data(
     remove = _action(toolbar, "Remove column", "remove_column", color)
     if on_remove_column is not None:
         remove.triggered.connect(lambda: on_remove_column())
+    reset_sel = _action(toolbar, "Reset selection", "clear_sel", color)
+    if on_reset_selection is not None:
+        reset_sel.triggered.connect(lambda: on_reset_selection())
     toolbar.addSeparator()
 
     # Parts — contextual: only shown once a successful part assignment gives a

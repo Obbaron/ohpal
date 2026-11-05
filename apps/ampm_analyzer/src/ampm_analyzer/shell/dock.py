@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QSlider,
+    QSpinBox,
     QStackedWidget,
     QStyle,
     QStyleOptionSlider,
@@ -30,8 +32,6 @@ from PyQt6.QtWidgets import (
 )
 
 from .widgets import fix_combo
-
-_TITLES = {"plot": "Plot", "data": "Data"}
 
 
 class ValueSlider(QSlider):
@@ -97,33 +97,21 @@ class SidePanel(QWidget):
     scaleChanged = pyqtSignal(str)
     colorMinChanged = pyqtSignal(int)
     colorMaxChanged = pyqtSignal(int)
+    # Data-panel (column info) → the data tab.
+    columnRenamed = pyqtSignal(str, str)   # (old display name, new name)
+    sigFigsChanged = pyqtSignal(str, int)  # (column, significant figures)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("SidePanel")
         self.setMinimumWidth(240)
+        self._col = None  # the column the data page is currently showing
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header: title + close button.
-        header = QWidget()
-        header.setObjectName("PanelHeader")
-        h = QHBoxLayout(header)
-        h.setContentsMargins(10, 6, 6, 6)
-        self.title = QLabel("Panel")
-        self.title.setProperty("class", "PanelHeading")
-        close = QToolButton()
-        close.setText("✕")
-        close.setAutoRaise(True)
-        close.setToolTip("Close panel")
-        close.clicked.connect(self.closed)
-        h.addWidget(self.title)
-        h.addStretch(1)
-        h.addWidget(close)
-        root.addWidget(header)
-
+        # No in-panel header: the toolbar's panel toggle is the close control.
         # Body: one page per view.
         body = QWidget()
         body.setObjectName("DockBody")
@@ -165,7 +153,6 @@ class SidePanel(QWidget):
         page = self._pages.get(kind)
         if page is not None:
             self.stack.setCurrentWidget(page)
-            self.title.setText(_TITLES.get(kind, "Panel"))
 
     def has_content_for(self, kind: str) -> bool:
         """Whether this surface has panel content worth auto-opening for."""
@@ -176,12 +163,86 @@ class SidePanel(QWidget):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(12, 12, 12, 12)
-        heading = QLabel("Build info")
-        heading.setProperty("class", "PanelHeading")
-        lay.addWidget(heading)
-        lay.addWidget(QLabel("No packet loaded."))
+        lay.setSpacing(10)
+
+        self.col_heading = QLabel("Column")
+        self.col_heading.setProperty("class", "PanelHeading")
+        lay.addWidget(self.col_heading)
+
+        # Hint shown until a column is double-clicked.
+        self.col_hint = QLabel("Double-click a column to inspect it.")
+        self.col_hint.setWordWrap(True)
+        self.col_hint.setStyleSheet("color: palette(placeholder-text);")
+        lay.addWidget(self.col_hint)
+
+        # The info form (hidden until a column is selected).
+        self.col_form_box = QWidget()
+        form = QFormLayout(self.col_form_box)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.col_name_edit = QLineEdit()
+        self.col_name_edit.setPlaceholderText("column name")
+        self.col_name_edit.editingFinished.connect(self._emit_rename)
+        form.addRow("Name", self.col_name_edit)
+        self.col_rows = QLabel("—")
+        form.addRow("Rows", self.col_rows)
+        self.col_type = QLabel("—")
+        form.addRow("Type", self.col_type)
+        self.col_sig_row = QWidget()
+        sig_h = QHBoxLayout(self.col_sig_row)
+        sig_h.setContentsMargins(0, 0, 0, 0)
+        self.col_sig = QSpinBox()
+        self.col_sig.setRange(1, 12)
+        self.col_sig.setValue(4)
+        self.col_sig.valueChanged.connect(self._emit_sigfigs)
+        sig_h.addWidget(self.col_sig)
+        sig_h.addStretch(1)
+        self.col_sig_label = QLabel("Sig figs")
+        form.addRow(self.col_sig_label, self.col_sig_row)
+        self.col_form_box.setVisible(False)
+        lay.addWidget(self.col_form_box)
+
         lay.addStretch(1)
         return w
+
+    # -- data page (column info) ---------------------------------------
+    def show_column_info(self, info: dict | None) -> None:
+        """Populate the data page from a column's info dict (or clear it)."""
+        if not info:
+            self._col = None
+            self.col_heading.setText("Column")
+            self.col_hint.setVisible(True)
+            self.col_form_box.setVisible(False)
+            return
+        self._col = info["name"]
+        self.col_heading.setText(info["name"])
+        self.col_hint.setVisible(False)
+        self.col_form_box.setVisible(True)
+        self.col_name_edit.blockSignals(True)
+        self.col_name_edit.setText(info["name"])
+        self.col_name_edit.blockSignals(False)
+        rows, nonnull = info.get("rows", 0), info.get("nonnull", 0)
+        nulls = rows - nonnull
+        self.col_rows.setText(
+            f"{rows:,}" + (f"  ({nulls:,} null)" if nulls else ""))
+        self.col_type.setText(info.get("dtype", "—"))
+        is_float = bool(info.get("is_float"))
+        self.col_sig_row.setVisible(is_float)
+        self.col_sig_label.setVisible(is_float)
+        if is_float:
+            self.col_sig.blockSignals(True)
+            self.col_sig.setValue(int(info.get("sigfigs", 4)))
+            self.col_sig.blockSignals(False)
+
+    def _emit_rename(self) -> None:
+        if self._col is None:
+            return
+        new = self.col_name_edit.text().strip()
+        if new and new != self._col:
+            self.columnRenamed.emit(self._col, new)
+
+    def _emit_sigfigs(self, n: int) -> None:
+        if self._col is not None:
+            self.sigFigsChanged.emit(self._col, int(n))
 
     def _plot_page(self) -> QWidget:
         w = QWidget()

@@ -109,6 +109,8 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.panel = SidePanel()
         self.panel.closed.connect(self._close_panel)
+        self.panel.columnRenamed.connect(self._rename_column_from_panel)
+        self.panel.sigFigsChanged.connect(self._set_column_sigfigs)
         self._wire_panel_controls()
         self.panel.setVisible(False)  # hidden by default; opens when relevant
         # The Data tab keeps its own panel-open preference, so a plot tab
@@ -216,6 +218,8 @@ class MainWindow(QMainWindow):
                 self._pending_grid_state, *self._pending_grid_layout)
             self._data_tab.layoutChanged.connect(self._save_ui)
             self._data_tab.renameRequested.connect(self._rename_column)
+            self._data_tab.columnActivated.connect(self._open_column_panel)
+            self._data_tab.columnSelectionChanged.connect(self._on_column_selection)
             self._data_tab.set_renames(self.session.renames)  # for default layout
             self._insert_page(1, self._data_tab, "Data", closable=False)
             self.backstage.set_build_loaded(True)  # reveal the DataStore entry
@@ -544,6 +548,49 @@ class MainWindow(QMainWindow):
         self._save_ui()
         self.set_status(f"Renamed '{old}' to '{new}'.")
 
+    # -- column info panel (data tab) ----------------------------------
+    def _open_column_panel(self, col: str) -> None:
+        """Double-click on a column's cells → show its info in the side panel."""
+        if self._data_tab is None:
+            return
+        info = self._data_tab.column_info(col)
+        if info is None:
+            return
+        was_visible = self.panel.isVisible()
+        self.panel.show_for("data")
+        self.panel.show_column_info(info)
+        self._panel_data_open = True
+        self.panel.setVisible(True)
+        if not was_visible:
+            self._sync_toolbar(self.tabbar.currentIndex())  # reflect the toggle
+
+    def _rename_column_from_panel(self, old: str, new: str) -> None:
+        """Rename driven from the column-info panel's Name field, then refresh
+        the panel to whatever name the column now has."""
+        self._rename_column(old, new)
+        if self._data_tab is None:
+            return
+        cur = new if new in self._data_tab.model.columns else old
+        self.panel.show_column_info(self._data_tab.column_info(cur))
+
+    def _set_column_sigfigs(self, col: str, n: int) -> None:
+        if self._data_tab is not None:
+            self._data_tab.set_column_sigfigs(col, n)
+
+    def _on_column_selection(self, col: str) -> None:
+        """When the column-info panel is open, follow the grid's selection."""
+        if self._data_tab is None or not self.panel.isVisible():
+            return
+        widget = self.stack.currentWidget()
+        if widget is None or widget.property("tabkind") != "data":
+            return
+        info = self._data_tab.column_info(col) if col else None
+        self.panel.show_column_info(info)
+
+    def _reset_selection(self) -> None:
+        if self._data_tab is not None:
+            self._data_tab.clear_selection()
+
     def _close_tab(self, index: int) -> None:
         widget = self.stack.widget(index)
         if widget is not None and widget.property("tabkind") == "plot":
@@ -718,6 +765,7 @@ class MainWindow(QMainWindow):
                 on_add_excel=self._add_excel_column,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
+                on_reset_selection=self._reset_selection,
                 has_parts=self.controller.has_part_assignment(),
                 part_has_params=self.controller.has_laser_parameters(),
                 on_part_calc=self._add_part_calc,
