@@ -770,6 +770,7 @@ class MainWindow(QMainWindow):
                 part_has_params=self.controller.has_laser_parameters(),
                 on_part_calc=self._add_part_calc,
                 on_part_params=self._add_laser_parameters,
+                on_part_import=self._import_parts_csv,
                 on_filter=self._on_filter,
                 on_remove_filter=self._on_remove_last_filter,
                 on_reset_filter=self._on_reset_filters,
@@ -1049,6 +1050,72 @@ class MainWindow(QMainWindow):
                 "No new laser-parameter columns to add"
                 + (" (all already present)." if skipped else ".")
             )
+
+    def _import_parts_csv(self) -> None:
+        """Open the parts-CSV section picker; join each staged column onto the
+        grid, keyed on the (rename-aware) part_id. Names collide across sections
+        (e.g. 'Hatches Power'), so a clashing name is suffixed with its section."""
+        import polars as pl
+
+        from . import derive
+        from .import_parts_dialog import ImportPartsCSVDialog
+
+        dt = self._data_tab
+        if dt is None:
+            return
+        try:
+            sections = self.controller.parts_csv_sections()
+        except Exception as exc:  # noqa: BLE001 — surfaced, non-fatal
+            self.set_status(f"Couldn't read the parts CSV: {exc}")
+            return
+        if not sections:
+            self.set_status("The parts CSV has no importable sections.")
+            return
+        dlg = ImportPartsCSVDialog(sections, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        staged = dlg.result_values()  # [(section, column)]
+        if not staged:
+            return
+
+        pid = self.controller.part_id_display()
+        sect = dict(sections)
+        taken = {d["name"] for d in self.session.derivations} | set(dt._columns)
+        added, skipped = [], []
+        for section, col in staged:
+            body = sect.get(section)
+            if body is None or col not in body.columns:
+                continue
+            name = col if col not in taken else f"{col} ({section})"
+            if name in taken:
+                skipped.append(col)
+                continue
+            keys = body["part_id"].cast(pl.Utf8).to_list()
+            series = body[col]
+            numeric = series.dtype.is_numeric()
+            vals = series.to_list()
+            mapping = {
+                derive.norm_key(k): (float(v) if numeric else str(v))
+                for k, v in zip(keys, vals)
+                if k is not None and v is not None
+            }
+            if not mapping:
+                continue
+            dtype = "f64" if numeric else "str"
+            if self.controller.add_join_derivation(name, pid, mapping, dtype) is None:
+                added.append(name)
+                taken.add(name)
+            else:
+                skipped.append(col)
+        if added:
+            self.set_status(
+                f"Imported {len(added)} column(s) from the parts CSV: "
+                f"{', '.join(added)}."
+            )
+            self._save_ui()
+            self._reshape_plots()
+        else:
+            self.set_status("No new columns imported from the parts CSV.")
 
     def _export_excel(self) -> None:
         dt = self._data_tab

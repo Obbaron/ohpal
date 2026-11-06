@@ -613,6 +613,40 @@ class AppController(QObject):
         return QuantAMParts.from_path(path).volume_parameters_with_speed(
             variant=variant)
 
+    def parts_csv_sections(self, *, variant: str = "1"):
+        """Every section of the QuantAM parts CSV as ``(name, body_df)`` pairs,
+        for the Import-parts-CSV picker.
+
+        Each ``body_df`` is keyed by ``part_id`` (original name, from "Source
+        Index") with the section's own data columns; support rows (the ``.s``
+        variant of "Sr. No.") are dropped, leaving one row per part. The Parent
+        Parts section has no variant suffix, so it passes through whole."""
+        import polars as pl
+
+        from ohpal.ampm.parts import QuantAMParts, SECTION_PARENT
+
+        path = (self._config or {}).get("PARTS_CSV")
+        if not path:
+            raise ValueError("This build has no parts CSV configured.")
+        qp = QuantAMParts.from_path(path)
+        out = []
+        for name in qp.section_names:
+            df = qp[name]
+            if "Source Index" not in df.columns:
+                continue
+            data_cols = [c for c in df.columns
+                         if c not in ("Sr. No.", "Source Index")]
+            if not data_cols:
+                continue
+            body = df
+            if name != SECTION_PARENT and "Sr. No." in df.columns:
+                sr = df["Sr. No."].cast(pl.Utf8)
+                body = df.filter(sr.str.ends_with(f".{variant}"))
+            body = (body.rename({"Source Index": "part_id"})
+                    .select(["part_id", *data_cols]))
+            out.append((name, body))
+        return out
+
     def rename_error(self, old: str, new: str) -> str | None:
         """Validate a rename without mutating — lets the window pre-check before
         it touches the grid layout. Returns an error message, or None."""

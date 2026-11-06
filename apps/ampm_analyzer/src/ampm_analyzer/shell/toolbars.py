@@ -173,6 +173,7 @@ def populate_data(
     part_has_params=False,
     on_part_calc=None,
     on_part_params=None,
+    on_part_import=None,
     on_filter=None,
     on_remove_filter=None,
     on_reset_filter=None,
@@ -259,6 +260,12 @@ def populate_data(
         else:
             pparams.setEnabled(False)  # no parts CSV configured for this build
             pparams.setToolTip("No QuantAM parts CSV configured for this build.")
+        pimport = parts_btn.menu().addAction("Import parts CSV…")
+        if on_part_import is not None and part_has_params:
+            pimport.triggered.connect(lambda: on_part_import())
+        else:
+            pimport.setEnabled(False)  # contextual: needs a parts CSV
+            pimport.setToolTip("No QuantAM parts CSV configured for this build.")
         toolbar.addSeparator()
 
     # Filters (query-time; on top of the cache). Mask / assign-parts /
