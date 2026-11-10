@@ -764,6 +764,16 @@ class MainWindow(QMainWindow):
             self._apply_scheme(theme.initial_scheme(QApplication.instance()))
 
     # -- toolbar swap --------------------------------------------------
+    def refresh_data_layers(self) -> None:
+        """Re-bind the Data toolbar's layer selector to the controller's current
+        available-layer set (e.g. after masking narrows which layers have data).
+        A no-op unless the Data tab is the one on screen — the selector is rebuilt
+        from the live set anyway the next time that tab is shown."""
+        index = self.stack.currentIndex()
+        widget = self.stack.widget(index)
+        if widget is not None and widget.property("tabkind") == "data":
+            self._sync_toolbar(index)
+
     def _sync_toolbar(self, index: int) -> None:
         widget: QWidget | None = self.stack.widget(index)
         kind = widget.property("tabkind") if widget is not None else "file"
@@ -796,7 +806,7 @@ class MainWindow(QMainWindow):
                 columns=dt._columns if dt else None,
                 hidden_columns=dt.hidden_columns() if dt else None,
                 removed_columns=list(self.session.removed),
-                layers=list(store.layers) if store is not None else None,
+                layers=(self.controller.available_layers() or None),
                 current_layer=self.session.current_layer,
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,

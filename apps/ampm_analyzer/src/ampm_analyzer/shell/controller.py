@@ -373,7 +373,8 @@ class AppController(QObject):
         store = self.session.store
         if store is None:
             return
-        L = min(store.layers, key=lambda x: abs(x - layer))
+        pool = self.available_layers() or list(store.layers)
+        L = min(pool, key=lambda x: abs(x - layer))
         if L == self.session.current_layer and self.session.result is not None:
             return
         self._request((L, L), self._deliver_grid, f"layer {L}", coalesce=True)
@@ -712,6 +713,24 @@ class AppController(QObject):
         """Whether the Apply-mask toggle is active for this build (persisted)."""
         return self._apply_mask
 
+    def available_layers(self) -> list[int]:
+        """Layers the grid can actually show. Normally every cached layer; with
+        masking on and the mask built, only the layers the part occupies — the
+        rest are entirely masked away, so they'd show an empty grid. The layer
+        selector is bound to this, so stepping/typing can't land on an empty
+        layer. Falls back to all layers if the mask left nothing (never lock the
+        user out)."""
+        store = self.session.store
+        if store is None:
+            return []
+        layers = list(store.layers)
+        if self._apply_mask and self._mask_geom is not None:
+            keep = {int(k) for k in self._mask_geom}
+            masked = [L for L in layers if L in keep]
+            if masked:
+                return masked
+        return layers
+
     def _mask(self, df):
         """Drop rows outside the STL layer mask, when masking is active and the
         mask is built. Uses the raw source columns, so this runs before rename.
@@ -776,9 +795,20 @@ class AppController(QObject):
     def _on_mask_done(self, mask, key) -> None:
         self._mask_geom = mask
         self._mask_key = key
-        # Re-shape grid + plots now that points can be masked. Both no-op safely
-        # if nothing is loaded yet (the first query will shape through the mask).
-        self.refresh_grid()
+        # Re-bind the layer selector to the masked layers, then make sure the
+        # grid is on a layer that actually has data: if the current layer was
+        # masked away entirely, re-query the first masked layer (which also
+        # re-shapes it); otherwise re-shape the current one in place.
+        try:
+            self._window.refresh_data_layers()
+        except Exception:  # noqa: BLE001
+            pass
+        avail = self.available_layers()
+        cur = self.session.current_layer
+        if avail and cur is not None and cur not in avail:
+            self.show_layer(avail[0])
+        else:
+            self.refresh_grid()
         try:
             self._window._reshape_plots()
         except Exception:  # noqa: BLE001
@@ -932,8 +962,10 @@ class AppController(QObject):
         self._publish_grid(self.session.result.layers)
 
     def _on_cache_finished(self, store) -> None:
-        # Cache built — now show the first layer in the grid.
-        first = store.layers[0]
+        # Cache built — show the first layer that carries data. With a cached
+        # mask already in hand this is the first masked layer; otherwise the
+        # first layer, and _on_mask_done re-lands once the mask arrives.
+        first = (self.available_layers() or list(store.layers))[0]
         self._busy = False
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)
