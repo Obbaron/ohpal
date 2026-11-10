@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QProgressBar,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -40,6 +41,49 @@ from .plot_tab import PlotTab
 from .state import BuildSession
 
 APP_TITLE = "AMPM Analyzer"
+
+
+def _names_preview(names, limit: int = 6) -> str:
+    """"a, b, c" — capped with "(+N more)" so a status line stays short."""
+    names = list(names)
+    if len(names) <= limit:
+        return ", ".join(names)
+    return ", ".join(names[:limit]) + f" (+{len(names) - limit} more)"
+
+
+class _ElidingLabel(QLabel):
+    """A status label that never drives the window width.
+
+    A plain QLabel reports its full (non-wrapped) text width as its size hint,
+    so a long status line (e.g. "Added 24 columns: …" listing every name) forces
+    the status bar — and thus the window's minimum width — past the screen. A
+    maximized window on Wayland can't grow to satisfy that, so Qt commits a
+    buffer wider than the configured maximized surface and the compositor kills
+    the connection with a protocol error. This label ignores its text width for
+    layout and elides the shown text to whatever width it's given, keeping the
+    full text as a tooltip.
+    """
+
+    def __init__(self, text: str = "", parent=None) -> None:
+        super().__init__("", parent)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+        self._apply()
+
+    def setText(self, text: str) -> None:  # noqa: N802 — Qt override
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self._apply()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().resizeEvent(event)
+        self._apply()
+
+    def _apply(self) -> None:
+        fm = self.fontMetrics()
+        avail = max(0, self.width() - 4)
+        super().setText(fm.elidedText(self._full, Qt.TextElideMode.ElideRight, avail))
 
 
 class MainWindow(QMainWindow):
@@ -631,7 +675,7 @@ class MainWindow(QMainWindow):
         sb = QStatusBar()
         self.setStatusBar(sb)
 
-        self._log = QLabel("Ready")
+        self._log = _ElidingLabel("Ready")
         self._log.setObjectName("StatusLog")
         sb.addWidget(self._log, 1)
 
@@ -1041,7 +1085,7 @@ class MainWindow(QMainWindow):
         if added:
             self.set_status(
                 f"Added {len(added)} laser-parameter column(s): "
-                f"{', '.join(added)}."
+                f"{_names_preview(added)}."
             )
             self._save_ui()
             self._reshape_plots()
@@ -1110,7 +1154,7 @@ class MainWindow(QMainWindow):
         if added:
             self.set_status(
                 f"Imported {len(added)} column(s) from the parts CSV: "
-                f"{', '.join(added)}."
+                f"{_names_preview(added)}."
             )
             self._save_ui()
             self._reshape_plots()
