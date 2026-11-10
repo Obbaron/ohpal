@@ -14,6 +14,7 @@ actual data and plot actions are inert, to be connected in a later pass.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,6 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import icons, theme, toolbars, uistate
+from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
 from .data_tab import DataTab
@@ -41,14 +43,6 @@ from .plot_tab import PlotTab
 from .state import BuildSession
 
 APP_TITLE = "AMPM Analyzer"
-
-
-def _names_preview(names, limit: int = 6) -> str:
-    """"a, b, c" — capped with "(+N more)" so a status line stays short."""
-    names = list(names)
-    if len(names) <= limit:
-        return ", ".join(names)
-    return ", ".join(names[:limit]) + f" (+{len(names) - limit} more)"
 
 
 class _ElidingLabel(QLabel):
@@ -184,6 +178,18 @@ class MainWindow(QMainWindow):
         self.session.queryReady.connect(self._on_query_ready)
         self.session.loadFailed.connect(self._on_load_failed)
 
+        # Action layer: every shape/view-changing user action goes through it, so
+        # each one is an undo step (and, later, a recordable macro step).
+        self._quiet_refresh = False  # True while undo/redo re-shapes the grid
+        self.actions = Actions(self, self.controller, self.session, parent=self)
+        self.actions.history.changed.connect(self._sync_history_buttons)
+        self._global_btns["undo"].clicked.connect(self._undo)
+        self._global_btns["redo"].clicked.connect(self._redo)
+        for keys, slot in (("Ctrl+Z", self._undo), ("Ctrl+Shift+Z", self._redo),
+                           ("Ctrl+Y", self._redo)):
+            QShortcut(QKeySequence(keys), self, activated=slot)
+        self._sync_history_buttons()
+
         # File (backstage) tab — pinned left-most, non-closable.
         self.backstage = Backstage()
         self.backstage.newRequested.connect(self.controller.new_build)
@@ -309,6 +315,7 @@ class MainWindow(QMainWindow):
         # before the first query, so the controller's pipeline applies them to
         # the first result (and the setup form below can reflect the renames).
         self._grid_cache_dir = store.cache_dir
+        self.actions.reset()  # undo history is per build
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
         self.session.removed = list(state["removed"])
@@ -335,6 +342,7 @@ class MainWindow(QMainWindow):
         # (Re)building a DataStore via setup = a fresh start: drop any per-build
         # UI state loaded from this cache dir (derived/removed columns, grid
         # layout) and delete its file, so a stale layout isn't restored.
+        self.actions.reset()
         self.session.derivations = []
         self.session.removed = []
         self.controller.set_filters([])
@@ -358,6 +366,7 @@ class MainWindow(QMainWindow):
         # to refresh the toolbar (Show/hide columns menu) rather than treating
         # the columns as unchanged.
         self._last_columns = None
+        self.actions.reset()  # a rebuild starts a fresh history
         self.controller.build_datastore(
             form.scope(), form.thickness(), form.recipe()
         )
@@ -383,7 +392,8 @@ class MainWindow(QMainWindow):
             self.controller.filters(), result.shown_rows, result.total_rows,
             self._remove_filter_at, self._edit_filter_at,
         )
-        self._select_widget(self._data_tab)
+        if not self._quiet_refresh:
+            self._select_widget(self._data_tab)
         # A changed column set (new derived column, or a rebuild with a
         # different selection) needs the toolbar rebuilt so the Show/hide menu
         # matches the grid. When the tab actually switched, the switch already
@@ -576,26 +586,7 @@ class MainWindow(QMainWindow):
         """Commit an inline column rename across the whole app: controller state
         (renames map / derivation names / references), open plots, the grid
         layout, and persistence."""
-        err = self.controller.rename_error(old, new)
-        if err:
-            self.set_status(f"Rename failed: {err}")
-            return
-        # Pre-swap the grid's name layout so the controller's refresh keeps the
-        # column exactly where it is (only the label changes).
-        if self._data_tab is not None:
-            self._data_tab.rename_in_layout(old, new)
-        self.controller.rename_column(old, new)  # validated above; mutates + refreshes
-        # Live (session-linked) plots follow the rename; frozen detached plots
-        # keep their own names.
-        from . import colref
-        for tab in self._plot_tabs:
-            if getattr(tab, "context", None) is None:
-                tab.spec = colref.rename_spec(tab.spec, old, new)
-        self._reshape_plots()
-        if self._data_tab is not None:
-            self._data_tab.set_renames(self.session.renames)  # keep defaults current
-        self._save_ui()
-        self.set_status(f"Renamed '{old}' to '{new}'.")
+        self._run("rename", old=old, new=new)
 
     # -- column info panel (data tab) ----------------------------------
     def _open_column_panel(self, col: str) -> None:
@@ -816,7 +807,8 @@ class MainWindow(QMainWindow):
                 on_toggle_sidebar=self._toggle_sidebar,
                 on_layer_changed=self._on_layer_changed,
                 on_column_visibility=(
-                    (lambda n, v: dt.set_column_visible(n, v)) if dt else None
+                    (lambda n, v: self._run("set_visible", name=n, visible=v))
+                    if dt else None
                 ),
                 on_rename=self._start_rename_column,
                 on_add_derive=self._add_derive_column,
@@ -898,8 +890,7 @@ class MainWindow(QMainWindow):
                                     renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        self.controller.add_filter(dlg.condition())
-        self._save_ui()
+        self._run("filter_add", condition=dlg.condition())
 
     def _edit_filter_at(self, index: int) -> None:
         dt = self._data_tab
@@ -912,20 +903,16 @@ class MainWindow(QMainWindow):
                                     renames=self.session.renames)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        self.controller.edit_filter(index, dlg.condition())
-        self._save_ui()
+        self._run("filter_edit", index=index, condition=dlg.condition())
 
     def _remove_filter_at(self, index: int) -> None:
-        self.controller.remove_filter(index)
-        self._save_ui()
+        self._run("filter_remove", index=index)
 
     def _on_remove_last_filter(self) -> None:
-        self.controller.remove_last_filter()
-        self._save_ui()
+        self._run("filter_remove_last")
 
     def _on_reset_filters(self) -> None:
-        self.controller.reset_filters()
-        self._save_ui()
+        self._run("filter_reset")
 
     def _add_derive_column(self) -> None:
         dt = self._data_tab
@@ -941,16 +928,8 @@ class MainWindow(QMainWindow):
         name, expr, group = dlg.result_values()
         overwrite = dlg.is_overwrite()
         after = dlg.after_column()
-        err = self.controller.add_derivation(name, expr, group, overwrite=overwrite)
-        if err:
-            self.set_status(f"Derive column failed: {err}")
-        else:
-            verb = "Overwrote" if overwrite else "Added derived"
-            self.set_status(f"{verb} column '{name}'.")
-            if not overwrite and after:
-                dt.place_after(name, after)  # position the new column in the grid
-            self._save_ui()
-            self._reshape_plots()
+        self._run("derive", name=name, expr=expr, group=group,
+                  overwrite=overwrite, after=after or "")
 
     def _add_group_label(self) -> None:
         dt = self._data_tab
@@ -964,13 +943,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, rules, default = dlg.result_values()
-        err = self.controller.add_label_derivation(name, rules, default)
-        if err:
-            self.set_status(f"Group label failed: {err}")
-        else:
-            self.set_status(f"Added label column '{name}' ({len(rules)} rule(s)).")
-            self._save_ui()
-            self._reshape_plots()
+        self._run("label", name=name, rules=rules, default=default)
 
     def _add_excel_column(self) -> None:
         dt = self._data_tab
@@ -982,20 +955,14 @@ class MainWindow(QMainWindow):
         dlg = ExcelImportDialog(dt._columns, self, taken=taken)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        name, grid_key, mapping, dtype, n = dlg.result_values()
-        err = self.controller.add_join_derivation(name, grid_key, mapping, dtype)
-        if err:
-            self.set_status(f"Add from Excel failed: {err}")
-        else:
-            self.set_status(
-                f"Added column '{name}' from Excel ({n} keys on '{grid_key}')."
-            )
-            self._save_ui()
-            self._reshape_plots()
+        name, grid_key, mapping, dtype, _n = dlg.result_values()
+        self._run("excel_import", name=name, key=grid_key, mapping=mapping,
+                  dtype=dtype)
 
     # -- contextual part-wise actions ----------------------------------
     def _add_part_calc(self) -> None:
-        """Quick per-part calculation → a derived column reduced by part_id."""
+        """Quick per-part calculation → a derived column reduced by part_id
+        (CoV lays out mean / std / ratio as one action)."""
         dt = self._data_tab
         if dt is None:
             return
@@ -1007,120 +974,19 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, signal, reducer = dlg.result_values()
-        if reducer == "cov":
-            self._add_part_cov(signal, name, pid)
-            return
-        expr = f"{reducer}([{signal}]) by [{pid}]"
-        err = self.controller.add_derivation(name, expr)
-        if err:
-            self.set_status(f"Per-part calculation failed: {err}")
-        else:
-            self.set_status(f"Added per-part column '{name}'.")
-            self._save_ui()
-            self._reshape_plots()
-
-    def _add_part_cov(self, signal: str, cov_name: str, pid: str) -> None:
-        """CoV = per-part std / per-part mean, laid out as three columns:
-        a per-part mean, a per-part std, then their ratio. The mean/std
-        intermediates are reused if they already exist."""
-        dt = self._data_tab
-        existing = set(dt._columns) | {d["name"] for d in self.session.derivations}
-        mean_name = f"{signal} (mean/part)"
-        std_name = f"{signal} (std/part)"
-        if cov_name in existing:
-            self.set_status(f"A column named {cov_name!r} already exists.")
-            return
-        # Build the mean/std intermediates in order (cov references them).
-        plan = []
-        if mean_name not in existing:
-            plan.append((mean_name, f"mean([{signal}]) by [{pid}]"))
-        if std_name not in existing:
-            plan.append((std_name, f"std([{signal}]) by [{pid}]"))
-        for nm, expr in plan:
-            err = self.controller.add_derivation(nm, expr)
-            if err:
-                self.set_status(f"Per-part CoV failed on '{nm}': {err}")
-                return
-        err = self.controller.add_derivation(
-            cov_name, f"[{std_name}] / [{mean_name}]")
-        if err:
-            self.set_status(f"Per-part CoV failed: {err}")
-            return
-        self.set_status(
-            f"Added per-part CoV '{cov_name}' "
-            f"(+ {mean_name!r}, {std_name!r})."
-        )
-        self._save_ui()
-        self._reshape_plots()
+        self._run("part_calc", signal=signal, reducer=reducer, name=name)
 
     def _add_laser_parameters(self) -> None:
-        """Join the QuantAM per-part scan-volume laser parameters onto the grid,
-        keyed on the (rename-aware) part_id. Each numeric parameter column is
-        added as its own join derivation; existing names are skipped."""
-        import polars as pl
-
-        from . import derive
-
-        dt = self._data_tab
-        if dt is None:
-            return
-        pid = self.controller.part_id_display()
-        try:
-            params = self.controller.part_laser_parameters()
-        except Exception as exc:  # noqa: BLE001 — surfaced, non-fatal
-            self.set_status(f"Couldn't load laser parameters: {exc}")
-            return
-        if params is None or "part_id" not in params.columns:
-            self.set_status("The parts CSV has no part_id column.")
-            return
-        keys = params["part_id"].cast(pl.Utf8).to_list()
-        taken = {d["name"] for d in self.session.derivations} | set(dt._columns)
-        added, skipped = [], []
-        for col in (c for c in params.columns if c != "part_id"):
-            if col in taken:
-                skipped.append(col)
-                continue
-            series = params[col]
-            if not series.dtype.is_numeric():
-                skipped.append(col)  # only numeric parameters join as f64
-                continue
-            vals = series.to_list()
-            mapping = {
-                derive.norm_key(k): float(v)
-                for k, v in zip(keys, vals)
-                if k is not None and v is not None
-            }
-            if not mapping:
-                continue
-            if self.controller.add_join_derivation(col, pid, mapping, "f64") is None:
-                added.append(col)
-                taken.add(col)
-            else:
-                skipped.append(col)
-        if added:
-            self.set_status(
-                f"Added {len(added)} laser-parameter column(s): "
-                f"{_names_preview(added)}."
-            )
-            self._save_ui()
-            self._reshape_plots()
-        else:
-            self.set_status(
-                "No new laser-parameter columns to add"
-                + (" (all already present)." if skipped else ".")
-            )
+        """Join the QuantAM per-part scan-volume laser parameters onto the grid."""
+        if self._data_tab is not None:
+            self._run("laser_params")
 
     def _import_parts_csv(self) -> None:
-        """Open the parts-CSV section picker; join each staged column onto the
-        grid, keyed on the (rename-aware) part_id. Names collide across sections
-        (e.g. 'Hatches Power'), so a clashing name is suffixed with its section."""
-        import polars as pl
-
-        from . import derive
+        """Open the parts-CSV section picker and join the staged columns onto the
+        grid (one action, however many columns)."""
         from .import_parts_dialog import ImportPartsCSVDialog
 
-        dt = self._data_tab
-        if dt is None:
+        if self._data_tab is None:
             return
         try:
             sections = self.controller.parts_csv_sections()
@@ -1134,47 +1000,8 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         staged = dlg.result_values()  # [(section, column)]
-        if not staged:
-            return
-
-        pid = self.controller.part_id_display()
-        sect = dict(sections)
-        taken = {d["name"] for d in self.session.derivations} | set(dt._columns)
-        added, skipped = [], []
-        for section, col in staged:
-            body = sect.get(section)
-            if body is None or col not in body.columns:
-                continue
-            name = col if col not in taken else f"{col} ({section})"
-            if name in taken:
-                skipped.append(col)
-                continue
-            keys = body["part_id"].cast(pl.Utf8).to_list()
-            series = body[col]
-            numeric = series.dtype.is_numeric()
-            vals = series.to_list()
-            mapping = {
-                derive.norm_key(k): (float(v) if numeric else str(v))
-                for k, v in zip(keys, vals)
-                if k is not None and v is not None
-            }
-            if not mapping:
-                continue
-            dtype = "f64" if numeric else "str"
-            if self.controller.add_join_derivation(name, pid, mapping, dtype) is None:
-                added.append(name)
-                taken.add(name)
-            else:
-                skipped.append(col)
-        if added:
-            self.set_status(
-                f"Imported {len(added)} column(s) from the parts CSV: "
-                f"{_names_preview(added)}."
-            )
-            self._save_ui()
-            self._reshape_plots()
-        else:
-            self.set_status("No new columns imported from the parts CSV.")
+        if staged:
+            self._run("parts_csv_import", items=[list(s) for s in staged])
 
     def _export_excel(self) -> None:
         dt = self._data_tab
@@ -1230,20 +1057,47 @@ class MainWindow(QMainWindow):
         if not names:
             self.set_status("Select a column (click its header) to remove.")
             return
-        blocked = self.controller.remove_columns(names)
-        done = [n for n in names if n not in blocked]
-        if done:
-            self.set_status(f"Removed {len(done)} column(s): {', '.join(done)}.")
-            self._save_ui()
-            self._reshape_plots()
-        if blocked:
-            self.set_status(f"Can't remove required column(s): {', '.join(blocked)}.")
+        self._run("remove", names=names)
 
     def _restore_column(self, name: str) -> None:
-        self.controller.restore_column(name)
-        self.set_status(f"Restored column '{name}'.")
+        self._run("restore", name=name)
+
+    # -- action layer / undo-redo --------------------------------------
+    def _run(self, op: str, **params):
+        """Perform a user action through the action layer (which snapshots for
+        undo, persists and re-shapes plots) and report its outcome."""
+        out = self.actions.run(op, **params)
+        if out.message:
+            self.set_status(out.message)
+        return out
+
+    def _undo(self) -> None:
+        label = self.actions.undo()
+        if label:
+            self.set_status(f"Undid: {label}.")
+
+    def _redo(self) -> None:
+        label = self.actions.redo()
+        if label:
+            self.set_status(f"Redid: {label}.")
+
+    def _after_restore(self) -> None:
+        """An undo/redo just put a saved state back: persist it and rebuild the
+        Data toolbar so its menus (show/hide, restore column) match."""
         self._save_ui()
-        self._reshape_plots()
+        self._last_columns = (
+            list(self._data_tab._columns) if self._data_tab is not None else None)
+        self.refresh_data_layers()
+
+    def _sync_history_buttons(self) -> None:
+        h = self.actions.history
+        for key, can, label, word, keys in (
+            ("undo", h.can_undo(), h.undo_label(), "Undo", "Ctrl+Z"),
+            ("redo", h.can_redo(), h.redo_label(), "Redo", "Ctrl+Shift+Z"),
+        ):
+            btn = self._global_btns[key]
+            btn.setEnabled(can)
+            btn.setToolTip(f"{word}: {label} ({keys})" if can else f"{word} ({keys})")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         kind = self.stack.currentWidget().property("tabkind")

@@ -566,3 +566,17 @@ class DataTab(QWidget):
             return
         self.table.horizontalHeader().setSectionHidden(cols.index(name), not visible)
         self._on_header_changed()
+
+    def apply_hidden(self, hidden: set[str]) -> None:
+        """Hide exactly the named columns (show the rest), without emitting
+        ``layoutChanged`` — used when undo/redo puts a saved view back, where the
+        caller persists once at the end."""
+        header = self.table.horizontalHeader()
+        self._applying = True
+        try:
+            for i, name in enumerate(self.model.columns):
+                header.setSectionHidden(i, name in hidden)
+        finally:
+            self._applying = False
+            self._capture_names()
+            self._last_state = bytes(header.saveState())
