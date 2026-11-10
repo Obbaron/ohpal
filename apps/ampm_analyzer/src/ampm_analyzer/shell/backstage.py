@@ -288,6 +288,7 @@ class Backstage(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.ds_form = DataStoreSettings()
         self.ds_form.buildRequested.connect(self.datastoreBuildRequested)
+        self.ds_form.cancelRequested.connect(self.show_start_page)
         scroll.setWidget(self.ds_form)
         lay.addWidget(scroll, 1)
         return page

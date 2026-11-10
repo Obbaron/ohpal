@@ -15,9 +15,7 @@ only collects scope and emits ``buildRequested``.
 
 from __future__ import annotations
 
-import json
-
-from PyQt6.QtCore import Qt, QSettings, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -54,35 +52,53 @@ _CORR_MACHINES = ["MAIN"]
 _CORR_COLUMN = "MeltVIEW melt pool (mean)"
 _CORR_LASER_COLUMN = "LaserVIEW (mean)"
 
-# Saved column default (which columns to import + their renames) — app-global, in
-# the same QSettings store the recents/geometry use.
-_SETTINGS_ORG = "AMPM"
-_SETTINGS_APP = "AMPM Analyzer"
-_DEFAULT_KEY = "datastore/column_default"
+# Fixed default import set (besides the always-required columns) and the renames
+# applied to a fresh build, so a new DataStore lands ready to go.
+_DEFAULT_IMPORT = [
+    "Duration",
+    "Demand laser power (mean)",
+    "MeltVIEW plasma (mean)",
+    "MeltVIEW melt pool (mean)",
+    "Laser output power (mean)",
+]
+_DEFAULT_RENAMES = {
+    "Demand X": "X",
+    "Demand Y": "Y",
+    "Demand laser power (mean)": "Demand Power",
+    "MeltVIEW plasma (mean)": "Plasma",
+    "MeltVIEW melt pool (mean)": "Meltpool",
+    "Laser output power (mean)": "Output power",
+}
+
+# Accent (primary) button — mirrors the other dialogs' primary style via palette.
+_ACCENT_QSS = (
+    "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
+    " border: none; padding: 7px 22px; border-radius: 6px; font-weight: 600; }"
+    "QPushButton:hover { background: palette(link); }"
+    "QPushButton:disabled { background: palette(midlight); color: palette(mid); }"
+)
 
 
-class _ColumnRow(QWidget):
-    """One row of the import checklist: an include toggle (the column name) and an
-    optional rename box. Required columns are locked on but still renameable."""
+class _ColumnRow:
+    """Holds one import-checklist row's widgets — an include toggle (the column
+    name), a muted arrow, and an optional rename box. The widgets are placed in a
+    shared grid (see _make_cols_host) so the rename boxes line up columnarly.
+    Required columns are locked on but still renameable."""
 
     def __init__(self, name: str, *, locked: bool = False) -> None:
-        super().__init__()
         self.name = name
         self.locked = locked
-        row = QHBoxLayout(self)
-        row.setContentsMargins(2, 1, 2, 1)
-        row.setSpacing(8)
         self.chk = QCheckBox(name)
         self.chk.setChecked(True)
-        self.chk.setMinimumWidth(190)
         if locked:
             self.chk.setEnabled(False)  # always imported
             self.chk.setToolTip("Always imported (required column)")
-        row.addWidget(self.chk)
+        self.arrow = QLabel("→")
+        self.arrow.setStyleSheet("color: palette(mid);")
         self.rename = QLineEdit()
         self.rename.setPlaceholderText("rename…")
         self.rename.setClearButtonEnabled(True)
-        row.addWidget(self.rename, 1)
+        self.rename.setFixedWidth(150)
 
     def included(self) -> bool:
         return self.chk.isChecked()
@@ -104,6 +120,7 @@ def _value_label(text: str) -> QLabel:
 
 class DataStoreSettings(QWidget):
     buildRequested = pyqtSignal()
+    cancelRequested = pyqtSignal()  # leave the setup surface, back to backstage
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -122,8 +139,11 @@ class DataStoreSettings(QWidget):
 
         row = QHBoxLayout()
         row.addStretch(1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.cancelRequested)
+        row.addWidget(self.cancel_btn)
         self.build_btn = QPushButton("Build DataStore")
-        self.build_btn.setProperty("primary", "true")
+        self.build_btn.setStyleSheet(_ACCENT_QSS)
         self.build_btn.clicked.connect(self.buildRequested)
         row.addWidget(self.build_btn)
         lay.addLayout(row)
@@ -145,38 +165,37 @@ class DataStoreSettings(QWidget):
 
     def _columns_group(self) -> QGroupBox:
         """Which columns the store loads, and an optional rename for each. Always-
-        required ones are locked on. A set of includes + renames can be saved as
-        the default and is re-applied to every new build."""
+        required ones are locked on. A fresh build opens with the fixed default
+        set + renames already applied (see set_config)."""
         box = QGroupBox("Columns")
         v = QVBoxLayout(box)
-        hint = QLabel("Tick to import; type a name to rename it on import.")
+        hint = QLabel("Tick to import; rename a column on the right.")
         hint.setProperty("class", "Hint")
         v.addWidget(hint)
 
         self._col_rows: list[_ColumnRow] = []
-        area = QScrollArea()
-        area.setWidgetResizable(True)
-        area.setFixedHeight(170)
-        host = QWidget()
-        self._cols_layout = QVBoxLayout(host)
-        self._cols_layout.setContentsMargins(0, 0, 0, 0)
-        self._cols_layout.setSpacing(0)
-        self._cols_layout.addStretch(1)
-        area.setWidget(host)
-        v.addWidget(area)
-
-        btns = QHBoxLayout()
-        self.btn_save_default = QPushButton("Save as default")
-        self.btn_save_default.setToolTip(
-            "Remember this set of imported columns and renames for new builds")
-        self.btn_clear_default = QPushButton("Clear default")
-        btns.addWidget(self.btn_save_default)
-        btns.addWidget(self.btn_clear_default)
-        btns.addStretch(1)
-        v.addLayout(btns)
-        self.btn_save_default.clicked.connect(self._save_default)
-        self.btn_clear_default.clicked.connect(self._clear_default)
+        self._cols_area = QScrollArea()
+        self._cols_area.setWidgetResizable(True)
+        self._cols_area.setFixedHeight(190)
+        self._cols_area.setWidget(self._make_cols_host([]))
+        v.addWidget(self._cols_area)
         return box
+
+    def _make_cols_host(self, rows: list[_ColumnRow]) -> QWidget:
+        """Lay the rows out in one grid so the arrows and rename boxes align into
+        columns (grid column 0 sizes to the widest column name)."""
+        host = QWidget()
+        grid = QGridLayout(host)
+        grid.setContentsMargins(2, 2, 2, 2)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(3)
+        for i, r in enumerate(rows):
+            grid.addWidget(r.chk, i, 0)
+            grid.addWidget(r.arrow, i, 1)
+            grid.addWidget(r.rename, i, 2)
+        grid.setColumnStretch(3, 1)       # keep everything left-packed
+        grid.setRowStretch(len(rows), 1)  # rows hug the top
+        return host
 
     def _processing_group(self) -> QGroupBox:
         """Recipe defined with the DataStore: mask / assign parts / correction.
@@ -190,9 +209,19 @@ class DataStoreSettings(QWidget):
         self.chk_mask = QCheckBox("Apply mask")
         f.addRow("Masking", self.chk_mask)
 
+        # Part assignment leads with a toggle (to match masking/correction), with
+        # the method beside it; None is simply the toggle being off.
+        self.chk_parts = QCheckBox("Assign parts")
         self.cmb_parts = fix_combo(QComboBox())
-        self.cmb_parts.addItems(["None", "Direct", "DHXML", "DBSCAN"])
-        f.addRow("Part assignment", self.cmb_parts)
+        self.cmb_parts.addItems(["Direct", "DHXML", "DBSCAN"])
+        parts_row = QHBoxLayout()
+        parts_row.setContentsMargins(0, 0, 0, 0)
+        parts_row.addWidget(self.chk_parts)
+        parts_row.addWidget(self.cmb_parts, 1)
+        parts_w = QWidget()
+        parts_w.setLayout(parts_row)
+        f.addRow("Part assignment", parts_w)
+        self.chk_parts.toggled.connect(self._sync_parts_enabled)
 
         self.chk_correction = QCheckBox("Apply correction")
         f.addRow("Correction", self.chk_correction)
@@ -247,6 +276,11 @@ class DataStoreSettings(QWidget):
         self.corr_detail.setEnabled(on)
         self.txt_corr_name.setEnabled(on and self.rb_corr_new.isChecked())
 
+    def _sync_parts_enabled(self) -> None:
+        """The method dropdown is live only while part assignment is toggled on."""
+        self.cmb_parts.setEnabled(
+            self.chk_parts.isChecked() and self.chk_parts.isEnabled())
+
     def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
         """Enable/disable one Part-assignment dropdown item (greys it out)."""
         item = self.cmb_parts.model().item(index)
@@ -300,7 +334,7 @@ class DataStoreSettings(QWidget):
 
         ``renames`` (original -> display), when given, is a live build's current
         rename map — reflected in the rows so a rebuild preserves it. When it's
-        None (a fresh setup) the saved column default is applied instead.
+        None (a fresh setup) the fixed default import set + renames is applied.
         """
         def shown(value) -> str:
             return str(value) if value else _MISSING
@@ -308,27 +342,24 @@ class DataStoreSettings(QWidget):
         # Rebuild the column rows — optional first, the locked always-required
         # ones grouped at the bottom. part_id is assignment output (not a loadable
         # source column), so it's never offered here.
-        for r in self._col_rows:
-            r.setParent(None)
-            r.deleteLater()
-        self._col_rows = []
         cols = [c for c in (columns or []) if c != "part_id"]
         optional = [c for c in cols if c not in _ALWAYS]
         required = [c for c in cols if c in _ALWAYS]
-        for name in optional + required:
-            row = _ColumnRow(name, locked=name in _ALWAYS)
-            self._col_rows.append(row)
-            self._cols_layout.insertWidget(self._cols_layout.count() - 1, row)
+        self._col_rows = [
+            _ColumnRow(name, locked=name in _ALWAYS)
+            for name in optional + required
+        ]
+        self._cols_area.setWidget(self._make_cols_host(self._col_rows))
 
-        # Apply the live renames (existing build) or the saved default (fresh).
+        # Reflect the live build's renames (keep all included), or apply the fixed
+        # default on a fresh setup: import the default set + required, with the
+        # default renames prefilled.
         if renames is not None:
             self._apply_column_state(included=None, renames=renames)
         else:
-            default = self._load_default()
-            if default:
-                self._apply_column_state(
-                    included=set(default.get("included") or []),
-                    renames=default.get("renames") or {})
+            self._apply_column_state(
+                included=set(_DEFAULT_IMPORT) | set(_ALWAYS),
+                renames=_DEFAULT_RENAMES)
 
         self.lbl_source.setText(shown(config.get("SOURCE")))
         self.lbl_dhxml.setText(shown(config.get("DHXML")))
@@ -352,22 +383,27 @@ class DataStoreSettings(QWidget):
         self.chk_mask.setToolTip("" if has_stl else "No STL found to mask with")
 
         # Part assignment: Direct/DBSCAN need the parts CSV; DHXML needs the
-        # dhxml. Gate each option on its own input and pick an available one.
+        # dhxml. Gate each method on its own input; the toggle leads (off = None)
+        # and defaults on when assignment is available.
         has_dhxml = bool(config.get("DHXML"))
-        self._set_part_option_enabled(1, has_parts)   # Direct
-        self._set_part_option_enabled(2, has_dhxml)   # DHXML
-        self._set_part_option_enabled(3, has_parts)   # DBSCAN
-        self.cmb_parts.setEnabled(has_parts or has_dhxml)
-        if has_parts or has_dhxml:
+        self._set_part_option_enabled(0, has_parts)   # Direct
+        self._set_part_option_enabled(1, has_dhxml)   # DHXML
+        self._set_part_option_enabled(2, has_parts)   # DBSCAN
+        parts_available = has_parts or has_dhxml
+        self.chk_parts.setEnabled(parts_available)
+        self.chk_parts.setChecked(parts_available)
+        self.chk_parts.setToolTip(
+            "" if parts_available else "No parts CSV or DHXML found")
+        if parts_available:
             method = str(config.get("METHOD", "direct")).lower()
-            index = {"direct": 1, "dhxml": 2, "dbscan": 3}.get(method, 1)
+            index = {"direct": 0, "dhxml": 1, "dbscan": 2}.get(method, 0)
             if not self._part_option_enabled(index):
-                index = 2 if has_dhxml else 1  # fall back to what's available
+                index = 1 if has_dhxml else 0  # fall back to what's available
             self.cmb_parts.setCurrentIndex(index)
             self.cmb_parts.setToolTip("")
         else:
-            self.cmb_parts.setCurrentIndex(0)  # None
             self.cmb_parts.setToolTip("No parts CSV or DHXML found")
+        self._sync_parts_enabled()
 
         # Correction needs both the melt-pool and LaserVIEW signals loaded.
         cols_set = set(cols)
@@ -418,40 +454,16 @@ class DataStoreSettings(QWidget):
             inc = True if included is None else (r.name in included)
             r.set_state(included=inc, rename=renames.get(r.name, ""))
 
-    # -- saved column default (app-global) -----------------------------
-    @staticmethod
-    def _settings() -> QSettings:
-        return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
-
-    def _load_default(self) -> dict | None:
-        raw = self._settings().value(_DEFAULT_KEY, "")
-        if not raw:
-            return None
-        try:
-            data = json.loads(raw)
-            return data if isinstance(data, dict) else None
-        except (ValueError, TypeError):
-            return None
-
-    def _save_default(self) -> None:
-        blob = {"included": self.columns(), "renames": self.renames_map()}
-        self._settings().setValue(_DEFAULT_KEY, json.dumps(blob))
-        n = len(blob["included"])
-        self.status.setText(
-            f"Saved {n} column{'s' if n != 1 else ''} + renames as the default "
-            "for new builds.")
-
-    def _clear_default(self) -> None:
-        self._settings().remove(_DEFAULT_KEY)
-        self.status.setText("Cleared the saved column default.")
-
     def recipe(self) -> dict:
         """Selected processing recipe (used when the store applies it later)."""
         return {
             "columns": self.columns(),
             "renames": self.renames_map(),
             "apply_mask": self.chk_mask.isEnabled() and self.chk_mask.isChecked(),
-            "part_method": self.cmb_parts.currentText().lower(),  # none/direct/…
+            "part_method": (
+                self.cmb_parts.currentText().lower()
+                if self.chk_parts.isChecked() and self.chk_parts.isEnabled()
+                else "none"),
             "apply_correction": (
                 self.chk_correction.isEnabled()
                 and self.chk_correction.isChecked()),
