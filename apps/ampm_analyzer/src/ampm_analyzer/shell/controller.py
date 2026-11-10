@@ -58,6 +58,14 @@ class AppController(QObject):
         self._columns: list[str] | None = None  # selected load columns (None = all)
         self._filter: list[str] = []  # active row-filter conditions (grid-live)
         self._base_df = None  # last raw grid query output, before shaping
+        # Masking: drop points outside the STL layer polygons. The mask is built
+        # off-thread (heavy, cached) on its own thread refs so it runs in parallel
+        # with query/cache work, then applied as the first step of _shape.
+        self._apply_mask = False       # Apply-mask toggle for this build
+        self._mask_geom = None         # built Mask (dict[int, polygon]) or None
+        self._mask_key = None          # (stl, layers, thickness) the mask is for
+        self._mask_thread: QThread | None = None
+        self._mask_worker = None
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
@@ -142,9 +150,12 @@ class AppController(QObject):
         # (persisted per-build) — config.toml doesn't record it, so without this
         # a reopened cached build loses its part_id. Set before set_store so the
         # setup form it repopulates also shows the real choice.
-        saved_method = uistate.load_state(store.cache_dir).get("part_method")
+        saved_state = uistate.load_state(store.cache_dir)
+        saved_method = saved_state.get("part_method")
         if saved_method:
             self._config["METHOD"] = saved_method
+        # Restore the Apply-mask choice (also not in config.toml).
+        self._apply_mask = bool(saved_state.get("apply_mask"))
         cached, _total = self._cache_status(store)
         # Record this build in the recents list (before set_store so the backstage
         # refresh triggered by the load already sees it).
@@ -153,6 +164,9 @@ class AppController(QObject):
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
         self._apply_part_assignment(store, self._config.get("METHOD"))
+        # Kick off the mask build now (parallel to the first query) if masking
+        # was on for this build — the ready mask shapes the grid on arrival.
+        self._ensure_mask()
 
         exists = cached > 0
 
@@ -222,6 +236,11 @@ class AppController(QObject):
         # in-memory config in step, so reopening this cached build re-applies it.
         self._config["METHOD"] = method
         uistate.set_part_method(store.cache_dir, method)
+        # Masking toggle (persist like part_method) — build the mask off-thread
+        # so it's ready to shape the grid once the cache query returns.
+        self._apply_mask = bool((recipe or {}).get("apply_mask"))
+        uistate.set_apply_mask(store.cache_dir, self._apply_mask)
+        self._ensure_mask()
         # Restrict later queries to the columns the user kept (None = all).
         self._columns = (recipe or {}).get("columns") or None
         if scope is None:
@@ -686,8 +705,101 @@ class AppController(QObject):
         self._refresh_derived()
         return None
 
+    # -- masking (drop points outside the STL layer polygons) ----------
+    _MASK_COLS = ("Demand X", "Demand Y", "layer")
+
+    def apply_mask(self) -> bool:
+        """Whether the Apply-mask toggle is active for this build (persisted)."""
+        return self._apply_mask
+
+    def _mask(self, df):
+        """Drop rows outside the STL layer mask, when masking is active and the
+        mask is built. Uses the raw source columns, so this runs before rename.
+        A no-op when the toggle is off, the mask isn't built yet, or the frame
+        lacks the geometry columns (never let masking break the grid)."""
+        if not self._apply_mask or self._mask_geom is None:
+            return df
+        if any(c not in df.columns for c in self._MASK_COLS):
+            return df
+        try:
+            from ohpal.ampm.masking import apply_mask
+
+            return apply_mask(df, self._mask_geom)
+        except Exception:  # noqa: BLE001 - masking must never break shaping
+            return df
+
+    def _ensure_mask(self) -> None:
+        """Start an off-thread mask build if masking is on and the held mask is
+        missing or stale. A no-op when masking is off (clears the held mask), the
+        build has no STL, or a matching mask is already built/building."""
+        store = self.session.store
+        if not self._apply_mask or store is None:
+            self._mask_geom = None
+            self._mask_key = None
+            return
+        stl = (self._config or {}).get("STL")
+        if not stl:
+            # Nothing to mask with — treat masking as off for this build.
+            self._apply_mask = False
+            self._mask_geom = None
+            self._mask_key = None
+            return
+        layers = tuple(store.layers)
+        thickness = self.session.layer_thickness
+        key = (str(stl), layers, thickness)
+        if self._mask_geom is not None and self._mask_key == key:
+            return  # already built for these inputs
+        if self._mask_thread is not None:
+            return  # a build is already running
+        cache_path = Path(store.cache_dir) / "mask.pkl"
+        self._start_mask(stl, list(layers), thickness, cache_path, key)
+
+    def _start_mask(self, stl, layers, thickness, cache_path, key) -> None:
+        from .workers import MaskWorker
+
+        thread = QThread(self)
+        worker = MaskWorker(
+            stl, layers, layer_thickness=thickness, cache_path=cache_path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda m, k=key: self._on_mask_done(m, k))
+        worker.error.connect(self._on_mask_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_mask_thread)
+        self._mask_thread, self._mask_worker = thread, worker
+        self._window.set_status("Building mask…")
+        thread.start()
+
+    def _on_mask_done(self, mask, key) -> None:
+        self._mask_geom = mask
+        self._mask_key = key
+        # Re-shape grid + plots now that points can be masked. Both no-op safely
+        # if nothing is loaded yet (the first query will shape through the mask).
+        self.refresh_grid()
+        try:
+            self._window._reshape_plots()
+        except Exception:  # noqa: BLE001
+            pass
+        n = len(mask) if mask else 0
+        self._window.set_status(f"Mask applied across {n} layers.")
+
+    def _on_mask_error(self, message: str) -> None:
+        self._mask_geom = None
+        self._mask_key = None
+        self._window.set_status("Mask build failed — showing unmasked data.")
+
+    def _clear_mask_thread(self) -> None:
+        self._mask_thread = None
+        self._mask_worker = None
+
     def _shape(self, df):
-        # Renames first: a source column reads as its new name through the whole
+        # Masking first: drop points outside the STL layer polygons, using the
+        # raw source columns ("Demand X"/"Demand Y"/"layer") before any rename.
+        df = self._mask(df)
+        # Renames next: a source column reads as its new name through the whole
         # pipeline (derivations, removed, filters, grid, plots).
         if self.session.renames:
             rmap = {o: n for o, n in self.session.renames.items()
@@ -844,3 +956,6 @@ class AppController(QObject):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)
+        if self._mask_thread is not None:
+            self._mask_thread.quit()
+            self._mask_thread.wait(3000)

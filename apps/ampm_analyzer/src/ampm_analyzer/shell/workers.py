@@ -122,6 +122,48 @@ class QueryWorker(QObject):
             self.error.emit(traceback.format_exc())
 
 
+class MaskWorker(QObject):
+    """Builds the STL layer mask off the UI thread.
+
+    Slicing the mesh at every layer is heavy, so it runs here rather than
+    freezing the window. ``build_mask`` caches the result to a pickle keyed on
+    the STL content + layer set + thickness, so a rebuild with the same inputs
+    is cheap. Independent of the parquet cache (it only reads the STL), so it is
+    safe to run in parallel with a query/cache build on its own thread. Emits the
+    ``Mask`` dict (layer number -> 2D polygon).
+    """
+
+    finished = pyqtSignal(object)  # Mask: dict[int, shapely polygon]
+    error = pyqtSignal(str)
+
+    def __init__(
+        self, stl_path, layers, *, layer_thickness: float, cache_path
+    ) -> None:
+        super().__init__()
+        self._stl_path = stl_path
+        self._layers = list(layers)
+        self._thickness = layer_thickness
+        self._cache_path = cache_path
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            from ohpal.ampm.masking import build_mask
+
+            mask = build_mask(
+                self._stl_path,
+                self._layers,
+                layer_thickness=self._thickness,
+                cache_path=self._cache_path,
+            )
+        except SystemExit as exc:  # ohpal helpers can call sys.exit()
+            self.error.emit(f"Mask build aborted: {exc}")
+        except Exception:  # noqa: BLE001 - surface any failure as a message
+            self.error.emit(traceback.format_exc())
+        else:
+            self.finished.emit(mask)
+
+
 class CacheWorker(QObject):
     """Builds the parquet cache off-thread, one layer at a time.
 

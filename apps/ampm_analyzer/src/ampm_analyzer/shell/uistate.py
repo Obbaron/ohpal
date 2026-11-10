@@ -28,7 +28,7 @@ def _empty() -> dict:
     return {
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
-        "part_method": "", "renames": {},
+        "part_method": "", "apply_mask": False, "renames": {},
     }
 
 
@@ -54,6 +54,10 @@ def load_state(cache_dir: Path) -> dict:
             # config.toml doesn't record it, so it's persisted here and re-applied
             # on open (else a reopened cached build loses its part_id column).
             "part_method": data.get("part_method") or "",
+            # Whether the Apply-mask toggle was on at build time. Like
+            # part_method, config.toml doesn't record it, so it's persisted here
+            # and re-applied on open (else a reopened build loses its masking).
+            "apply_mask": bool(data.get("apply_mask")),
             # Column renames: original datastore name -> current display name.
             "renames": data.get("renames") or {},
         }
@@ -80,6 +84,7 @@ def save_state(
     grid_order: list | None = None,
     grid_hidden: list | None = None,
     part_method: str | None = None,
+    apply_mask: bool | None = None,
     renames: dict | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
@@ -100,6 +105,7 @@ def save_state(
             "grid_order": list(grid_order or []),
             "grid_hidden": list(grid_hidden or []),
             "part_method": part_method or "",
+            "apply_mask": bool(apply_mask),
             "renames": dict(renames or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
@@ -124,5 +130,28 @@ def set_part_method(cache_dir: Path, method: str) -> None:
         grid_order=st["grid_order"],
         grid_hidden=st["grid_hidden"],
         part_method=method,
+        apply_mask=st["apply_mask"],
+        renames=st["renames"],
+    )
+
+
+def set_apply_mask(cache_dir: Path, value: bool) -> None:
+    """Update just the persisted Apply-mask flag, preserving the rest.
+
+    Used at build time so the choice is saved even before any derived column,
+    filter or grid change triggers a full ``save_state``.
+    """
+    st = load_state(cache_dir)
+    save_state(
+        cache_dir,
+        grid_header=st["grid_header"],
+        derivations=st["derivations"],
+        removed=st["removed"],
+        filters=st["filters"],
+        grid_columns=st["grid_columns"],
+        grid_order=st["grid_order"],
+        grid_hidden=st["grid_hidden"],
+        part_method=st["part_method"],
+        apply_mask=bool(value),
         renames=st["renames"],
     )

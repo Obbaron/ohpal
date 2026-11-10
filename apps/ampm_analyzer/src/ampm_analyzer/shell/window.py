@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
             grid_order=order,
             grid_hidden=hidden,
             part_method=(self.controller.current_config() or {}).get("METHOD") or "",
+            apply_mask=self.controller.apply_mask(),
             renames=self.session.renames,
         )
 
