@@ -37,6 +37,11 @@ STAGE1_ROW_CAP = 5000
 # per-part CoV are then computed on the sample — close, but approximate).
 _PLOT_SAMPLE_ROWS = 1_000_000
 
+# Correction (MeltVIEW melt-pool XY-bias): the raw input columns it needs loaded,
+# and the source column an "override" writes back to. See ohpal.ampm.correction.
+_CORR_SOURCE = "MeltVIEW melt pool (mean)"
+_CORR_INPUTS = ("Demand X", "Demand Y", "LaserVIEW (mean)", _CORR_SOURCE)
+
 
 def _has_packets(path: Path) -> bool:
     try:
@@ -66,6 +71,9 @@ class AppController(QObject):
         self._mask_key = None          # (stl, layers, thickness) the mask is for
         self._mask_thread: QThread | None = None
         self._mask_worker = None
+        # Correction recipe (on/machine/column/mode/output). Empty / on=False is
+        # off. Applied inline in _shape (cheap numpy transform — no worker).
+        self._correction: dict = {}
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
@@ -156,6 +164,7 @@ class AppController(QObject):
             self._config["METHOD"] = saved_method
         # Restore the Apply-mask choice (also not in config.toml).
         self._apply_mask = bool(saved_state.get("apply_mask"))
+        self._correction = dict(saved_state.get("correction") or {})
         cached, _total = self._cache_status(store)
         # Record this build in the recents list (before set_store so the backstage
         # refresh triggered by the load already sees it).
@@ -241,6 +250,15 @@ class AppController(QObject):
         self._apply_mask = bool((recipe or {}).get("apply_mask"))
         uistate.set_apply_mask(store.cache_dir, self._apply_mask)
         self._ensure_mask()
+        # Correction recipe (persist like masking) — applied inline in _shape.
+        corr = dict((recipe or {}).get("correction") or {})
+        corr["on"] = bool((recipe or {}).get("apply_correction"))
+        self._correction = corr
+        uistate.set_correction(store.cache_dir, corr)
+        # Column renames chosen on the setup form — authoritative for this build.
+        # Applied as display names in _shape (after mask/correct, which use raw
+        # names); persisted via the normal _save_ui path.
+        self.session.renames = dict((recipe or {}).get("renames") or {})
         # Restrict later queries to the columns the user kept (None = all).
         self._columns = (recipe or {}).get("columns") or None
         if scope is None:
@@ -569,6 +587,9 @@ class AppController(QObject):
         if self._base_df is None:
             return [d["name"] for d in self.session.derivations]
         cols = [self.session.renames.get(c, c) for c in self._base_df.columns]
+        extra = self._correction_new_column()
+        if extra and extra not in cols:
+            cols.append(extra)  # the corrected column _shape injects
         cols += [d["name"] for d in self.session.derivations]
         return [c for c in cols if c not in self.session.removed]
 
@@ -580,6 +601,9 @@ class AppController(QObject):
         base = []
         if self._base_df is not None:
             base = [self.session.renames.get(c, c) for c in self._base_df.columns]
+        extra = self._correction_new_column()
+        if extra and extra not in base:
+            base.append(extra)  # the corrected column _shape injects
         return base + [d["name"] for d in self.session.derivations]
 
     def _original_source_name(self, display: str) -> str:
@@ -825,10 +849,50 @@ class AppController(QObject):
         self._mask_thread = None
         self._mask_worker = None
 
+    # -- correction (MeltVIEW melt-pool XY-bias) ------------------------
+    def correction(self) -> dict:
+        """The correction recipe for this build (persisted). ``on``=False / {} is
+        off; else keys machine/column/mode/output."""
+        return dict(self._correction)
+
+    def _correction_new_column(self) -> str | None:
+        """Display name of the correction's *new* output column, when correction
+        is on in new-column mode — so it can be listed as a first-class column
+        (renameable / derivable). None for off or override mode."""
+        c = self._correction
+        if not c.get("on") or c.get("mode") == "override":
+            return None
+        out = (c.get("output") or "").strip() or f"{_CORR_SOURCE} corrected"
+        return self.session.renames.get(out, out)
+
+    def _correct(self, df):
+        """Apply the MeltVIEW melt-pool XY-bias correction, adding a new column or
+        overriding the source column. Uses the raw source columns, so this runs
+        before rename. A no-op when correction is off or the required inputs
+        aren't loaded (never let correction break shaping)."""
+        c = self._correction
+        if not c.get("on"):
+            return df
+        if any(col not in df.columns for col in _CORR_INPUTS):
+            return df
+        if c.get("mode") == "override":
+            out = _CORR_SOURCE
+        else:
+            out = (c.get("output") or "").strip() or f"{_CORR_SOURCE} corrected"
+        try:
+            from ohpal.ampm.correction import MeltPoolCorrection
+
+            return MeltPoolCorrection().apply(df, output_col=out)
+        except Exception:  # noqa: BLE001 - correction must never break shaping
+            return df
+
     def _shape(self, df):
         # Masking first: drop points outside the STL layer polygons, using the
         # raw source columns ("Demand X"/"Demand Y"/"layer") before any rename.
         df = self._mask(df)
+        # Correction next (still on raw column names): add/override the corrected
+        # melt-pool column before rename remaps anything.
+        df = self._correct(df)
         # Renames next: a source column reads as its new name through the whole
         # pipeline (derivations, removed, filters, grid, plots).
         if self.session.renames:

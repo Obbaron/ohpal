@@ -28,7 +28,7 @@ def _empty() -> dict:
     return {
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
-        "part_method": "", "apply_mask": False, "renames": {},
+        "part_method": "", "apply_mask": False, "correction": {}, "renames": {},
     }
 
 
@@ -58,6 +58,9 @@ def load_state(cache_dir: Path) -> dict:
             # part_method, config.toml doesn't record it, so it's persisted here
             # and re-applied on open (else a reopened build loses its masking).
             "apply_mask": bool(data.get("apply_mask")),
+            # Correction recipe (on/machine/column/mode/output), also absent from
+            # config.toml, persisted here and re-applied on open.
+            "correction": data.get("correction") or {},
             # Column renames: original datastore name -> current display name.
             "renames": data.get("renames") or {},
         }
@@ -85,6 +88,7 @@ def save_state(
     grid_hidden: list | None = None,
     part_method: str | None = None,
     apply_mask: bool | None = None,
+    correction: dict | None = None,
     renames: dict | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
@@ -106,6 +110,7 @@ def save_state(
             "grid_hidden": list(grid_hidden or []),
             "part_method": part_method or "",
             "apply_mask": bool(apply_mask),
+            "correction": dict(correction or {}),
             "renames": dict(renames or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
@@ -113,35 +118,15 @@ def save_state(
         pass  # persistence is best-effort; never block on it
 
 
-def set_part_method(cache_dir: Path, method: str) -> None:
-    """Update just the persisted part-assignment method, preserving the rest.
+def _save_merged(cache_dir: Path, **overrides) -> None:
+    """Save the full state with only ``overrides`` changed (the rest preserved).
 
-    Used at build time so the choice is saved even before any derived column,
-    filter or grid change triggers a full ``save_state``.
+    The single-field setters below route through this so none of them can drop
+    a sibling field — used at build time so a choice is saved even before any
+    derived column, filter or grid change triggers a full ``save_state``.
     """
     st = load_state(cache_dir)
-    save_state(
-        cache_dir,
-        grid_header=st["grid_header"],
-        derivations=st["derivations"],
-        removed=st["removed"],
-        filters=st["filters"],
-        grid_columns=st["grid_columns"],
-        grid_order=st["grid_order"],
-        grid_hidden=st["grid_hidden"],
-        part_method=method,
-        apply_mask=st["apply_mask"],
-        renames=st["renames"],
-    )
-
-
-def set_apply_mask(cache_dir: Path, value: bool) -> None:
-    """Update just the persisted Apply-mask flag, preserving the rest.
-
-    Used at build time so the choice is saved even before any derived column,
-    filter or grid change triggers a full ``save_state``.
-    """
-    st = load_state(cache_dir)
+    st.update(overrides)
     save_state(
         cache_dir,
         grid_header=st["grid_header"],
@@ -152,6 +137,22 @@ def set_apply_mask(cache_dir: Path, value: bool) -> None:
         grid_order=st["grid_order"],
         grid_hidden=st["grid_hidden"],
         part_method=st["part_method"],
-        apply_mask=bool(value),
+        apply_mask=st["apply_mask"],
+        correction=st["correction"],
         renames=st["renames"],
     )
+
+
+def set_part_method(cache_dir: Path, method: str) -> None:
+    """Persist just the part-assignment method, preserving the rest."""
+    _save_merged(cache_dir, part_method=method)
+
+
+def set_apply_mask(cache_dir: Path, value: bool) -> None:
+    """Persist just the Apply-mask flag, preserving the rest."""
+    _save_merged(cache_dir, apply_mask=bool(value))
+
+
+def set_correction(cache_dir: Path, correction: dict) -> None:
+    """Persist just the correction recipe, preserving the rest."""
+    _save_merged(cache_dir, correction=dict(correction or {}))

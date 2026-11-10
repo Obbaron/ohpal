@@ -314,9 +314,13 @@ class Backstage(QWidget):
         self.ds_form.set_exists(exists)
 
     def set_datastore_config(
-        self, config: dict, layers: list[int], columns: list[str] | None = None
+        self,
+        config: dict,
+        layers: list[int],
+        columns: list[str] | None = None,
+        renames: dict | None = None,
     ) -> None:
-        self.ds_form.set_config(config, layers, columns)
+        self.ds_form.set_config(config, layers, columns, renames)
 
     def set_loading(self, loading: bool) -> None:
         """Disable the load entry points while a load is in flight."""

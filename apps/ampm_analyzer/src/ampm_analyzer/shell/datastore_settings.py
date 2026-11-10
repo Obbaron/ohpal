@@ -15,8 +15,11 @@ only collects scope and emits ``buildRequested``.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+import json
+
+from PyQt6.QtCore import Qt, QSettings, pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -25,9 +28,10 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QLineEdit,
     QPushButton,
+    QRadioButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -43,6 +47,53 @@ _MISSING = "— not found —"
 # never removable from the grid (see controller.remove_columns).
 REQUIRED_COLUMNS = {"Demand X", "Demand Y", "Start time", "layer", "Z"}
 _ALWAYS = REQUIRED_COLUMNS
+
+# Correction is calibrated for exactly one machine + signal for now; the melt-pool
+# and LaserVIEW columns must both be loaded for it to run (see correction.py).
+_CORR_MACHINES = ["MAIN"]
+_CORR_COLUMN = "MeltVIEW melt pool (mean)"
+_CORR_LASER_COLUMN = "LaserVIEW (mean)"
+
+# Saved column default (which columns to import + their renames) — app-global, in
+# the same QSettings store the recents/geometry use.
+_SETTINGS_ORG = "AMPM"
+_SETTINGS_APP = "AMPM Analyzer"
+_DEFAULT_KEY = "datastore/column_default"
+
+
+class _ColumnRow(QWidget):
+    """One row of the import checklist: an include toggle (the column name) and an
+    optional rename box. Required columns are locked on but still renameable."""
+
+    def __init__(self, name: str, *, locked: bool = False) -> None:
+        super().__init__()
+        self.name = name
+        self.locked = locked
+        row = QHBoxLayout(self)
+        row.setContentsMargins(2, 1, 2, 1)
+        row.setSpacing(8)
+        self.chk = QCheckBox(name)
+        self.chk.setChecked(True)
+        self.chk.setMinimumWidth(190)
+        if locked:
+            self.chk.setEnabled(False)  # always imported
+            self.chk.setToolTip("Always imported (required column)")
+        row.addWidget(self.chk)
+        self.rename = QLineEdit()
+        self.rename.setPlaceholderText("rename…")
+        self.rename.setClearButtonEnabled(True)
+        row.addWidget(self.rename, 1)
+
+    def included(self) -> bool:
+        return self.chk.isChecked()
+
+    def new_name(self) -> str:
+        return self.rename.text().strip()
+
+    def set_state(self, *, included: bool, rename: str) -> None:
+        if not self.locked:
+            self.chk.setChecked(included)
+        self.rename.setText(rename or "")
 
 
 def _value_label(text: str) -> QLabel:
@@ -93,12 +144,38 @@ class DataStoreSettings(QWidget):
         return box
 
     def _columns_group(self) -> QGroupBox:
-        """Which columns the store loads. Always-required ones are locked on."""
+        """Which columns the store loads, and an optional rename for each. Always-
+        required ones are locked on. A set of includes + renames can be saved as
+        the default and is re-applied to every new build."""
         box = QGroupBox("Columns")
         v = QVBoxLayout(box)
-        self.columns_list = QListWidget()
-        self.columns_list.setFixedHeight(150)
-        v.addWidget(self.columns_list)
+        hint = QLabel("Tick to import; type a name to rename it on import.")
+        hint.setProperty("class", "Hint")
+        v.addWidget(hint)
+
+        self._col_rows: list[_ColumnRow] = []
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFixedHeight(170)
+        host = QWidget()
+        self._cols_layout = QVBoxLayout(host)
+        self._cols_layout.setContentsMargins(0, 0, 0, 0)
+        self._cols_layout.setSpacing(0)
+        self._cols_layout.addStretch(1)
+        area.setWidget(host)
+        v.addWidget(area)
+
+        btns = QHBoxLayout()
+        self.btn_save_default = QPushButton("Save as default")
+        self.btn_save_default.setToolTip(
+            "Remember this set of imported columns and renames for new builds")
+        self.btn_clear_default = QPushButton("Clear default")
+        btns.addWidget(self.btn_save_default)
+        btns.addWidget(self.btn_clear_default)
+        btns.addStretch(1)
+        v.addLayout(btns)
+        self.btn_save_default.clicked.connect(self._save_default)
+        self.btn_clear_default.clicked.connect(self._clear_default)
         return box
 
     def _processing_group(self) -> QGroupBox:
@@ -119,7 +196,56 @@ class DataStoreSettings(QWidget):
 
         self.chk_correction = QCheckBox("Apply correction")
         f.addRow("Correction", self.chk_correction)
+
+        # Correction detail — revealed by the toggle. Only the MAIN machine's
+        # MeltVIEW melt-pool (mean) signal is calibrated for now, so both
+        # selectors carry a single option (the UI is future-proofed for more).
+        # The corrected signal lands in a new named column or overrides the
+        # source column.
+        self.corr_detail = QWidget()
+        cd = QFormLayout(self.corr_detail)
+        cd.setContentsMargins(16, 2, 0, 0)
+
+        self.cmb_corr_machine = fix_combo(QComboBox())
+        self.cmb_corr_machine.addItems(_CORR_MACHINES)
+        cd.addRow("Machine", self.cmb_corr_machine)
+
+        self.cmb_corr_column = fix_combo(QComboBox())
+        self.cmb_corr_column.addItems([_CORR_COLUMN])
+        cd.addRow("Column", self.cmb_corr_column)
+
+        self.rb_corr_new = QRadioButton("New column")
+        self.rb_corr_override = QRadioButton("Override column")
+        self.rb_corr_new.setChecked(True)
+        self._corr_mode = QButtonGroup(self)
+        self._corr_mode.addButton(self.rb_corr_new)
+        self._corr_mode.addButton(self.rb_corr_override)
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.addWidget(self.rb_corr_new)
+        mode_row.addWidget(self.rb_corr_override)
+        mode_row.addStretch(1)
+        mode_w = QWidget()
+        mode_w.setLayout(mode_row)
+        cd.addRow("Output", mode_w)
+
+        self.txt_corr_name = QLineEdit()
+        self.txt_corr_name.setPlaceholderText("Corrected column name")
+        cd.addRow("New name", self.txt_corr_name)
+
+        f.addRow("", self.corr_detail)
+
+        self.chk_correction.toggled.connect(self._sync_correction_enabled)
+        self.rb_corr_new.toggled.connect(self._sync_correction_enabled)
+        self._sync_correction_enabled()
         return box
+
+    def _sync_correction_enabled(self) -> None:
+        """Gate the correction detail on the toggle, and the name box on new-col
+        mode (an override writes the source column, so no name is needed)."""
+        on = self.chk_correction.isChecked() and self.chk_correction.isEnabled()
+        self.corr_detail.setEnabled(on)
+        self.txt_corr_name.setEnabled(on and self.rb_corr_new.isChecked())
 
     def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
         """Enable/disable one Part-assignment dropdown item (greys it out)."""
@@ -164,27 +290,45 @@ class DataStoreSettings(QWidget):
 
     # -- state ---------------------------------------------------------
     def set_config(
-        self, config: dict, layers: list[int], columns: list[str] | None = None
+        self,
+        config: dict,
+        layers: list[int],
+        columns: list[str] | None = None,
+        renames: dict | None = None,
     ) -> None:
-        """Populate detected inputs, available columns, and scope bounds."""
+        """Populate detected inputs, available columns, and scope bounds.
+
+        ``renames`` (original -> display), when given, is a live build's current
+        rename map — reflected in the rows so a rebuild preserves it. When it's
+        None (a fresh setup) the saved column default is applied instead.
+        """
         def shown(value) -> str:
             return str(value) if value else _MISSING
 
-        # Columns to include — optional first, the locked always-required ones
-        # grouped together at the bottom.
-        self.columns_list.clear()
-        # part_id is assignment output (not a loadable source column) — never
-        # offer it in the load checklist even when assignment is already active.
+        # Rebuild the column rows — optional first, the locked always-required
+        # ones grouped at the bottom. part_id is assignment output (not a loadable
+        # source column), so it's never offered here.
+        for r in self._col_rows:
+            r.setParent(None)
+            r.deleteLater()
+        self._col_rows = []
         cols = [c for c in (columns or []) if c != "part_id"]
         optional = [c for c in cols if c not in _ALWAYS]
         required = [c for c in cols if c in _ALWAYS]
         for name in optional + required:
-            item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            if name in _ALWAYS:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self.columns_list.addItem(item)
+            row = _ColumnRow(name, locked=name in _ALWAYS)
+            self._col_rows.append(row)
+            self._cols_layout.insertWidget(self._cols_layout.count() - 1, row)
+
+        # Apply the live renames (existing build) or the saved default (fresh).
+        if renames is not None:
+            self._apply_column_state(included=None, renames=renames)
+        else:
+            default = self._load_default()
+            if default:
+                self._apply_column_state(
+                    included=set(default.get("included") or []),
+                    renames=default.get("renames") or {})
 
         self.lbl_source.setText(shown(config.get("SOURCE")))
         self.lbl_dhxml.setText(shown(config.get("DHXML")))
@@ -225,7 +369,18 @@ class DataStoreSettings(QWidget):
             self.cmb_parts.setCurrentIndex(0)  # None
             self.cmb_parts.setToolTip("No parts CSV or DHXML found")
 
-        self.chk_correction.setChecked(bool(config.get("APPLY_CORRECTION")))
+        # Correction needs both the melt-pool and LaserVIEW signals loaded.
+        cols_set = set(cols)
+        has_corr = _CORR_COLUMN in cols_set and _CORR_LASER_COLUMN in cols_set
+        self.chk_correction.setEnabled(has_corr)
+        self.chk_correction.setChecked(
+            has_corr and bool(config.get("APPLY_CORRECTION")))
+        self.chk_correction.setToolTip(
+            "" if has_corr
+            else f"Needs both '{_CORR_COLUMN}' and '{_CORR_LASER_COLUMN}'")
+        if not self.txt_corr_name.text().strip():
+            self.txt_corr_name.setText(f"{_CORR_COLUMN} corrected")
+        self._sync_correction_enabled()
 
     def set_exists(self, exists: bool) -> None:
         if exists:
@@ -246,18 +401,65 @@ class DataStoreSettings(QWidget):
 
     def columns(self) -> list[str]:
         """Checked columns (always-required ones are included)."""
-        out = []
-        for i in range(self.columns_list.count()):
-            item = self.columns_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                out.append(item.text())
-        return out
+        return [r.name for r in self._col_rows if r.included()]
+
+    def renames_map(self) -> dict:
+        """Original -> new name for every row given a rename (included or not;
+        a rename on an excluded column is simply ignored downstream)."""
+        return {r.name: r.new_name() for r in self._col_rows if r.new_name()}
+
+    def _apply_column_state(
+        self, *, included: set | None, renames: dict
+    ) -> None:
+        """Set each row's include + rename. ``included=None`` keeps the current
+        include state (used when reflecting a live build); otherwise a row is
+        ticked iff its name is in ``included`` (locked rows stay on)."""
+        for r in self._col_rows:
+            inc = True if included is None else (r.name in included)
+            r.set_state(included=inc, rename=renames.get(r.name, ""))
+
+    # -- saved column default (app-global) -----------------------------
+    @staticmethod
+    def _settings() -> QSettings:
+        return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+
+    def _load_default(self) -> dict | None:
+        raw = self._settings().value(_DEFAULT_KEY, "")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
+
+    def _save_default(self) -> None:
+        blob = {"included": self.columns(), "renames": self.renames_map()}
+        self._settings().setValue(_DEFAULT_KEY, json.dumps(blob))
+        n = len(blob["included"])
+        self.status.setText(
+            f"Saved {n} column{'s' if n != 1 else ''} + renames as the default "
+            "for new builds.")
+
+    def _clear_default(self) -> None:
+        self._settings().remove(_DEFAULT_KEY)
+        self.status.setText("Cleared the saved column default.")
 
     def recipe(self) -> dict:
         """Selected processing recipe (used when the store applies it later)."""
         return {
             "columns": self.columns(),
+            "renames": self.renames_map(),
             "apply_mask": self.chk_mask.isEnabled() and self.chk_mask.isChecked(),
             "part_method": self.cmb_parts.currentText().lower(),  # none/direct/…
-            "apply_correction": self.chk_correction.isChecked(),
+            "apply_correction": (
+                self.chk_correction.isEnabled()
+                and self.chk_correction.isChecked()),
+            "correction": {
+                "machine": self.cmb_corr_machine.currentText(),
+                "column": self.cmb_corr_column.currentText(),
+                "mode": (
+                    "override" if self.rb_corr_override.isChecked() else "new"),
+                "output": self.txt_corr_name.text().strip(),
+            },
         }

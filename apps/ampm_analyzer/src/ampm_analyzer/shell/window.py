@@ -287,6 +287,7 @@ class MainWindow(QMainWindow):
             grid_hidden=hidden,
             part_method=(self.controller.current_config() or {}).get("METHOD") or "",
             apply_mask=self.controller.apply_mask(),
+            correction=self.controller.correction(),
             renames=self.session.renames,
         )
 
@@ -303,22 +304,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
         self.backstage.refresh_recents()  # the just-loaded build is now recent
-        # Populate the DataStore setup form now, so it's ready if the user
-        # navigates back to it to rebuild — even when the build opened straight
-        # from cache (which skips the setup page on load).
-        self.backstage.set_datastore_config(
-            self.controller.current_config(), list(store.layers), list(store.columns)
-        )
-        self.backstage.set_datastore_exists(self.controller.cache_exists(store))
-        # Restore this build's saved UI state. set_store has just cleared the
-        # session's derivations/removed; put the saved ones back before the first
-        # query, so the controller's pipeline applies them to the first result.
+        # Restore this build's saved UI state first. set_store has just cleared
+        # the session's derivations/removed/renames; put the saved ones back
+        # before the first query, so the controller's pipeline applies them to
+        # the first result (and the setup form below can reflect the renames).
         self._grid_cache_dir = store.cache_dir
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
         self.session.removed = list(state["removed"])
         self.session.renames = dict(state["renames"])  # restore column renames
         self.controller.set_filters(state["filters"])  # restore persisted filters
+        # Populate the DataStore setup form now, so it's ready if the user
+        # navigates back to it to rebuild — even when the build opened straight
+        # from cache (which skips the setup page on load). Pass the restored
+        # renames so a rebuild preserves them instead of reapplying the default.
+        self.backstage.set_datastore_config(
+            self.controller.current_config(), list(store.layers),
+            list(store.columns), dict(self.session.renames),
+        )
+        self.backstage.set_datastore_exists(self.controller.cache_exists(store))
         self._pending_grid_state = state["grid_header"]
         self._pending_grid_layout = (
             state["grid_columns"], state["grid_order"], state["grid_hidden"])
