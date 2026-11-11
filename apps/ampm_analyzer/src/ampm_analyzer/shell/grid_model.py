@@ -62,6 +62,15 @@ class DataFrameModel(QAbstractTableModel):
         """Significant figures a float column renders at (default 4)."""
         return self._sigfigs.get(name, 4)
 
+    def clear_sigfigs(self) -> None:
+        """Back to the default precision for every column."""
+        if self._sigfigs:
+            self._sigfigs.clear()
+            if self.rowCount() and self.columnCount():
+                self.dataChanged.emit(
+                    self.index(0, 0),
+                    self.index(self.rowCount() - 1, self.columnCount() - 1))
+
     def set_sigfigs(self, name: str, n: int) -> None:
         """Set a float column's significant figures and repaint that column."""
         self._sigfigs[name] = max(1, min(12, int(n)))

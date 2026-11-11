@@ -329,8 +329,12 @@ class DataStoreSettings(QWidget):
         layers: list[int],
         columns: list[str] | None = None,
         renames: dict | None = None,
+        included: list[str] | None = None,
     ) -> None:
         """Populate detected inputs, available columns, and scope bounds.
+
+        ``included``, with ``renames``, is a live build's column selection —
+        ticked as it was built (None = every column).
 
         ``renames`` (original -> display), when given, is a live build's current
         rename map — reflected in the rows so a rebuild preserves it. When it's
@@ -355,7 +359,8 @@ class DataStoreSettings(QWidget):
         # default on a fresh setup: import the default set + required, with the
         # default renames prefilled.
         if renames is not None:
-            self._apply_column_state(included=None, renames=renames)
+            self._apply_column_state(
+                included=set(included) if included else None, renames=renames)
         else:
             self._apply_column_state(
                 included=set(_DEFAULT_IMPORT) | set(_ALWAYS),

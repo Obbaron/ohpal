@@ -12,6 +12,7 @@ Stage 2 adds the New / Open flows and the parquet-cache build:
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -152,7 +153,7 @@ class AppController(QObject):
         session state, then decide whether to query the cache or go to setup."""
         config, store, source_dir, thickness, _elapsed = result
         self._config = config
-        self._columns = None  # default to all; the setup page's build may narrow it
+        self._columns = None  # all, unless this build saved a selection (below)
         self._filter = []     # a fresh build starts unfiltered
         # Overlay the part-assignment method the user chose at build time
         # (persisted per-build) — config.toml doesn't record it, so without this
@@ -165,6 +166,10 @@ class AppController(QObject):
         # Restore the Apply-mask choice (also not in config.toml).
         self._apply_mask = bool(saved_state.get("apply_mask"))
         self._correction = dict(saved_state.get("correction") or {})
+        # Load the same source columns the build was made with, not all of them.
+        kept = [c for c in saved_state.get("load_columns") or []
+                if c in store.columns]
+        self._columns = kept or None
         cached, _total = self._cache_status(store)
         # Record this build in the recents list (before set_store so the backstage
         # refresh triggered by the load already sees it).
@@ -259,8 +264,10 @@ class AppController(QObject):
         # Applied as display names in _shape (after mask/correct, which use raw
         # names); persisted via the normal _save_ui path.
         self.session.renames = dict((recipe or {}).get("renames") or {})
+        uistate.set_renames(store.cache_dir, self.session.renames)
         # Restrict later queries to the columns the user kept (None = all).
         self._columns = (recipe or {}).get("columns") or None
+        uistate.set_load_columns(store.cache_dir, self._columns)
         if scope is None:
             layers = list(store.layers)
         else:
@@ -452,7 +459,7 @@ class AppController(QObject):
         self._start_query(self.session.store, req["span"], req.get("sample_to"))
 
     def _begin_query(self, store) -> None:
-        first = store.layers[0]
+        first = self._landing_layer(store)
         self._busy = False  # release the load guard; the query queue takes over
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)
@@ -513,6 +520,15 @@ class AppController(QObject):
         self._start_next()  # run the next queued request, if any
 
     def _deliver_grid(self, result) -> None:
+        # The mask can arrive while this query was in flight and rule its layer
+        # out (nothing of the part there). Don't show an empty layer the selector
+        # can't even reach — go to the lowest layer that has data instead.
+        avail = self.available_layers()
+        if avail and result.layers[0] not in avail:
+            target = self._landing_layer()
+            self._request((target, target), self._deliver_grid,
+                          f"layer {target}", coalesce=True)
+            return
         self.session.current_layer = result.layers[0]
         self._base_df = result.df  # keep the raw output for re-shaping
         self._publish_grid(result.layers)
@@ -776,6 +792,23 @@ class AppController(QObject):
                 return masked
         return layers
 
+    def _landing_layer(self, store=None) -> int:
+        """The layer the Data tab opens on: the lowest available layer that is
+        already in the DataStore — never layer 1 by default, which may be masked
+        away or not built. Falls back to the lowest available layer if none of
+        them is cached yet."""
+        store = store or self.session.store
+        avail = self.available_layers() or list(store.layers)
+        try:
+            present = {e.name for e in os.scandir(store.cache_dir)
+                       if e.name.endswith(".parquet")}
+        except OSError:
+            present = set()
+        for layer in avail:
+            if store._cache_path(layer).name in present:
+                return layer
+        return avail[0]
+
     def _mask(self, df):
         """Drop rows outside the STL layer mask, when masking is active and the
         mask is built. Uses the raw source columns, so this runs before rename.
@@ -851,7 +884,7 @@ class AppController(QObject):
         avail = self.available_layers()
         cur = self.session.current_layer
         if avail and cur is not None and cur not in avail:
-            self.show_layer(avail[0])
+            self.show_layer(self._landing_layer())
         else:
             self.refresh_grid()
         try:
@@ -871,6 +904,10 @@ class AppController(QObject):
         self._mask_worker = None
 
     # -- correction (MeltVIEW melt-pool XY-bias) ------------------------
+    def load_columns(self) -> list[str]:
+        """The source columns this build loads (persisted); [] means all."""
+        return list(self._columns or [])
+
     def correction(self) -> dict:
         """The correction recipe for this build (persisted). ``on``=False / {} is
         off; else keys machine/column/mode/output."""
@@ -1050,7 +1087,7 @@ class AppController(QObject):
         # Cache built — show the first layer that carries data. With a cached
         # mask already in hand this is the first masked layer; otherwise the
         # first layer, and _on_mask_done re-lands once the mask arrives.
-        first = (self.available_layers() or list(store.layers))[0]
+        first = self._landing_layer(store)
         self._busy = False
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)

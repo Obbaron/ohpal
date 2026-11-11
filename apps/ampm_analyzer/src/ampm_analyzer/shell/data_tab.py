@@ -507,9 +507,11 @@ class DataTab(QWidget):
             cur_vis = header.visualIndex(logical[name])
             if cur_vis != target_vis:
                 header.moveSection(cur_vis, target_vis)
-        for name in default_hidden:
-            if name in logical:
-                header.setSectionHidden(logical[name], True)
+        # Set every column's visibility, not just the hidden ones: the header
+        # can carry hidden flags from a previous layout (a rebuilt DataStore
+        # reuses this grid), and those stick to a slot, not a column name.
+        for name, i in logical.items():
+            header.setSectionHidden(i, name in default_hidden)
 
     def _on_header_changed(self, *args) -> None:
         if self._applying:
@@ -566,6 +568,11 @@ class DataTab(QWidget):
             return
         self.table.horizontalHeader().setSectionHidden(cols.index(name), not visible)
         self._on_header_changed()
+
+    def clear_column_settings(self) -> None:
+        """Forget per-column display settings (significant figures) — a rebuilt
+        DataStore starts from the defaults."""
+        self.model.clear_sigfigs()
 
     def apply_hidden(self, hidden: set[str]) -> None:
         """Hide exactly the named columns (show the rest), without emitting

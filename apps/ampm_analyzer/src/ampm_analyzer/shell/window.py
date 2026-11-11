@@ -300,6 +300,7 @@ class MainWindow(QMainWindow):
             part_method=(self.controller.current_config() or {}).get("METHOD") or "",
             apply_mask=self.controller.apply_mask(),
             correction=self.controller.correction(),
+            load_columns=self.controller.load_columns(),
             renames=self.session.renames,
         )
 
@@ -334,6 +335,7 @@ class MainWindow(QMainWindow):
         self.backstage.set_datastore_config(
             self.controller.current_config(), list(store.layers),
             list(store.columns), dict(self.session.renames),
+            self.controller.load_columns() or None,
         )
         self.backstage.set_datastore_exists(self.controller.cache_exists(store))
         self._pending_grid_state = state["grid_header"]
@@ -343,11 +345,12 @@ class MainWindow(QMainWindow):
             self._data_tab.set_persisted_state(
                 self._pending_grid_state, *self._pending_grid_layout)
 
-    def _on_setup_required(self, payload) -> None:
-        config, layers, columns, exists = payload
-        # (Re)building a DataStore via setup = a fresh start: drop any per-build
-        # UI state loaded from this cache dir (derived/removed columns, grid
-        # layout) and delete its file, so a stale layout isn't restored.
+    def _reset_build_state(self) -> None:
+        """Drop everything remembered for this build's DataStore — derived and
+        removed columns, filters, the grid's column layout and display settings,
+        the undo history and the saved state file — so a (re)build starts
+        clean. The build recipe (mask, parts, correction, renames) is written
+        afresh by the build itself."""
         self._reset_history()
         self.session.derivations = []
         self.session.removed = []
@@ -356,8 +359,16 @@ class MainWindow(QMainWindow):
         self._pending_grid_layout = ([], [], [])
         if self._data_tab is not None:
             self._data_tab.set_persisted_state(None)
+            self._data_tab.clear_column_settings()
         if self._grid_cache_dir is not None:
             uistate.clear(self._grid_cache_dir)
+
+    def _on_setup_required(self, payload) -> None:
+        config, layers, columns, exists = payload
+        # (Re)building a DataStore via setup = a fresh start: drop any per-build
+        # UI state loaded from this cache dir (derived/removed columns, grid
+        # layout) and delete its file, so a stale layout isn't restored.
+        self._reset_build_state()
         self.backstage.set_loading(False)
         self.show_progress(False)
         self.backstage.set_datastore_config(config, layers, columns)
@@ -372,7 +383,9 @@ class MainWindow(QMainWindow):
         # to refresh the toolbar (Show/hide columns menu) rather than treating
         # the columns as unchanged.
         self._last_columns = None
-        self._reset_history()  # a rebuild starts a fresh history
+        # A (re)build is a clean slate — also when rebuilding a DataStore that
+        # is already open, which never passes through the setup-required reset.
+        self._reset_build_state()
         self.controller.build_datastore(
             form.scope(), form.thickness(), form.recipe()
         )

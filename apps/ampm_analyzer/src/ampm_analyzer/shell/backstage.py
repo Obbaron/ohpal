@@ -320,8 +320,9 @@ class Backstage(QWidget):
         layers: list[int],
         columns: list[str] | None = None,
         renames: dict | None = None,
+        included: list[str] | None = None,
     ) -> None:
-        self.ds_form.set_config(config, layers, columns, renames)
+        self.ds_form.set_config(config, layers, columns, renames, included)
 
     def set_loading(self, loading: bool) -> None:
         """Disable the load entry points while a load is in flight."""

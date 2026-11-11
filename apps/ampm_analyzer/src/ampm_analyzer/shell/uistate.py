@@ -29,6 +29,7 @@ def _empty() -> dict:
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
         "part_method": "", "apply_mask": False, "correction": {}, "renames": {},
+        "load_columns": [],
     }
 
 
@@ -61,6 +62,9 @@ def load_state(cache_dir: Path) -> dict:
             # Correction recipe (on/machine/column/mode/output), also absent from
             # config.toml, persisted here and re-applied on open.
             "correction": data.get("correction") or {},
+            # The source columns chosen at build time ([] = all). Not in
+            # config.toml either; without it a reopened build loads every column.
+            "load_columns": data.get("load_columns") or [],
             # Column renames: original datastore name -> current display name.
             "renames": data.get("renames") or {},
         }
@@ -89,6 +93,7 @@ def save_state(
     part_method: str | None = None,
     apply_mask: bool | None = None,
     correction: dict | None = None,
+    load_columns: list | None = None,
     renames: dict | None = None,
 ) -> None:
     """Write the full UI state. Best-effort — never blocks on failure."""
@@ -111,6 +116,7 @@ def save_state(
             "part_method": part_method or "",
             "apply_mask": bool(apply_mask),
             "correction": dict(correction or {}),
+            "load_columns": list(load_columns or []),
             "renames": dict(renames or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
@@ -139,6 +145,7 @@ def _save_merged(cache_dir: Path, **overrides) -> None:
         part_method=st["part_method"],
         apply_mask=st["apply_mask"],
         correction=st["correction"],
+        load_columns=st["load_columns"],
         renames=st["renames"],
     )
 
@@ -151,6 +158,16 @@ def set_part_method(cache_dir: Path, method: str) -> None:
 def set_apply_mask(cache_dir: Path, value: bool) -> None:
     """Persist just the Apply-mask flag, preserving the rest."""
     _save_merged(cache_dir, apply_mask=bool(value))
+
+
+def set_renames(cache_dir: Path, renames: dict) -> None:
+    """Persist just the column renames, preserving the rest."""
+    _save_merged(cache_dir, renames=dict(renames or {}))
+
+
+def set_load_columns(cache_dir: Path, columns: list | None) -> None:
+    """Persist just the build's column selection, preserving the rest."""
+    _save_merged(cache_dir, load_columns=list(columns or []))
 
 
 def set_correction(cache_dir: Path, correction: dict) -> None:
