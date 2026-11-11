@@ -78,6 +78,17 @@ class AppController(QObject):
         # part_ids the active part assignment can put on the data (None = no
         # assignment) — lets an import report how many parts it matched.
         self._part_ids: set[str] | None = None
+        # A one-off background job (Create Excel, DBSCAN part assignment) — kept
+        # separate from the query thread so neither blocks the other.
+        self._side_thread: QThread | None = None
+        self._side_worker = None
+        # DBSCAN part assignment: a long clustering job on its own thread.
+        # ``_dbscan_wanted`` is "load" (reuse cached labels if they still match)
+        # or "force" (a rebuild: cluster again), set when the method is chosen
+        # and acted on once the layers are in the DataStore.
+        self._dbscan_thread: QThread | None = None
+        self._dbscan_worker = None
+        self._dbscan_wanted: str | None = None
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
@@ -111,6 +122,67 @@ class AppController(QObject):
         # dialog can fall back to it next time even with no recents.
         self._recents.set_last_browse_dir(str(Path(chosen).parent))
         self._load(Path(chosen), mode)
+
+    # -- side jobs (their own thread; never block or queue behind a query) --
+    def _start_side(self, worker, on_done, on_error) -> None:
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(on_done)
+        worker.error.connect(on_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_side)
+        self._side_thread, self._side_worker = thread, worker
+        thread.start()
+
+    def _clear_side(self) -> None:
+        self._side_thread = None
+        self._side_worker = None
+
+    # -- Create Excel from AMPM ----------------------------------------
+    def create_excel(self) -> None:
+        """Pick a build folder and write that one build's samples-template
+        workbook to ``<build>/exports/<build>.xlsx``. Works on any build folder
+        — it doesn't need (or create) a DataStore."""
+        if self._side_thread is not None:
+            self._window.set_status("Still working on the previous job…")
+            return
+        chosen = QFileDialog.getExistingDirectory(
+            self._window, "Create Excel from a build", self._recents.start_dir())
+        if not chosen:
+            return
+        self._recents.set_last_browse_dir(str(Path(chosen).parent))
+        build_root = Path(chosen)
+        name = re.sub(r"[^\w.\-() ]+", "_", build_root.name).strip() or "build"
+        out = build_root / "exports" / f"{name}.xlsx"
+        if out.exists() and not _ask(
+            self._window, "Replace the existing Excel?",
+            f"{out.name} is already in this build's exports folder. Replacing "
+            "it discards anything filled in there.",
+            ok_text="Replace", cancel_text="Cancel",
+        ):
+            return
+        from .workers import TemplateWorker
+
+        self._window.set_status(f"Creating the Excel for {build_root.name}…")
+        self._start_side(
+            TemplateWorker(build_root, out),
+            self._on_template_done, self._on_template_error)
+
+    def _on_template_done(self, result) -> None:
+        out, kind = result
+        note = ("" if kind == "full" else
+                " No BuildStarted .dhxml was found, so this is the reduced "
+                "template: part positions from the parts CSV, without bounds.")
+        self._window.set_status(f"Created {out.name} in {out.parent}.")
+        _tell(self._window, "Excel created", f"{out}{note}")
+
+    def _on_template_error(self, message: str) -> None:
+        self._window.set_status("The Excel was not created.")
+        _tell(self._window, "Couldn't create the Excel", message)
 
     # -- load/prepare --------------------------------------------------
     def _load(self, build_root: Path, mode: str) -> None:
@@ -172,6 +244,9 @@ class AppController(QObject):
         # Load the same source columns the build was made with, not all of them.
         kept = [c for c in saved_state.get("load_columns") or []
                 if c in store.columns]
+        if kept:  # required columns always load, even if added since the build
+            kept += [c for c in store.columns
+                     if c in REQUIRED_COLUMNS and c not in kept]
         self._columns = kept or None
         cached, _total = self._cache_status(store)
         # Record this build in the recents list (before set_store so the backstage
@@ -242,13 +317,9 @@ class AppController(QObject):
             self.session.layer_thickness = thickness
         # Part assignment (dhxml → part_id) per the chosen recipe, else config.
         method = (recipe or {}).get("part_method") or self._config.get("METHOD")
-        if (method or "").lower() == "dbscan":
-            _tell(
-                self._window, "Part assignment",
-                "DBSCAN part assignment isn't implemented yet.\n\n"
-                "Building without a part assignment.",
-            )
         self._apply_part_assignment(store, method)
+        if self._dbscan_wanted:
+            self._dbscan_wanted = "force"  # a (re)build clusters afresh
         # Persist the choice (config.toml doesn't record it) and keep the
         # in-memory config in step, so reopening this cached build re-applies it.
         self._config["METHOD"] = method
@@ -319,11 +390,20 @@ class AppController(QObject):
 
         ``dhxml`` → bounding-box containment from the build's .dhxml.
         ``direct`` → nearest part centre from the QuantAM parts CSV (capped by
-        the config's MAX_DISTANCE_MM). Any other method (incl. ``dbscan``,
-        not yet implemented) clears assignment. A load failure is surfaced but
+        the config's MAX_DISTANCE_MM). ``dbscan`` → per-point labels from a
+        clustering run that needs the layers built first, so it is only *asked
+        for* here (``_dbscan_wanted``) and started by
+        ``_start_dbscan_if_wanted``; until it finishes there is no part_id. Any
+        other method clears assignment. A load failure is surfaced but
         non-fatal — the build proceeds without part_id.
         """
         m = (method or "").lower()
+        self._dbscan_wanted = None
+        if m == "dbscan" and (self._config or {}).get("PARTS_CSV"):
+            store.set_part_assignment(None)
+            self._part_ids = None
+            self._dbscan_wanted = "load"
+            return
         if m == "dhxml":
             dhxml = (self._config or {}).get("DHXML")
             if dhxml:
@@ -492,6 +572,7 @@ class AppController(QObject):
     def _begin_query(self, store) -> None:
         first = self._landing_layer(store)
         self._busy = False  # release the load guard; the query queue takes over
+        self._start_dbscan_if_wanted(store)
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)
 
@@ -1122,6 +1203,80 @@ class AppController(QObject):
         self._busy = False
         self._request((first, first), self._deliver_grid, f"layer {first}",
                       coalesce=True)
+        self._start_dbscan_if_wanted(store)
+
+    # -- DBSCAN part assignment (long-running, its own thread) ----------
+    def _start_dbscan_if_wanted(self, store) -> None:
+        if not self._dbscan_wanted or self._dbscan_thread is not None:
+            return  # nothing asked for / one is running (retried when it ends)
+        try:
+            present = {e.name for e in os.scandir(store.cache_dir)
+                       if e.name.endswith(".parquet")}
+        except OSError:
+            present = set()
+        layers = [L for L in store.layers if store._cache_path(L).name in present]
+        if not layers:
+            return
+        mode, self._dbscan_wanted = self._dbscan_wanted, None
+        from .workers import DbscanWorker
+
+        thread = QThread(self)
+        worker = DbscanWorker(
+            store, self._config, layers,
+            thickness=self.session.layer_thickness, force=(mode == "force"))
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda res, s=store: self._on_dbscan_done(s, res))
+        worker.error.connect(lambda msg, s=store: self._on_dbscan_error(s, msg))
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_dbscan)
+        self._dbscan_thread, self._dbscan_worker = thread, worker
+        self._window.set_background_job(
+            "DBSCAN part assignment running — this can take a while…")
+        thread.start()
+
+    def _clear_dbscan(self) -> None:
+        self._dbscan_thread = None
+        self._dbscan_worker = None
+        self._window.set_background_job(None)
+        # Another build asked for DBSCAN while that one was running.
+        if self._dbscan_wanted and self.session.store is not None:
+            self._start_dbscan_if_wanted(self.session.store)
+
+    def _on_dbscan_done(self, store, result) -> None:
+        if store is not self.session.store:
+            return  # the build changed while it ran — the labels aren't ours
+        labels, info = result
+        store.set_part_assignment(labels, method="labels")
+        self._part_ids = {
+            derive.norm_key(v) for v in labels["part_id"].unique().to_list()
+            if v is not None}
+        share = info.get("n_labelled", 0) / max(1, info.get("n_points", 1))
+        note = (
+            f"DBSCAN assigned {info.get('n_parts', 0)} parts "
+            f"({share:.0%} of points)"
+            + (" — read from this build's saved result." if info.get("from_cache")
+               else "."))
+        self._window.set_status(note)
+
+        def deliver(result) -> None:
+            self._deliver_grid(result)
+            # The reload's own "Loaded layer" line would hide the outcome.
+            self._window.set_status(note, log=False)
+
+        # part_id is attached by the query, so fetch the grid's layer again.
+        cur = self.session.current_layer
+        layer = cur if cur is not None else self._landing_layer(store)
+        self._request((layer, layer), deliver, f"layer {layer}", coalesce=True)
+
+    def _on_dbscan_error(self, store, message: str) -> None:
+        if store is not self.session.store:
+            return
+        self._window.set_status("DBSCAN part assignment failed — no part column.")
+        _tell(self._window, "DBSCAN part assignment failed", message)
 
     def _on_worker_error(self, message: str) -> None:
         self._busy = False
@@ -1136,11 +1291,31 @@ class AppController(QObject):
 
     # -- shutdown ------------------------------------------------------
     def shutdown(self) -> None:
-        if self._worker is not None and hasattr(self._worker, "cancel"):
-            self._worker.cancel()
-        if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait(3000)
-        if self._mask_thread is not None:
-            self._mask_thread.quit()
-            self._mask_thread.wait(3000)
+        """Stop any running worker thread. Safe to call at any moment: a thread
+        that has just finished deletes its Qt objects before our references are
+        cleared, and touching one then raises RuntimeError — which, raised from
+        the window's closeEvent, would abort the app on exit."""
+        try:
+            if self._worker is not None and hasattr(self._worker, "cancel"):
+                self._worker.cancel()
+        except RuntimeError:  # worker already deleted
+            pass
+        for thread in (self._thread, self._mask_thread, self._side_thread):
+            if thread is None:
+                continue
+            try:
+                thread.quit()
+                thread.wait(3000)
+            except RuntimeError:  # thread already deleted
+                pass
+        # A clustering run can't be interrupted politely and may have minutes to
+        # go; on exit it is stopped outright (its result cache is written only
+        # at the very end, so nothing half-written is left behind).
+        try:
+            if self._dbscan_thread is not None:
+                self._dbscan_thread.quit()
+                if not self._dbscan_thread.wait(500):
+                    self._dbscan_thread.terminate()
+                    self._dbscan_thread.wait(2000)
+        except RuntimeError:
+            pass

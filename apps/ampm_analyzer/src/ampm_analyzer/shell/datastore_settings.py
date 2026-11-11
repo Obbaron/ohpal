@@ -43,7 +43,10 @@ _MISSING = "— not found —"
 
 # Always loaded (coordinates + layer/Z + the mask-keep key): locked on, and
 # never removable from the grid (see controller.remove_columns).
-REQUIRED_COLUMNS = {"Demand X", "Demand Y", "Start time", "layer", "Z"}
+# LaserVIEW rides along because the melt-pool correction needs it, and a
+# default import that left it out silently disabled Correction.
+REQUIRED_COLUMNS = {"Demand X", "Demand Y", "Start time", "layer", "Z",
+                    "LaserVIEW (mean)"}
 _ALWAYS = REQUIRED_COLUMNS
 
 # Correction is calibrated for exactly one machine + signal for now; the melt-pool
@@ -221,7 +224,17 @@ class DataStoreSettings(QWidget):
         parts_w = QWidget()
         parts_w.setLayout(parts_row)
         f.addRow("Part assignment", parts_w)
+        # DBSCAN is never preselected; picking it shows what it costs.
+        self.lbl_dbscan_warn = QLabel(
+            "DBSCAN is computationally expensive: it clusters every point of "
+            "the build and will take a while (and a lot of memory) on a full "
+            "build. Parts appear once it finishes.")
+        self.lbl_dbscan_warn.setWordWrap(True)
+        self.lbl_dbscan_warn.setStyleSheet("color: #c77700;")
+        self.lbl_dbscan_warn.setVisible(False)
+        f.addRow("", self.lbl_dbscan_warn)
         self.chk_parts.toggled.connect(self._sync_parts_enabled)
+        self.cmb_parts.currentIndexChanged.connect(self._sync_parts_enabled)
 
         self.chk_correction = QCheckBox("Apply correction")
         f.addRow("Correction", self.chk_correction)
@@ -278,8 +291,10 @@ class DataStoreSettings(QWidget):
 
     def _sync_parts_enabled(self) -> None:
         """The method dropdown is live only while part assignment is toggled on."""
-        self.cmb_parts.setEnabled(
-            self.chk_parts.isChecked() and self.chk_parts.isEnabled())
+        on = self.chk_parts.isChecked() and self.chk_parts.isEnabled()
+        self.cmb_parts.setEnabled(on)
+        self.lbl_dbscan_warn.setVisible(
+            on and self.cmb_parts.currentText() == "DBSCAN")
 
     def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
         """Enable/disable one Part-assignment dropdown item (greys it out)."""
@@ -401,6 +416,8 @@ class DataStoreSettings(QWidget):
             "" if parts_available else "No parts CSV or DHXML found")
         if parts_available:
             method = str(config.get("METHOD", "direct")).lower()
+            if method == "dbscan" and renames is None:
+                method = "direct"  # never the default; only a live build's own choice
             index = {"direct": 0, "dhxml": 1, "dbscan": 2}.get(method, 0)
             if not self._part_option_enabled(index):
                 index = 1 if has_dhxml else 0  # fall back to what's available

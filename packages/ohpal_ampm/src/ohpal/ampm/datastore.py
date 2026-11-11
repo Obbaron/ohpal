@@ -168,6 +168,12 @@ class DataStore:
         from ``QuantAMParts(...).parent_parts()``, and each row takes its
         nearest part's id; ``max_distance_mm`` (if given) nulls rows farther
         than that from any part. Pass ``None`` to disable.
+
+        With ``method="labels"`` the table is not one row per part but one row
+        per labelled *point* — ``layer``, ``Start time``, ``part_id`` (e.g. the
+        outcome of a DBSCAN clustering) — and each queried row takes the id
+        recorded for its own (layer, Start time); points without a label get
+        null. The keys must be unique.
         """
         self._parts_table = parts_table
         self._parts_method = (method or "bbox").lower()
@@ -367,7 +373,9 @@ class DataStore:
             # them.
             scan = [c for c in keep if c != "part_id"]
             if want_part:
-                scan = list(dict.fromkeys([*scan, "Demand X", "Demand Y"]))
+                needs = (["Start time"] if self._parts_method == "labels"
+                         else ["Demand X", "Demand Y"])
+                scan = list(dict.fromkeys([*scan, *needs]))
             lf = lf.select(scan)
 
         # Bound memory before collect: count cheaply, then take an even stride
@@ -382,7 +390,17 @@ class DataStore:
         df = lf.collect()
 
         if want_part:
-            if self._parts_method == "nearest":
+            if self._parts_method == "labels":
+                keys = ["layer", "Start time"]
+                labels = self._parts_table.select([*keys, "part_id"])
+                # Only this query's layers, and keys typed like the data's.
+                labels = labels.filter(
+                    pl.col("layer").is_in(df["layer"].unique().to_list()))
+                labels = labels.with_columns(
+                    *[pl.col(k).cast(df.schema[k]) for k in keys],
+                    pl.col("part_id").cast(pl.Utf8))
+                df = df.join(labels, on=keys, how="left", maintain_order="left")
+            elif self._parts_method == "nearest":
                 from ohpal.ampm.parts import assign_nearest_part
 
                 df = assign_nearest_part(

@@ -31,7 +31,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 
 FORMAT = "ampm-macro"
 VERSION = 1
@@ -67,6 +67,31 @@ _SCHEMA: dict[str, dict] = {
                      "pairs": ("values",), "drop": ("path",)},
 }
 OPS = frozenset(_SCHEMA)
+
+
+# -- recently used macro files (app-wide, newest first) -----------------
+_RECENT_KEY = "macros/recent"
+_RECENT_MAX = 8
+
+
+def _settings() -> QSettings:
+    return QSettings("AMPM", "AMPM Analyzer")  # the store recents/geometry use
+
+
+def recent() -> list[str]:
+    """Recently saved / run macro files that still exist, newest first."""
+    try:
+        paths = json.loads(_settings().value(_RECENT_KEY, "[]") or "[]")
+    except (ValueError, TypeError):
+        return []
+    return [p for p in paths if isinstance(p, str) and Path(p).is_file()]
+
+
+def remember(path) -> None:
+    """Put a macro file at the top of the recent list."""
+    path = str(Path(path))
+    paths = [path] + [p for p in recent() if p != path]
+    _settings().setValue(_RECENT_KEY, json.dumps(paths[:_RECENT_MAX]))
 
 
 class MacroError(ValueError):

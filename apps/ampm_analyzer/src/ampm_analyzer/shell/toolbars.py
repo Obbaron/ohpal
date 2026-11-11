@@ -184,6 +184,7 @@ def populate_data(
     recording: bool = False,
     on_macro_record=None,
     on_macro_run=None,
+    recent_macros: list[tuple[str, str]] | None = None,
 ) -> None:
     columns = columns or []
 
@@ -313,11 +314,23 @@ def populate_data(
         rec = _action(toolbar, "Record a macro", "macro_record", color)
     if on_macro_record is not None:
         rec.triggered.connect(lambda: on_macro_record())
-    run = _action(toolbar, "Run a macro from a file", "macro_run", color)
-    if on_macro_run is not None and not recording:
-        run.triggered.connect(lambda: on_macro_run())
+    if recent_macros and on_macro_run is not None and not recording:
+        # Recently used macros one click away; Browse… for any other file.
+        run_btn = _menu_button(toolbar, "Run a macro", "macro_run", color)
+        menu = run_btn.menu()
+        menu.setToolTipsVisible(True)
+        for label, path in recent_macros:
+            act = menu.addAction(label)
+            act.setToolTip(path)
+            act.triggered.connect(lambda _=False, p=path: on_macro_run(p))
+        menu.addSeparator()
+        menu.addAction("Browse…").triggered.connect(lambda: on_macro_run())
     else:
-        run.setEnabled(False)
+        run = _action(toolbar, "Run a macro from a file", "macro_run", color)
+        if on_macro_run is not None and not recording:
+            run.triggered.connect(lambda: on_macro_run())
+        else:
+            run.setEnabled(False)
 
 
 # -- Plot toolset ------------------------------------------------------

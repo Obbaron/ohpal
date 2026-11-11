@@ -201,9 +201,7 @@ class MainWindow(QMainWindow):
         self.backstage.newRequested.connect(self.controller.new_build)
         self.backstage.openRequested.connect(self.controller.open_build)
         self.backstage.openRecentRequested.connect(self.controller.open_recent)
-        self.backstage.createExcelRequested.connect(
-            lambda: self.set_status("Create Excel from AMPM — not wired yet")
-        )
+        self.backstage.createExcelRequested.connect(self.controller.create_excel)
         self.backstage.datastoreBuildRequested.connect(self._on_build_requested)
         self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
@@ -352,6 +350,10 @@ class MainWindow(QMainWindow):
         clean. The build recipe (mask, parts, correction, renames) is written
         afresh by the build itself."""
         self._reset_history()
+        # Plots drawn from the old DataStore are stale now; close them. (Popped-
+        # out plot windows are self-contained copies and are left alone.)
+        for tab in list(self._plot_tabs):
+            self._close_plot(tab)
         self.session.derivations = []
         self.session.removed = []
         self.controller.set_filters([])
@@ -717,6 +719,12 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         sb.addWidget(self._progress)
 
+        # Shown while a long background job (DBSCAN part assignment) runs.
+        self._job_label = QLabel("")
+        self._job_label.setStyleSheet("color: palette(highlight); font-weight: 600;")
+        self._job_label.setVisible(False)
+        sb.addPermanentWidget(self._job_label)
+
         # Shown only while a macro is being recorded.
         self._rec_label = QLabel("")
         self._rec_label.setStyleSheet("color: #d93025; font-weight: 600;")
@@ -730,9 +738,10 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self._log_btn)
         self._log_window = None
 
-    def set_status(self, text: str) -> None:
+    def set_status(self, text: str, *, log: bool = True) -> None:
         self._log.setText(text)
-        self.log_bus.log_line(text)
+        if log:  # log=False re-shows a line that is already in the log
+            self.log_bus.log_line(text)
 
     def _open_log(self) -> None:
         from .logconsole import LogWindow
@@ -873,6 +882,7 @@ class MainWindow(QMainWindow):
                 recording=self.recorder.active,
                 on_macro_record=self._toggle_macro_recording,
                 on_macro_run=self._run_macro,
+                recent_macros=[(macros.macro_name(p), p) for p in macros.recent()],
             )
         else:
             p = self._active_plot
@@ -1180,6 +1190,13 @@ class MainWindow(QMainWindow):
             btn.setEnabled(can)
             btn.setToolTip(f"{word}: {label} ({keys})" if can else f"{word} ({keys})")
 
+    def set_background_job(self, text: str | None) -> None:
+        """Show (or clear, with None) a standing note in the status bar for a
+        long job that runs behind the app — ordinary status messages come and
+        go without hiding it."""
+        self._job_label.setText(text or "")
+        self._job_label.setVisible(bool(text))
+
     def _reset_history(self) -> None:
         """A build was loaded / set up / rebuilt: the undo history starts over,
         and a macro recording in progress can't continue across builds."""
@@ -1243,14 +1260,24 @@ class MainWindow(QMainWindow):
                 tell(self, "Couldn't save the macro", str(exc))
                 continue
             self._macro_dir = str(out.parent)
+            self._remember_macro(out)
             self.set_status(
                 f"Saved macro '{macros.macro_name(out)}' "
                 f"({n} step{'s' if n != 1 else ''}) to {out.name}.")
             return
 
-    def _run_macro(self) -> None:
-        """Pick a macro file, preview its steps, then run them as one
-        all-or-nothing action (a single undo step)."""
+    def _remember_macro(self, path) -> None:
+        """Add a macro file to the recent list and refresh the Run menu. The
+        toolbar rebuild is deferred: this can be reached from that menu itself."""
+        from PyQt6.QtCore import QTimer
+
+        macros.remember(path)
+        QTimer.singleShot(0, self.refresh_data_layers)
+
+    def _run_macro(self, path: str | None = None) -> None:
+        """Run a macro — ``path`` from the recent list, or picked from a file
+        dialog: check it, preview its steps, then run them as one all-or-nothing
+        action (a single undo step)."""
         from pathlib import Path
         from PyQt6.QtWidgets import QFileDialog
 
@@ -1259,16 +1286,18 @@ class MainWindow(QMainWindow):
         if self._data_tab is None or self.session.result is None:
             self.set_status("Load a build before running a macro.")
             return
-        path, _sel = QFileDialog.getOpenFileName(
-            self, "Run macro", self._macro_start_dir(), macros.FILE_FILTER)
         if not path:
-            return
+            path, _sel = QFileDialog.getOpenFileName(
+                self, "Run macro", self._macro_start_dir(), macros.FILE_FILTER)
+            if not path:
+                return
         self._macro_dir = str(Path(path).parent)
         try:
             name, steps = macros.load(path)
         except macros.MacroError as exc:
             MacroIssuesDialog(macros.macro_name(path), [str(exc)], self).exec()
             return
+        self._remember_macro(path)
         # Describe the steps under this build's column names.
         descs = [
             macros.describe(s["op"], macros.resolve(

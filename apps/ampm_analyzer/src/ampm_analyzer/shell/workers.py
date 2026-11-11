@@ -67,6 +67,225 @@ class LoadWorker(QObject):
                  (time.perf_counter() - t) * 1000))
 
 
+def find_build_inputs(build_root: Path) -> tuple[Path | None, Path | None]:
+    """The build's ``BuildStarted`` .dhxml and QuantAM parts CSV, as
+    ``(dhxml, parts_csv)`` — either may be None.
+
+    A config.toml's ``[paths]`` wins when it names files that exist; otherwise
+    the build folder itself is searched (a QuantAM export is recognised by its
+    content, not its filename). Reads the toml directly, so a build with no
+    DataStore — or an incomplete config — still works."""
+    dhxml = quant = None
+    cfg = build_root / "config.toml"
+    if cfg.is_file():
+        try:
+            import tomllib
+
+            paths = tomllib.loads(cfg.read_text(encoding="utf-8")).get("paths", {})
+        except Exception:  # noqa: BLE001 — unreadable config: fall back to search
+            paths = {}
+        for key in ("dhxml", "parts_csv"):
+            value = paths.get(key)
+            if isinstance(value, str) and value.strip():
+                p = Path(value)
+                p = p if p.is_absolute() else build_root / p
+                if p.is_file():
+                    if key == "dhxml":
+                        dhxml = p
+                    else:
+                        quant = p
+    if dhxml is None:
+        found = sorted(build_root.glob("*.dhxml"))
+        started = [p for p in found if p.name.lower().startswith("buildstarted")]
+        dhxml = (started or found or [None])[0]
+    if quant is None:
+        from ohpal.ampm.batch import _looks_like_quant
+
+        quant = next((p for p in sorted(build_root.glob("*.csv"))
+                      if _looks_like_quant(p)), None)
+    return dhxml, quant
+
+
+class TemplateWorker(QObject):
+    """Writes one build's samples-template workbook ("Create Excel from AMPM").
+
+    With a BuildStarted .dhxml the template is the full one (part bounds, plus
+    QuantAM process parameters when a parts CSV is there too); with only a
+    QuantAM parts CSV it is the reduced, point-based one. Emits
+    ``(out_path, kind, n_parts)`` with kind "full" or "reduced"."""
+
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, build_root, out_path) -> None:
+        super().__init__()
+        self._build_root = Path(build_root)
+        self._out = Path(out_path)
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            dhxml, quant = find_build_inputs(self._build_root)
+            if dhxml is None and quant is None:
+                self.error.emit(
+                    "This folder has no BuildStarted .dhxml and no QuantAM parts "
+                    "CSV, so there is nothing to build the Excel from.")
+                return
+            from ohpal.ampm import template
+
+            self._out.parent.mkdir(parents=True, exist_ok=True)
+            if dhxml is not None:
+                template.make_template(dhxml, self._out, quant=quant)
+                kind = "full"
+            else:
+                template.make_template_from_quant(
+                    quant, self._out, build_id=self._build_root.name)
+                kind = "reduced"
+        except SystemExit as exc:  # ohpal helpers can call sys.exit()
+            self.error.emit(f"Aborted: {exc}")
+        except Exception as exc:  # noqa: BLE001 — a clear one-line reason
+            self.error.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.finished.emit((self._out, kind))
+
+
+class DbscanWorker(QObject):
+    """DBSCAN part assignment, off the UI thread — the expensive option.
+
+    Clusters every point of the built layers in 3D (chunked DBSCAN), matches
+    each cluster to the nearest part of the QuantAM parts CSV, and emits one
+    label per assigned point: a ``(layer, Start time, part_id)`` frame the
+    DataStore joins onto queries (``set_part_assignment(..., method="labels")``).
+    Points DBSCAN calls noise, or whose cluster matches no part, get no label.
+
+    The labels are cached beside the DataStore with the settings that produced
+    them, so reopening a build reads them back instead of clustering again;
+    ``force`` (a rebuild) always re-clusters. The STL mask is applied first when
+    the build has an STL, as off-part points otherwise muddy the clusters.
+    Emits ``(labels, info)``; ``info`` has n_parts / n_points / n_labelled /
+    from_cache.
+    """
+
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, store, config: dict, layers, *, thickness: float,
+                 force: bool) -> None:
+        super().__init__()
+        self._store = store
+        self._config = dict(config or {})
+        self._layers = sorted(int(L) for L in layers)
+        self._thickness = thickness
+        self._force = force
+
+    def _params(self) -> dict:
+        c = self._config
+        return {
+            "version": 1,
+            "layers": self._layers,
+            "parts_csv": str(c.get("PARTS_CSV") or ""),
+            "stl": str(c.get("STL") or ""),
+            "eps_xy": c.get("EPS_XY", 0.3),
+            "eps_z": c.get("EPS_Z", 0.06),
+            "min_samples": c.get("MIN_SAMPLES", 10),
+            "layers_per_chunk": c.get("LAYERS_PER_CHUNK", 11),
+            "overlap_layers": c.get("OVERLAP_LAYERS"),
+            "layer_thickness": self._thickness,
+        }
+
+    @pyqtSlot()
+    def run(self) -> None:
+        import json
+
+        try:
+            import polars as pl
+
+            cache = Path(self._store.cache_dir)
+            labels_path = cache / "dbscan_part_labels.parquet"
+            meta_path = cache / "dbscan_part_labels.json"
+            params = self._params()
+            if not self._force and labels_path.is_file() and meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except ValueError:
+                    meta = {}
+                if meta.get("params") == json.loads(json.dumps(params)):
+                    info = dict(meta.get("info") or {}, from_cache=True)
+                    # glob=False: build folders are often named like
+                    # "[3] Export Packets", which Polars reads as a wildcard.
+                    self.finished.emit(
+                        (pl.read_parquet(labels_path, glob=False), info))
+                    return
+
+            parts_csv = self._config.get("PARTS_CSV")
+            if not parts_csv:
+                self.error.emit("DBSCAN part assignment needs a parts CSV.")
+                return
+            from ohpal.ampm.clustering import cluster_dbscan_chunked
+            from ohpal.ampm.parts import (
+                QuantAMParts, apply_part_id_map, compute_part_id_map)
+
+            # Only what clustering needs (layer + Z ride along), and only the
+            # layers already in the DataStore — never trigger a conversion here.
+            df = self._store.query(
+                layers=list(self._layers),
+                columns=["Demand X", "Demand Y", "Start time"])
+            n_points = df.height
+            stl = self._config.get("STL")
+            if stl:
+                from ohpal.ampm.masking import apply_mask, build_mask
+
+                mask = build_mask(
+                    stl, self._layers, layer_thickness=self._thickness,
+                    cache_path=cache / "dbscan_mask.pkl")
+                masked = apply_mask(df, mask)
+                if masked.height:  # an STL that misses these layers masks
+                    df = masked    # everything away — then cluster unmasked
+            clustered = cluster_dbscan_chunked(
+                df,
+                eps_xy=params["eps_xy"], eps_z=params["eps_z"],
+                min_samples=params["min_samples"], mode="3d",
+                layers_per_chunk=params["layers_per_chunk"],
+                overlap_layers=params["overlap_layers"],
+                layer_thickness=self._thickness, verbose=False,
+            )
+            parts = QuantAMParts.from_path(parts_csv).parent_parts()
+            mapping = compute_part_id_map(clustered, parts, verbose=False)
+            labels = (
+                apply_part_id_map(clustered, mapping)
+                .filter(pl.col("part_id").is_not_null())
+                .select(["layer", "Start time", "part_id"])
+                .unique(subset=["layer", "Start time"], keep="first",
+                        maintain_order=True)
+            )
+            if labels.is_empty():
+                self.error.emit(
+                    "DBSCAN found no cluster that matches a part of the parts "
+                    "CSV. The clustering settings may need tuning for this "
+                    "build (config.toml, [clustering] eps_xy / eps_z / "
+                    "min_samples).")
+                return
+            info = {
+                "n_parts": labels["part_id"].n_unique(),
+                "n_points": n_points,
+                "n_labelled": labels.height,
+                "from_cache": False,
+            }
+            labels.write_parquet(labels_path)
+            meta_path.write_text(
+                json.dumps({"params": params, "info": info}), encoding="utf-8")
+        except SystemExit as exc:  # ohpal helpers can call sys.exit()
+            self.error.emit(f"Aborted: {exc}")
+        except MemoryError:
+            self.error.emit(
+                "Ran out of memory while clustering. Try fewer layers per chunk "
+                "(config.toml, [clustering] layers_per_chunk) or a smaller scope.")
+        except Exception as exc:  # noqa: BLE001 — a clear one-line reason
+            self.error.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.finished.emit((labels, info))
+
+
 class QueryWorker(QObject):
     """Runs ``DataStore.query`` off the UI thread (Stage 1: query path only).
 
