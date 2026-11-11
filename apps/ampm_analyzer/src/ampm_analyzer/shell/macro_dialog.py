@@ -25,7 +25,7 @@ _PRIMARY_QSS = (
 
 
 class _ListCard(QDialog):
-    """A frameless card: title, a line of context, a read-only numbered list."""
+    """A frameless card: title, an optional line of context, a read-only list."""
 
     def __init__(self, title: str, intro: str, lines: list[str], parent=None, *,
                  ok_text: str, cancel_text: str | None) -> None:
@@ -52,9 +52,10 @@ class _ListCard(QDialog):
         title_lbl.setStyleSheet("font-size: 14pt; font-weight: 600;")
         lay.addWidget(title_lbl)
 
-        intro_lbl = QLabel(intro)
-        intro_lbl.setWordWrap(True)
-        lay.addWidget(intro_lbl)
+        if intro:  # the step preview is title-only
+            intro_lbl = QLabel(intro)
+            intro_lbl.setWordWrap(True)
+            lay.addWidget(intro_lbl)
 
         self.list = QListWidget()
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -87,11 +88,9 @@ class MacroPreviewDialog(_ListCard):
     """What a macro will do, step by step, before it runs."""
 
     def __init__(self, name: str, descriptions: list[str], parent=None) -> None:
-        n = len(descriptions)
         super().__init__(
             f"Run macro '{name}'",
-            f"{n} step{'s' if n != 1 else ''}, applied together — if any step "
-            "can't be applied, nothing is changed.",
+            "",
             [f"{i}.  {d}" for i, d in enumerate(descriptions, 1)],
             parent, ok_text="Run", cancel_text="Cancel",
         )
