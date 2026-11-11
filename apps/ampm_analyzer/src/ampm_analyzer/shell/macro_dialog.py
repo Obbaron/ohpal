@@ -101,9 +101,12 @@ class MacroIssuesDialog(_ListCard):
     """Why a macro didn't run. Nothing was changed."""
 
     def __init__(self, name: str, issues: list[str], parent=None) -> None:
+        n = len(issues)
         super().__init__(
             "Macro issues",
-            f"'{name}' was not run and nothing was changed.",
+            f"'{name}' was not run and nothing was changed. "
+            f"{n} step{'s need' if n != 1 else ' needs'} attention:",
             issues, parent, ok_text="OK", cancel_text=None,
         )
-        self.resize(560, 300)
+        self.list.setSpacing(4)
+        self.resize(600, min(520, 240 + 60 * n))

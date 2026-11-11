@@ -1222,6 +1222,22 @@ class MainWindow(QMainWindow):
                 s["op"], s["params"], self.session.renames))
             for s in steps
         ]
+        # Check the WHOLE macro against this build before anything changes, and
+        # list every problem at once.
+        found = self.actions.check_batch(
+            [(s["op"], s["params"]) for s in steps], macros.resolve)
+        if found:
+            by_step: dict[int, list[str]] = {}
+            for i, msg in found:
+                by_step.setdefault(i, []).append(msg)
+            MacroIssuesDialog(name, [
+                f"Step {i + 1} — {descs[i]}\n" + "\n".join(f"   • {m}" for m in msgs)
+                for i, msgs in sorted(by_step.items())
+            ], self).exec()
+            self.set_status(
+                f"Macro '{name}' was not run — {len(by_step)} step"
+                f"{'s have' if len(by_step) != 1 else ' has'} issues.")
+            return
         if MacroPreviewDialog(name, descs, self).exec() != QDialog.DialogCode.Accepted:
             return
         # Excel steps carry no data — each asks for its file before anything runs.
@@ -1235,20 +1251,23 @@ class MainWindow(QMainWindow):
                     return
                 if issue:
                     MacroIssuesDialog(
-                        name, [f"Step {i + 1} — {descs[i]}\n{issue}"], self).exec()
+                        name, [f"Step {i + 1} — {descs[i]}\n   • {issue}"], self
+                    ).exec()
                     return
             prepared.append((s["op"], params))
-        failed, message = self.actions.run_batch(
+        failed, message, notes = self.actions.run_batch(
             f"Run macro '{name}'", prepared,
             prepare=lambda op, p: macros.resolve(op, p, self.session.renames))
         if failed is not None:
             MacroIssuesDialog(
-                name, [f"Step {failed + 1} — {descs[failed]}\n{message}"], self
+                name, [f"Step {failed + 1} — {descs[failed]}\n   • {message}"], self
             ).exec()
             self.set_status(f"Macro '{name}' was not run — see the issues.")
             return
         n = len(steps)
-        self.set_status(f"Ran macro '{name}' ({n} step{'s' if n != 1 else ''}).")
+        self.set_status(
+            f"Ran macro '{name}' ({n} step{'s' if n != 1 else ''})."
+            + "".join(f" {note}" for note in notes))
 
     def _macro_excel_step(self, index: int, params: dict):
         """Ask for the Excel file behind a macro's import step and read the

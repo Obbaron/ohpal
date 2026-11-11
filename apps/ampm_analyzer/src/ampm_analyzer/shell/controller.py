@@ -75,6 +75,9 @@ class AppController(QObject):
         # Correction recipe (on/machine/column/mode/output). Empty / on=False is
         # off. Applied inline in _shape (cheap numpy transform — no worker).
         self._correction: dict = {}
+        # part_ids the active part assignment can put on the data (None = no
+        # assignment) — lets an import report how many parts it matched.
+        self._part_ids: set[str] | None = None
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
@@ -329,6 +332,7 @@ class AppController(QObject):
 
                     table = BuildStartedDHXML.from_dhxml(dhxml).parts_table()
                     store.set_part_assignment(table, method="bbox")
+                    self._note_part_ids(table)
                     return
                 except Exception as exc:  # noqa: BLE001
                     self.session.fail(f"Could not load DHXML parts: {exc}")
@@ -343,10 +347,37 @@ class AppController(QObject):
                         table, method="nearest",
                         max_distance_mm=(self._config or {}).get("MAX_DISTANCE_MM"),
                     )
+                    self._note_part_ids(table)
                     return
                 except Exception as exc:  # noqa: BLE001
                     self.session.fail(f"Could not load parts CSV: {exc}")
         store.set_part_assignment(None)
+        self._part_ids = None
+
+    def _note_part_ids(self, table) -> None:
+        try:
+            self._part_ids = {
+                derive.norm_key(v) for v in table["part_id"].to_list()
+                if v is not None}
+        except Exception:  # noqa: BLE001 — coverage reporting is best-effort
+            self._part_ids = None
+
+    def assigned_part_ids(self) -> set[str] | None:
+        """Every part id the active assignment can put on the data (normalised
+        like join keys), or None when unknown / no assignment."""
+        return set(self._part_ids) if self._part_ids is not None else None
+
+    def source_column_names(self) -> list[str]:
+        """ORIGINAL names of the source columns in the loaded frame, plus the
+        corrected column ``_shape`` injects — the base a macro pre-check
+        simulates renames / removals on."""
+        base = list(self._base_df.columns) if self._base_df is not None else []
+        c = self._correction
+        if c.get("on") and c.get("mode") != "override":
+            out = (c.get("output") or "").strip() or f"{_CORR_SOURCE} corrected"
+            if out not in base:
+                base.append(out)
+        return base
 
     @staticmethod
     def _cache_status(store) -> tuple[int, int]:

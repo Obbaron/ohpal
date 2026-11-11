@@ -25,7 +25,8 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from . import colref
+from . import colref, derive
+from .datastore_settings import REQUIRED_COLUMNS
 from .history import History
 
 # Snapshot keys that define "did anything change" / "does the frame's shape
@@ -39,6 +40,49 @@ class Outcome:
     ok: bool
     message: str = ""   # status-bar text ("" = say nothing)
     label: str = ""     # undo label ("Add column 'X'")
+    note: str = ""      # worth repeating after a macro run (partial part match)
+
+
+class _Sim:
+    """The column state a macro pre-check walks through, step by step, WITHOUT
+    touching the app: source columns (by original name, shown through the
+    rename map), derived columns, removed columns and the filter count.
+
+    Each check reports its issues and then applies the step's intended effect
+    here even if it had an issue — so one broken step doesn't make every later
+    step that builds on it look broken too."""
+
+    def __init__(self, controller, session) -> None:
+        self.base = controller.source_column_names()      # original names
+        self.renames = dict(session.renames)              # original -> display
+        self.derived = [d["name"] for d in session.derivations]
+        self.removed = list(session.removed)
+        self.n_filters = len(controller.filters())
+        self.pre_existing = set(self.derivable())         # before the macro
+
+    def display(self, orig: str) -> str:
+        return self.renames.get(orig, orig)
+
+    def orig(self, display: str) -> str | None:
+        return next((o for o in self.base if self.display(o) == display), None)
+
+    def base_display(self) -> list[str]:
+        return [self.display(o) for o in self.base]
+
+    def derivable(self) -> list[str]:
+        """Names a formula may reference / collide with (incl. removed)."""
+        return self.base_display() + self.derived
+
+    def current(self) -> list[str]:
+        """Names in the grid (removed columns excluded)."""
+        return [c for c in self.derivable() if c not in self.removed]
+
+    def taken(self) -> set[str]:
+        return set(self.current()) | set(self.derived)
+
+    def add(self, name: str) -> None:
+        if name not in self.derived:
+            self.derived.append(name)
 
 
 def _names_preview(names, limit: int = 6) -> str:
@@ -179,9 +223,12 @@ class Actions(QObject):
         run): one undo step on success; on the first failing step everything is
         rolled back. ``prepare(op, params)`` is called just before each step
         (the macro runner uses it to resolve column names against the state the
-        earlier steps left). Returns ``(None, "")`` on success, else
-        ``(index_of_failed_step, message)``."""
+        earlier steps left). Returns ``(failed, message, notes)``: ``failed`` is
+        None on success, else the index of the step that failed; ``notes`` are
+        the steps' remarks worth showing afterwards (e.g. a partial part
+        match)."""
         before = self.capture()
+        notes: list[str] = []
         for i, (op, params) in enumerate(steps):
             handler = getattr(self, f"_do_{op}", None)
             try:
@@ -194,14 +241,266 @@ class Actions(QObject):
             if not out.ok:
                 if self._differs(before, self.capture()):
                     self.restore(before)
-                return i, out.message or "The step could not be applied."
+                return i, out.message or "The step could not be applied.", []
+            if out.note:
+                notes.append(out.note)
         after = self.capture()
         if self._differs(before, after):
             if self._differs(before, after, _SHAPE_KEYS):
                 self._host._reshape_plots()
             self.history.push(label, before, after)
             self._host._save_ui()
-        return None, ""
+        return None, "", notes
+
+    # -- macro pre-check -------------------------------------------------
+    def check_batch(self, steps, resolve) -> list[tuple[int, str]]:
+        """Check a whole macro against this build WITHOUT changing anything.
+
+        Walks the steps over a simulated column state (:class:`_Sim`) and
+        returns every problem as ``(step_index, message)`` — an empty list means
+        the macro can run. ``resolve(op, params, renames)`` turns a step's
+        stored column names into the display names in force at that step.
+
+        The checks mirror what each ``_do_*`` handler (and the controller behind
+        it) enforces, and are deliberately a little stricter where a handler
+        would quietly skip or rename: on a different build that silence would
+        hide a wrong result. ``run_batch`` still rolls back if a step fails
+        anyway, so a gap here can't leave a half-applied macro."""
+        sim = _Sim(self._c, self._s)
+        ctx: dict = {}  # per-run cache (parts CSV reads)
+        issues: list[tuple[int, str]] = []
+        for i, (op, params) in enumerate(steps):
+            checker = getattr(self, f"_check_{op}", None)
+            if checker is None:
+                issues.append((i, f"Unknown action {op!r}."))
+                continue
+            try:
+                found = checker(sim, ctx, **resolve(op, params, sim.renames))
+            except TypeError as exc:  # a hand-edited step with wrong settings
+                found = [f"The step's settings aren't valid: {exc}"]
+            except Exception as exc:  # noqa: BLE001 — report, never crash
+                found = [f"Couldn't check this step: {exc}"]
+            issues.extend((i, msg) for msg in found)
+        return issues
+
+    @staticmethod
+    def _compiles(fn, text, names) -> list[str]:
+        try:
+            fn(text, names)
+            return []
+        except derive.DeriveError as exc:
+            return [str(exc)]
+
+    @staticmethod
+    def _exists(name) -> str:
+        return f"A column named {name!r} already exists."
+
+    def _parts_ready(self, need_csv: bool) -> list[str]:
+        out = []
+        if not self._c.has_part_assignment():
+            out.append("This build has no part assignment, so there is no "
+                       "part column to work with.")
+        if need_csv and not self._c.has_laser_parameters():
+            out.append("This build has no parts CSV.")
+        return out
+
+    def _match(self, keys) -> tuple[int, int] | None:
+        """(matched, total) parts of the build covered by ``keys`` (normalised
+        join keys), or None when the build's part ids aren't known."""
+        ids = self._c.assigned_part_ids()
+        if not ids:
+            return None
+        return len(ids & set(keys)), len(ids)
+
+    def _check_derive(self, sim, ctx, name, expr, group="", overwrite=False,
+                      after="") -> list[str]:
+        names = sim.derivable()
+        out = [self._exists(name)] if name in names and not overwrite else []
+        out += self._compiles(derive.compile_expr, expr, names)
+        sim.add(name)
+        return out
+
+    def _check_label(self, sim, ctx, name, rules, default="") -> list[str]:
+        names = sim.derivable()
+        out = [self._exists(name)] if name in names else []
+        if not rules:
+            out.append("Add at least one rule.")
+        for rule in rules or []:
+            out += self._compiles(derive.compile_predicate, rule.get("cond", ""), names)
+        sim.add(name)
+        return list(dict.fromkeys(out))
+
+    def _check_excel_import(self, sim, ctx, name, key, mapping=None, dtype="f64",
+                            source=None) -> list[str]:
+        names = sim.derivable()
+        out = [self._exists(name)] if name in names else []
+        if key not in names:
+            out.append(f"Key column {key!r} isn't in this build.")
+        src = source or {}
+        if mapping is None and not (src.get("sheet") and src.get("key_column")
+                                    and src.get("value_column")):
+            out.append("The step doesn't say which sheet and columns to read.")
+        sim.add(name)
+        return out
+
+    def _check_part_calc(self, sim, ctx, signal, reducer, name) -> list[str]:
+        out = self._parts_ready(need_csv=False)
+        names = sim.derivable()
+        pid = sim.display("part_id")
+        if out:  # no part column: only the signal is still worth checking
+            if signal not in names:
+                out.append(f"Unknown column: {signal!r}")
+        else:
+            fn = "mean" if reducer == "cov" else reducer
+            out += self._compiles(
+                derive.compile_expr, f"{fn}([{signal}]) by [{pid}]", names)
+        if reducer == "cov":
+            if name in sim.taken():
+                out.append(self._exists(name))
+            sim.add(f"{signal} (mean/part)")  # reused if already there
+            sim.add(f"{signal} (std/part)")
+        elif name in names:
+            out.append(self._exists(name))
+        sim.add(name)
+        return out
+
+    def _check_laser_params(self, sim, ctx) -> list[str]:
+        out = self._parts_ready(need_csv=True)
+        if out:
+            return out
+        try:
+            params = self._c.part_laser_parameters()
+        except Exception as exc:  # noqa: BLE001
+            return [f"Couldn't load laser parameters: {exc}"]
+        if params is None or "part_id" not in params.columns:
+            return ["The parts CSV has no part_id column."]
+        taken = sim.taken()
+        for col in (c for c in params.columns if c != "part_id"):
+            if not params[col].dtype.is_numeric():
+                continue
+            if col in taken:
+                if col in sim.pre_existing:  # made earlier in this macro: skipped
+                    out.append(self._exists(col))
+                continue
+            sim.add(col)
+        keys = {derive.norm_key(k) for k in params["part_id"].to_list()
+                if k is not None}
+        got = self._match(keys)
+        if got is not None and got[0] == 0:
+            out.append(f"None of the build's {got[1]} parts match the parts CSV "
+                       "— the imported columns would be empty.")
+        return out
+
+    def _check_parts_csv_import(self, sim, ctx, items) -> list[str]:
+        out = self._parts_ready(need_csv=True)
+        if out:
+            return out
+        if "sections" not in ctx:
+            try:
+                ctx["sections"] = dict(self._c.parts_csv_sections())
+            except Exception as exc:  # noqa: BLE001
+                return [f"Couldn't read the parts CSV: {exc}"]
+        sect = ctx["sections"]
+        taken = sim.taken()
+        unmatched = set()
+        for section, col in items:
+            body = sect.get(section)
+            if body is None:
+                out.append(f"The parts CSV has no section {section!r}.")
+                continue
+            if col not in body.columns:
+                out.append(f"Section {section!r} has no column {col!r}.")
+                continue
+            # The handler would rename a clashing import to "col (section)".
+            # Against a column this build already had, that silent rename would
+            # leave later steps reading the wrong column — so it is an issue.
+            name = col if col not in taken else f"{col} ({section})"
+            if (col in taken and col in sim.pre_existing) or name in taken:
+                out.append(self._exists(col))
+                continue
+            sim.add(name)
+            taken.add(name)
+            keys = {derive.norm_key(k) for k in body["part_id"].to_list()
+                    if k is not None}
+            got = self._match(keys)
+            if got is not None and got[0] == 0 and section not in unmatched:
+                unmatched.add(section)
+                out.append(
+                    f"None of the build's {got[1]} parts match section "
+                    f"{section!r} — the imported columns would be empty.")
+        return out
+
+    def _check_rename(self, sim, ctx, old, new) -> list[str]:
+        old, new = (old or "").strip(), (new or "").strip()
+        current = sim.current()
+        if not new:
+            return ["Give the column a name."]
+        out = []
+        if new == old:
+            out.append("That's already the column's name.")
+        elif old not in current:
+            out.append(f"Column {old!r} isn't in the grid.")
+        elif new in current or new in sim.removed:
+            out.append(self._exists(new))
+        orig = sim.orig(old)
+        if orig is not None:
+            sim.renames[orig] = new
+        elif old in sim.derived:
+            sim.derived[sim.derived.index(old)] = new
+        return out
+
+    def _check_remove(self, sim, ctx, names) -> list[str]:
+        out = []
+        for n in names:
+            orig = sim.orig(n)
+            if n in sim.derived:
+                sim.derived.remove(n)
+            elif orig is not None and orig in REQUIRED_COLUMNS:
+                out.append(f"Can't remove required column {n!r}.")
+            elif orig is not None and n not in sim.removed:
+                sim.removed.append(n)
+            else:
+                out.append(f"Column {n!r} isn't in the grid.")
+        return out
+
+    def _check_restore(self, sim, ctx, name) -> list[str]:
+        if name not in sim.removed:
+            return [f"{name!r} isn't a removed column."]
+        sim.removed.remove(name)
+        return []
+
+    def _check_filter_add(self, sim, ctx, condition) -> list[str]:
+        sim.n_filters += 1
+        if not (condition or "").strip():
+            return ["The filter is empty."]
+        return self._compiles(derive.compile_predicate, condition, sim.current())
+
+    def _check_filter_edit(self, sim, ctx, index, condition) -> list[str]:
+        out = []
+        if not 0 <= int(index) < sim.n_filters:
+            out.append(f"There is no filter {int(index) + 1} to change.")
+        if not (condition or "").strip():
+            out.append("The filter is empty.")
+        else:
+            out += self._compiles(
+                derive.compile_predicate, condition, sim.current())
+        return out
+
+    def _check_filter_remove(self, sim, ctx, index) -> list[str]:
+        if not 0 <= int(index) < sim.n_filters:
+            return [f"There is no filter {int(index) + 1} to remove."]
+        sim.n_filters -= 1
+        return []
+
+    def _check_filter_remove_last(self, sim, ctx) -> list[str]:
+        if sim.n_filters <= 0:
+            return ["There is no filter to remove."]
+        sim.n_filters -= 1
+        return []
+
+    def _check_filter_reset(self, sim, ctx) -> list[str]:
+        sim.n_filters = 0
+        return []
 
     def undo(self) -> str | None:
         entry = self.history.take_undo()
@@ -224,6 +523,18 @@ class Actions(QObject):
         self.history.clear()
 
     # -- helpers -------------------------------------------------------
+    def _match_text(self, keys, what: str) -> tuple[str, str]:
+        """How many of the build's parts an import's keys cover, as (a sentence
+        to append to the status, a note if the match is only partial)."""
+        got = self._match(keys)
+        if got is None:
+            return "", ""
+        matched, total = got
+        text = f" Matched {matched} of {total} parts."
+        note = (f"{what}: matched {matched} of {total} parts."
+                if matched < total else "")
+        return text, note
+
     def _taken(self) -> set[str]:
         """Every column name currently in use (grid columns + derived)."""
         return set(self._c.current_columns()) | {
@@ -297,8 +608,6 @@ class Actions(QObject):
         existing names are skipped."""
         import polars as pl
 
-        from . import derive
-
         pid = self._c.part_id_display()
         try:
             params = self._c.part_laser_parameters()
@@ -329,18 +638,19 @@ class Actions(QObject):
         if not added:
             return Outcome(True, "No new laser-parameter columns to add"
                            + (" (all already present)." if skipped else "."))
+        matched, note = self._match_text(
+            {derive.norm_key(k) for k in keys if k is not None}, "Laser parameters")
         return Outcome(
             True,
-            f"Added {len(added)} laser-parameter column(s): {_names_preview(added)}.",
-            "Add laser parameters")
+            f"Added {len(added)} laser-parameter column(s): "
+            f"{_names_preview(added)}.{matched}",
+            "Add laser parameters", note)
 
     def _do_parts_csv_import(self, items) -> Outcome:
         """Join each staged ``(section, column)`` of the parts CSV onto the grid,
         keyed on the (rename-aware) part_id. A name that clashes (e.g. 'Hatches
         Power' in two sections) is suffixed with its section."""
         import polars as pl
-
-        from . import derive
 
         try:
             sect = dict(self._c.parts_csv_sections())
@@ -349,6 +659,7 @@ class Actions(QObject):
         pid = self._c.part_id_display()
         taken = self._taken()
         added, skipped = [], []
+        all_keys: set[str] = set()
         for section, col in items:
             body = sect.get(section)
             if body is None or col not in body.columns:
@@ -371,15 +682,17 @@ class Actions(QObject):
             if self._c.add_join_derivation(name, pid, mapping, dtype) is None:
                 added.append(name)
                 taken.add(name)
+                all_keys.update(mapping)
             else:
                 skipped.append(col)
         if not added:
             return Outcome(True, "No new columns imported from the parts CSV.")
+        matched, note = self._match_text(all_keys, "Parts CSV import")
         return Outcome(
             True,
             f"Imported {len(added)} column(s) from the parts CSV: "
-            f"{_names_preview(added)}.",
-            "Import parts CSV columns")
+            f"{_names_preview(added)}.{matched}",
+            "Import parts CSV columns", note)
 
     def _do_rename(self, old, new) -> Outcome:
         """Rename a column across the whole app: controller state (renames map /
