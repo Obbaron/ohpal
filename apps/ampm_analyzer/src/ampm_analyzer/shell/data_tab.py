@@ -12,7 +12,7 @@ widget is only the grid surface.
 from __future__ import annotations
 
 from PyQt6.QtCore import QByteArray, QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -65,6 +65,25 @@ class ReorderHeader(QHeaderView):
         self.setSectionsMovable(True)
         self.setSectionsClickable(True)
         self._drop_x: int | None = None
+
+    # Horizontal space a section's label can't use: the stylesheet's 8px padding
+    # each side plus the 1px divider (see QHeaderView::section in theme.py).
+    _LABEL_INSET = 17
+
+    def initStyleOptionForIndex(self, option, logicalIndex: int) -> None:
+        """Labels stay centred; one too long for its column is trimmed from the
+        LEFT ("…ches Power") so its end — usually the part that tells similar
+        columns apart — stays readable, instead of showing a clipped middle."""
+        super().initStyleOptionForIndex(option, logicalIndex)
+        text = option.text
+        if not text:
+            return
+        font = QFont(self.font())
+        font.setWeight(QFont.Weight.DemiBold)  # section labels are drawn at 600
+        fm = QFontMetrics(font)
+        avail = self.sectionSize(logicalIndex) - self._LABEL_INSET
+        if avail > 0 and fm.horizontalAdvance(text) > avail:
+            option.text = fm.elidedText(text, Qt.TextElideMode.ElideLeft, avail)
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)  # let Qt do the ghost drag
