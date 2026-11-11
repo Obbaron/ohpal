@@ -327,6 +327,19 @@ class QuantAMParts:
             .alias("part_id")
         )
 
+    def part_ids_by_instance(self) -> pl.DataFrame:
+        """
+        The ``part_id`` of every placed instance, keyed by its QuantAM instance
+        number: columns ``Sr. No.`` (Int64) and ``part_id``.
+
+        ``part_id`` is exactly what ``parent_parts()`` reports — the bare name
+        for a part placed once, ``Name#<instance>`` for each copy of a name
+        placed several times. Use it to key any per-instance row of another
+        section (whose ``Sr. No.`` is ``"<instance>.<variant>"``) so it lines
+        up with the ids part assignment puts on the data.
+        """
+        return self._parent_with_instances().select(["Sr. No.", "part_id"])
+
     def volume_parameters(self, *, variant: str = "1") -> pl.DataFrame:
         """
         Return the per-part scan-volume laser parameters joined with the

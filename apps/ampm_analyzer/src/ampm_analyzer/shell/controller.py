@@ -661,10 +661,17 @@ class AppController(QObject):
         """Every section of the QuantAM parts CSV as ``(name, body_df)`` pairs,
         for the Import-parts-CSV picker.
 
-        Each ``body_df`` is keyed by ``part_id`` (original name, from "Source
-        Index") with the section's own data columns; support rows (the ``.s``
-        variant of "Sr. No.") are dropped, leaving one row per part. The Parent
-        Parts section has no variant suffix, so it passes through whole."""
+        Each ``body_df`` is keyed by ``part_id`` with the section's own data
+        columns; support rows (the ``.s`` variant of "Sr. No.") are dropped,
+        leaving one row per placed part. The Parent Parts section has no variant
+        suffix, so it passes through whole.
+
+        ``part_id`` is the id part assignment puts on the grid, NOT the bare
+        "Source Index": a name placed several times (a parametric build) is one
+        row per copy, each ``Name#<instance>`` and carrying that copy's own
+        values. Rows are matched to their instance by "Sr. No."
+        (``"<instance>.<variant>"``); a row with no usable instance number falls
+        back to its bare name."""
         import polars as pl
 
         from ohpal.ampm.parts import QuantAMParts, SECTION_PARENT
@@ -673,6 +680,11 @@ class AppController(QObject):
         if not path:
             raise ValueError("This build has no parts CSV configured.")
         qp = QuantAMParts.from_path(path)
+        try:  # instance number -> the grid's part id
+            ids = qp.part_ids_by_instance().rename(
+                {"Sr. No.": "_inst", "part_id": "_pid"})
+        except Exception:  # noqa: BLE001 — no usable Parent Parts: bare names
+            ids = None
         out = []
         for name in qp.section_names:
             df = qp[name]
@@ -686,9 +698,18 @@ class AppController(QObject):
             if name != SECTION_PARENT and "Sr. No." in df.columns:
                 sr = df["Sr. No."].cast(pl.Utf8)
                 body = df.filter(sr.str.ends_with(f".{variant}"))
-            body = (body.rename({"Source Index": "part_id"})
-                    .select(["part_id", *data_cols]))
-            out.append((name, body))
+            bare = pl.col("Source Index").cast(pl.Utf8)
+            if ids is not None and "Sr. No." in body.columns:
+                body = (
+                    body.with_columns(
+                        pl.col("Sr. No.").cast(pl.Utf8).str.split(".")
+                        .list.first().cast(pl.Int64, strict=False).alias("_inst"))
+                    .join(ids, on="_inst", how="left", maintain_order="left")
+                    .with_columns(pl.coalesce(pl.col("_pid"), bare).alias("part_id"))
+                )
+            else:
+                body = body.with_columns(bare.alias("part_id"))
+            out.append((name, body.select(["part_id", *data_cols])))
         return out
 
     def rename_error(self, old: str, new: str) -> str | None:
