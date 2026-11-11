@@ -111,6 +111,10 @@ class Actions(QObject):
     performed = pyqtSignal(str, dict, dict)
     undone = pyqtSignal()
     redone = pyqtSignal()
+    # (op, params, renames) of an OUTPUT the user just made — a plot, an export.
+    # It changes nothing undo tracks, so it isn't an undo step, but a macro
+    # records it.
+    noted = pyqtSignal(str, dict, dict)
 
     def __init__(self, host, controller, session, parent=None) -> None:
         super().__init__(parent)
@@ -118,6 +122,7 @@ class Actions(QObject):
         self._c = controller
         self._s = session
         self.history = History(parent=self)
+        self._batch_plots: list = []  # plots opened by the macro now running
 
     # -- snapshot ------------------------------------------------------
     def capture(self) -> dict:
@@ -229,21 +234,31 @@ class Actions(QObject):
         match)."""
         before = self.capture()
         notes: list[str] = []
-        for i, (op, params) in enumerate(steps):
-            handler = getattr(self, f"_do_{op}", None)
-            try:
-                if handler is None:
-                    out = Outcome(False, f"Unknown action {op!r}.")
-                else:
-                    out = handler(**(prepare(op, params) if prepare else params))
-            except Exception as exc:  # noqa: BLE001 — surface, roll back below
-                out = Outcome(False, f"Action failed: {exc}")
-            if not out.ok:
-                if self._differs(before, self.capture()):
-                    self.restore(before)
-                return i, out.message or "The step could not be applied.", []
-            if out.note:
-                notes.append(out.note)
+        self._batch_plots = []
+        host = self._host
+        quiet, host._quiet_refresh = host._quiet_refresh, True  # stay on the tab
+        try:
+            for i, (op, params) in enumerate(steps):
+                handler = getattr(self, f"_do_{op}", None)
+                try:
+                    if handler is None:
+                        out = Outcome(False, f"Unknown action {op!r}.")
+                    else:
+                        out = handler(
+                            **(prepare(op, params) if prepare else params))
+                except Exception as exc:  # noqa: BLE001 — surface, roll back
+                    out = Outcome(False, f"Action failed: {exc}")
+                if not out.ok:
+                    for tab in self._batch_plots:  # plots this run opened
+                        host._close_plot(tab)
+                    if self._differs(before, self.capture()):
+                        self.restore(before)
+                    return i, out.message or "The step could not be applied.", []
+                if out.note:
+                    notes.append(out.note)
+        finally:
+            host._quiet_refresh = quiet
+            self._batch_plots = []
         after = self.capture()
         if self._differs(before, after):
             if self._differs(before, after, _SHAPE_KEYS):
@@ -502,6 +517,96 @@ class Actions(QObject):
         sim.n_filters = 0
         return []
 
+    # -- outputs: plots and Excel exports (macro steps, not undoable) ----
+    def _shape_state(self) -> dict:
+        """The shaping state right now — an export made mid-macro writes the
+        data as it stood at that step, not as later steps leave it."""
+        return {
+            "derivations": copy.deepcopy(self._s.derivations),
+            "removed": list(self._s.removed),
+            "renames": dict(self._s.renames),
+            "filters": list(self._c.filters()),
+        }
+
+    def _span_issues(self, span, *, single_ok: bool = False) -> list[str]:
+        """Problems with a recorded layer span on THIS build. ``all`` and
+        ``current`` adapt to any build; a fixed layer or range must exist."""
+        store = self._s.store
+        layers = list(store.layers) if store is not None else []
+        mode, lo, hi = (list(span or []) + [None, None, None])[:3]
+        if mode in ("all", "current") or not layers:
+            return []
+        if mode == "single":
+            if single_ok or lo in (self._c.available_layers() or layers):
+                return []
+            return [f"Layer {lo} has no data on this build."]
+        if mode == "range":
+            if lo is None or hi is None or lo < layers[0] or hi > layers[-1]:
+                return [f"Layers {lo}–{hi} are outside this build's layers "
+                        f"({layers[0]}–{layers[-1]})."]
+            return []
+        return [f"Unknown layer span {mode!r}."]
+
+    def _do_plot(self, spec, span) -> Outcome:
+        from .plotspec import PlotSpec
+
+        ps = PlotSpec(**spec)
+        mode, lo, hi = (list(span) + [None, None, None])[:3]
+        if ps.is_layer_viewer:  # its layer is only where the scrubber starts
+            lo = hi = self._s.current_layer
+        tab = self._host._open_plot(ps, (mode, lo, hi))
+        self._batch_plots.append(tab)
+        return Outcome(True)
+
+    def _check_plot(self, sim, ctx, spec, span) -> list[str]:
+        from .plotspec import PLOT_KINDS, PlotSpec
+
+        try:
+            ps = PlotSpec(**spec)
+        except TypeError as exc:
+            return [f"The plot's settings aren't valid: {exc}"]
+        out = []
+        if ps.kind not in PLOT_KINDS:
+            out.append(f"Unknown plot type {ps.kind!r}.")
+        cols = set(sim.current())
+        used = [ps.x] + ([] if ps.is_hist else [ps.y]) + [ps.z, ps.color, ps.group_by]
+        for name in dict.fromkeys(n for n in used if n):
+            if name not in cols:
+                out.append(f"Unknown column: {name!r}")
+        out += self._span_issues(span, single_ok=ps.is_layer_viewer)
+        return out
+
+    def _do_export_excel(self, mode, scope, path, sheet="Export",
+                         respect_filters=True, key=None, values=None,
+                         columns=None, filename=None) -> Outcome:
+        spec = {
+            "mode": mode, "scope": tuple(scope), "path": path, "sheet": sheet,
+            "respect_filters": bool(respect_filters), "key": key,
+            "values": [tuple(v) for v in (values or [])],
+            "columns": list(columns) if columns else None,
+        }
+        self._host._start_export(spec, self._shape_state())
+        return Outcome(True)
+
+    def _check_export_excel(self, sim, ctx, mode, scope, path=None, sheet="Export",
+                            respect_filters=True, key=None, values=None,
+                            columns=None, filename=None) -> list[str]:
+        cols = set(sim.current())
+        out = []
+        if mode == "summary":
+            wanted = [key] + [c for c, _agg in (values or [])]
+            if not values:
+                out.append("The export has no value columns.")
+        elif mode == "raw":
+            wanted = list(columns or [])
+        else:
+            return [f"Unknown export type {mode!r}."]
+        for name in dict.fromkeys(wanted):
+            if name not in cols:
+                out.append(f"Unknown column: {name!r}")
+        out += self._span_issues(scope)
+        return out
+
     def undo(self) -> str | None:
         entry = self.history.take_undo()
         if entry is None:
@@ -521,6 +626,11 @@ class Actions(QObject):
     def reset(self) -> None:
         """Drop the history (a build was loaded or rebuilt)."""
         self.history.clear()
+
+    def note(self, op: str, **params) -> None:
+        """Report an output the user just made (plot, export) so a macro being
+        recorded can capture it. Not an undo step."""
+        self.noted.emit(op, dict(params), dict(self._s.renames))
 
     # -- helpers -------------------------------------------------------
     def _match_text(self, keys, what: str) -> tuple[str, str]:

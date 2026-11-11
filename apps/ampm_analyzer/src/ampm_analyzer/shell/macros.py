@@ -16,6 +16,10 @@ Record and Stop. Three rules make a recording replayable on another build:
   file when run; its key/value table is dropped from the file.
 - **View-only actions are not recorded** (show/hide), nor are undo/redo
   themselves: an undo while recording simply drops the step it undid.
+- **Outputs are steps too** — creating a plot, exporting to Excel. They change
+  nothing that undo tracks, so an undo never removes them from a recording. A
+  plot is stored as created (type, columns, layer span, options); an export
+  stores what to write but not where — it asks for the file when run.
 
 The file is plain, versioned JSON so it can be read and hand-edited.
 """
@@ -39,7 +43,9 @@ _BRACKET = re.compile(r"\[([^\[\]]*)\]")
 # Which params of each recordable op hold column names. ``names`` are single
 # column names, ``lists`` lists of names, ``refs`` DSL strings with [column]
 # references, ``rules`` a label's rule list (each rule's "cond" is a DSL
-# string). Ops absent from this table are not recordable.
+# string), ``nested`` a dict param whose listed keys are column names, ``pairs``
+# a list of [column, something] pairs. ``drop`` params never reach the file.
+# Ops absent from this table are not recordable.
 _SCHEMA: dict[str, dict] = {
     "derive": {"names": ("name", "group", "after"), "refs": ("expr",)},
     "label": {"names": ("name",), "rules": ("rules",)},
@@ -55,6 +61,10 @@ _SCHEMA: dict[str, dict] = {
     "filter_remove": {},
     "filter_remove_last": {},
     "filter_reset": {},
+    # outputs (not undoable)
+    "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by")}},
+    "export_excel": {"names": ("key",), "lists": ("columns",),
+                     "pairs": ("values",), "drop": ("path",)},
 }
 OPS = frozenset(_SCHEMA)
 
@@ -96,6 +106,15 @@ def _translate(op: str, params: dict, mapping: dict) -> dict:
                 {**r, "cond": _map_refs(r.get("cond", ""), mapping)}
                 for r in out[key]
             ]
+    for key, fields in spec.get("nested", {}).items():
+        if isinstance(out.get(key), dict):
+            out[key] = {
+                k: (mapping.get(v, v) if k in fields and isinstance(v, str) else v)
+                for k, v in out[key].items()
+            }
+    for key in spec.get("pairs", ()):
+        if out.get(key):
+            out[key] = [[mapping.get(a, a), b] for a, b in out[key]]
     return out
 
 
@@ -151,7 +170,40 @@ def describe(op: str, p: dict) -> str:
         return "Remove the last filter"
     if op == "filter_reset":
         return "Reset all filters"
+    if op == "plot":
+        s = p.get("spec") or {}
+        kind = s.get("kind", "plot")
+        if kind == "Histogram":
+            what = f"of '{s.get('x')}'"
+        elif kind == "Contour":
+            what = f"of '{s.get('z')}' over '{s.get('x')}' × '{s.get('y')}'"
+        elif s.get("z"):
+            what = f"of '{s.get('x')}' × '{s.get('y')}' × '{s.get('z')}'"
+        else:
+            what = f"of '{s.get('y')}' against '{s.get('x')}'"
+        if s.get("color"):
+            what += f", coloured by '{s.get('color')}'"
+        return f"Plot: {kind} {what} ({_span_text(p.get('span'))})"
+    if op == "export_excel":
+        if p.get("mode") == "summary":
+            vals = ", ".join(f"{a} of '{c}'" for c, a in (p.get("values") or [])[:3])
+            what = f"summary by '{p.get('key')}': {vals}"
+        else:
+            what = f"{len(p.get('columns') or [])} column(s) of rows"
+        return (f"Export to Excel — {what} ({_span_text(p.get('scope'))}; "
+                "asks where to save)")
     return op
+
+
+def _span_text(span) -> str:
+    mode, lo, hi = (list(span or []) + [None, None, None])[:3]
+    if mode == "all":
+        return "all layers"
+    if mode == "current":
+        return "the layer on screen"
+    if mode == "range":
+        return f"layers {lo}–{hi}"
+    return f"layer {lo}"
 
 
 # -- file I/O -----------------------------------------------------------
@@ -216,18 +268,22 @@ class Recorder(QObject):
 
     It mirrors the undo stack for the span of the recording: every committed
     action pushes a mark (its step, or None for a non-recordable action such as
-    show/hide); an undo pops the top mark, a redo puts it back. So an undone
-    action leaves the macro, and undo/redo never appear as steps."""
+    show/hide); an undo takes the newest undoable mark out, a redo puts it back
+    where it was. So an undone action leaves the macro, and undo/redo never
+    appear as steps. Outputs (plots, exports) are marks undo skips over."""
 
     changed = pyqtSignal()  # recording started / stopped / step count changed
 
     def __init__(self, actions, parent=None) -> None:
         super().__init__(parent)
         self.active = False
-        self._marks: list[dict | None] = []     # live actions since start
-        self._undone: list[dict | None] = []    # marks taken off by undo
+        # live actions since start, in order: (step or None, undoable?)
+        self._marks: list[tuple[dict | None, bool]] = []
+        # marks taken off by undo: (position they were at, step)
+        self._undone: list[tuple[int, dict | None]] = []
         self._pre_undone = 0                    # undos reaching before start
         actions.performed.connect(self._on_performed)
+        actions.noted.connect(self._on_noted)
         actions.undone.connect(self._on_undone)
         actions.redone.connect(self._on_redone)
 
@@ -249,7 +305,7 @@ class Recorder(QObject):
             self.changed.emit()
 
     def steps(self) -> list[dict]:
-        return [m for m in self._marks if m is not None]
+        return [step for step, _undoable in self._marks if step is not None]
 
     def count(self) -> int:
         return len(self.steps())
@@ -260,15 +316,25 @@ class Recorder(QObject):
         step = None
         if op in OPS:
             step = {"op": op, "params": canonical(op, params, renames_before)}
-        self._marks.append(step)
+        self._marks.append((step, True))
         self._undone, self._pre_undone = [], 0  # a new action clears redo
+        self.changed.emit()
+
+    def _on_noted(self, op: str, params: dict, renames: dict) -> None:
+        """An output (plot / export) was made: a step undo never removes."""
+        if not self.active or op not in OPS:
+            return
+        self._marks.append(
+            ({"op": op, "params": canonical(op, params, renames)}, False))
         self.changed.emit()
 
     def _on_undone(self) -> None:
         if not self.active:
             return
-        if self._marks:
-            self._undone.append(self._marks.pop())
+        last = next((i for i in range(len(self._marks) - 1, -1, -1)
+                     if self._marks[i][1]), None)
+        if last is not None:
+            self._undone.append((last, self._marks.pop(last)[0]))
         else:
             self._pre_undone += 1  # undid something from before Record
         self.changed.emit()
@@ -279,5 +345,6 @@ class Recorder(QObject):
         if self._pre_undone:
             self._pre_undone -= 1
         elif self._undone:
-            self._marks.append(self._undone.pop())
+            at, step = self._undone.pop()
+            self._marks.insert(min(at, len(self._marks)), (step, True))
         self.changed.emit()

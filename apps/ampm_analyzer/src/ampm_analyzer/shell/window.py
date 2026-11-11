@@ -456,6 +456,17 @@ class MainWindow(QMainWindow):
             return
         spec = dlg.spec()
         span = dlg.span()  # ("all", None, None) or ("range", lo, hi)
+        self._open_plot(spec, span)
+        # An output, not an undo step — but a macro being recorded keeps it.
+        from dataclasses import asdict
+
+        self.actions.note("plot", spec=asdict(spec), span=list(span))
+
+    def _open_plot(self, spec, span):
+        """Create a plot tab for ``spec`` over ``span`` and start its query.
+        Shared by the New-plot dialog and by macro plot steps."""
+        store = self.session.store
+        layers = list(store.layers) if store is not None else []
         self._ensure_data_tab()
         tab = PlotTab(spec, span=span, layers=layers)
         tab.row_filter = self.controller.filters()  # snapshot the active filter
@@ -468,6 +479,13 @@ class MainWindow(QMainWindow):
         # Query this plot's own span, then shape + feed it.
         tab.set_loading(f"Querying {tab.span_label}…")
         self.controller.query_for(*span, lambda raw, t=tab: self._feed_plot(t, raw))
+        return tab
+
+    def _close_plot(self, tab) -> None:
+        """Close a plot tab (a macro that failed takes back the plots it opened)."""
+        idx = self.stack.indexOf(tab)
+        if idx >= 0:
+            self._close_tab(idx)
 
     def _on_plot_renamed(self, tab, name: str) -> None:
         """A plot's on-canvas title was renamed; mirror it onto its tab."""
@@ -1048,6 +1066,22 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.result_values()
+        self._start_export(spec)
+        # An output, not an undo step — but a macro being recorded keeps it
+        # (what to write, never where: a run asks for the file).
+        from pathlib import Path
+
+        self.actions.note(
+            "export_excel", mode=spec["mode"], scope=list(spec["scope"]),
+            sheet=spec["sheet"], respect_filters=spec["respect_filters"],
+            key=spec.get("key"), values=[list(v) for v in spec.get("values") or []],
+            columns=spec.get("columns"), path=spec["path"],
+            filename=Path(spec["path"]).name)
+
+    def _start_export(self, spec, state=None) -> None:
+        """Query the export's span and write the file. ``state`` (a shaping
+        snapshot) pins what is written to the data as it stood when the export
+        was asked for — a macro's later steps must not change it."""
         mode, lo, hi = spec["scope"]
         if mode == "current":  # the layer on screen -> a single-layer query
             cur = self.session.current_layer
@@ -1056,17 +1090,36 @@ class MainWindow(QMainWindow):
             qmode, qlo, qhi = mode, lo, hi
         self.set_status("Exporting…")
         self.controller.query_for(
-            qmode, qlo, qhi, lambda raw, s=spec: self._write_export(s, raw)
+            qmode, qlo, qhi,
+            lambda raw, s=spec, st=state: self._write_export(s, raw, st)
         )
 
-    def _write_export(self, spec, raw_df) -> None:
+    def _shape_as(self, state, raw_df, filters):
+        """Shape ``raw_df`` as the data stood in ``state`` (derived / removed /
+        renamed columns), then put the live state back."""
+        s = self.session
+        live = (s.derivations, s.removed, s.renames)
+        s.derivations, s.removed, s.renames = (
+            state["derivations"], state["removed"], state["renames"])
+        try:
+            return self.controller.shape_filtered(raw_df, filters)
+        finally:
+            s.derivations, s.removed, s.renames = live
+
+    def _write_export(self, spec, raw_df, state=None) -> None:
         from pathlib import Path
 
         from . import export
 
-        filters = self.controller.filters() if spec["respect_filters"] else []
         try:
-            frame = self.controller.shape_filtered(raw_df, filters)
+            if state is not None:
+                frame = self._shape_as(
+                    state, raw_df,
+                    state["filters"] if spec["respect_filters"] else [])
+            else:
+                filters = (self.controller.filters()
+                           if spec["respect_filters"] else [])
+                frame = self.controller.shape_filtered(raw_df, filters)
             if spec["mode"] == "summary":
                 out = export.build_summary(frame, spec["key"], spec["values"])
             else:
@@ -1240,10 +1293,17 @@ class MainWindow(QMainWindow):
             return
         if MacroPreviewDialog(name, descs, self).exec() != QDialog.DialogCode.Accepted:
             return
-        # Excel steps carry no data — each asks for its file before anything runs.
+        # Excel steps carry no data, and exports no destination — each asks for
+        # its file before anything runs.
         prepared = []
         for i, s in enumerate(steps):
             params = dict(s["params"])
+            if s["op"] == "export_excel":
+                target = self._macro_export_step(i, params)
+                if target is None:
+                    self.set_status("Macro cancelled.")
+                    return
+                params["path"] = target
             if s["op"] == "excel_import":
                 issue = self._macro_excel_step(i, params)
                 if issue is None:
@@ -1268,6 +1328,21 @@ class MainWindow(QMainWindow):
         self.set_status(
             f"Ran macro '{name}' ({n} step{'s' if n != 1 else ''})."
             + "".join(f" {note}" for note in notes))
+
+    def _macro_export_step(self, index: int, params: dict):
+        """Ask where a macro's Excel-export step should save. Returns the path,
+        or None if the user cancelled."""
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        start = str(Path(self._macro_start_dir())
+                    / (params.get("filename") or "export.xlsx"))
+        path, _sel = QFileDialog.getSaveFileName(
+            self, f"Macro step {index + 1}: save the Excel export as",
+            start, "Excel workbook (*.xlsx)")
+        if not path:
+            return None
+        return path if path.lower().endswith(".xlsx") else path + ".xlsx"
 
     def _macro_excel_step(self, index: int, params: dict):
         """Ask for the Excel file behind a macro's import step and read the
