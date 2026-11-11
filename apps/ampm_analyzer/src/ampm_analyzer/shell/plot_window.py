@@ -83,7 +83,7 @@ class DetachedPlotWindow(QMainWindow):
         toolbars.populate_plot(
             self._toolbar,
             color=self._icon_color,
-            sidebar_open=False,
+            sidebar_open=not self._panel.isHidden(),
             on_toggle_sidebar=self._toggle_panel,
             states=t.toggle_states(),
             on_reset_view=t.reset_view,
@@ -128,6 +128,42 @@ class DetachedPlotWindow(QMainWindow):
         p.colorMinChanged.connect(t.set_color_min)
         p.colorMaxChanged.connect(t.set_color_max)
         p.closed.connect(lambda: p.setVisible(False))
+        # Editable elements: double-click opens the editor; an open editor
+        # follows the selection; clicking off an element closes it.
+        p.elementEdited.connect(t.set_element)
+        p.elementReset.connect(self._reset_element)
+        p.elementDefaultRequested.connect(self._save_element_default)
+        p.elementClosed.connect(lambda: t.select_element(None))
+        t.elementActivated.connect(self._open_element)
+        t.elementSelected.connect(self._on_element_selected)
+
+    def _open_element(self, key: str) -> None:
+        was_visible = self._panel.isVisible()
+        self._panel.show_for("plot")
+        self._panel.sync_plot(self._tab.panel_state())
+        self._panel.edit_element(self._tab, key)
+        self._panel.setVisible(True)
+        if not was_visible:  # reflect the panel toggle on the toolbar
+            self._toolbar.clear()
+            self._build_toolbar()
+
+    def _on_element_selected(self, key: str) -> None:
+        if not key:
+            self._panel.show_plot_controls()
+        elif self._panel.element_key() is not None:
+            self._panel.edit_element(self._tab, key)
+
+    def _reset_element(self, key: str, builtin: bool) -> None:
+        self._tab.reset_element(key, builtin)
+        self._panel.set_element_values(self._tab.element_values(key))
+
+    def _save_element_default(self, key: str) -> None:
+        from . import plot_elements
+
+        self._tab.save_element_default(key)
+        self.statusBar().showMessage(
+            f"{plot_elements.ELEMENTS[key].label}: this styling is now the "
+            "default for new plots.", 6000)
 
     def _toggle_panel(self, on: bool) -> None:
         if on:

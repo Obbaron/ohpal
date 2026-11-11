@@ -476,6 +476,7 @@ class MainWindow(QMainWindow):
         if spec.is_layer_viewer:  # the scrub slider re-queries its layer
             tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
         tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
+        self._wire_plot_elements(tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
         # Query this plot's own span, then shape + feed it.
@@ -494,6 +495,34 @@ class MainWindow(QMainWindow):
         idx = self.stack.indexOf(tab)
         if idx >= 0:
             self.tabbar.setTabText(idx, name)
+
+    # -- editable plot elements ------------------------------------------
+    def _wire_plot_elements(self, tab) -> None:
+        tab.elementActivated.connect(
+            lambda key, t=tab: self._open_element_panel(t, key))
+        tab.elementSelected.connect(
+            lambda key, t=tab: self._on_element_selected(t, key))
+
+    def _open_element_panel(self, tab, key: str) -> None:
+        """Double-click on a plot element → its editor in the side panel."""
+        if tab is not self._active_plot:
+            return
+        was_visible = self.panel.isVisible()
+        self.panel.show_for("plot")
+        self.panel.edit_element(tab, key)
+        self.panel.setVisible(True)
+        if not was_visible:
+            self._sync_toolbar(self.tabbar.currentIndex())  # reflect the toggle
+
+    def _on_element_selected(self, tab, key: str) -> None:
+        """A single click only selects — but an editor that is already open
+        follows the selection, and clicking off an element closes it."""
+        if tab is not self._active_plot:
+            return
+        if not key:
+            self.panel.show_plot_controls()
+        elif self.panel.element_key() is not None:
+            self.panel.edit_element(tab, key)
 
     def _scrub_layer(self, tab, layer: int) -> None:
         """Re-query a Layer Viewer's chosen layer and feed it (camera stays
@@ -576,6 +605,7 @@ class MainWindow(QMainWindow):
         if spec.is_layer_viewer:
             tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
         tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
+        self._wire_plot_elements(tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
         self._feed_plot(tab, payload["raw"])  # shape via context + render
@@ -695,12 +725,40 @@ class MainWindow(QMainWindow):
         p.scaleChanged.connect(to_plot(lambda t, v: t.set_scale(v)))
         p.colorMinChanged.connect(to_plot(lambda t, v: t.set_color_min(v)))
         p.colorMaxChanged.connect(to_plot(lambda t, v: t.set_color_max(v)))
+        # Element editor.
+        p.elementEdited.connect(self._edit_plot_element)
+        p.elementReset.connect(self._reset_plot_element)
+        p.elementDefaultRequested.connect(self._save_plot_element_default)
+        p.elementClosed.connect(
+            lambda: self._active_plot and self._active_plot.select_element(None))
+
+    def _edit_plot_element(self, key: str, name: str, value) -> None:
+        if self._active_plot is not None:
+            self._active_plot.set_element(key, name, value)
+
+    def _reset_plot_element(self, key: str, builtin: bool) -> None:
+        tab = self._active_plot
+        if tab is None:
+            return
+        tab.reset_element(key, builtin)
+        self.panel.set_element_values(tab.element_values(key))
+
+    def _save_plot_element_default(self, key: str) -> None:
+        tab = self._active_plot
+        if tab is None:
+            return
+        from . import plot_elements
+
+        tab.save_element_default(key)
+        label = plot_elements.ELEMENTS[key].label
+        self.set_status(f"{label}: this styling is now the default for new plots.")
 
     def _on_tab_changed(self, index: int) -> None:
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
         widget = self.stack.widget(index)
         self._active_plot = widget if widget in self._plot_tabs else None
+        self.panel.show_plot_controls()  # an element editor belongs to its plot
         if self._active_plot is not None:
             self.panel.sync_plot(self._active_plot.panel_state())
         self._sync_toolbar(index)

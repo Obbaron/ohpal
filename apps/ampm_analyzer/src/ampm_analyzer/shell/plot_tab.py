@@ -9,6 +9,11 @@ Decorations:
   * 3D → a wireframe bounding box + coloured axis-name labels at the box edges.
   * numeric colour → a ColorBarWidget; the toolbar toggles show/hide each.
 
+Editable elements: the title, axes, 3D axis labels, category labels and the
+colour bar can be clicked to select (an outline marks the selection) and
+double-clicked to edit in the side panel. What each exposes is described in
+``plot_elements``; this tab owns the live objects and applies a style to them.
+
 VisPy is imported lazily and guarded: without it (or an OpenGL context) the tab
 shows a labelled placeholder. Render arrays are released on close.
 """
@@ -22,6 +27,7 @@ from PyQt6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
+    QFontMetricsF,
     QPainter,
     QPainterPath,
     QPen,
@@ -36,6 +42,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import plot_elements as pe
 from . import plotdata
 from .plotdata import DEFAULT_COLORMAP, colormap_stops
 from .plotspec import PlotSpec
@@ -57,7 +64,52 @@ _AXIS_LINE = _BG
 _AXIS_TICK = "#8a94a6"
 _AXIS_TEXT = "#5a6472"
 _TITLE_TEXT = "#2a2f3a"   # plot title: darker than the axis text
-_TITLE_STRIP_PX = 34      # top band that double-click-to-rename responds to
+
+# Editable elements. Chrome sizes below are the built-in look's; a bigger font
+# grows its strip by the difference so text is never clipped.
+_AXIS3D_KEYS = ("xaxis3d", "yaxis3d", "zaxis3d")
+_TITLE_H, _XAXIS_H, _YAXIS_W = 28, 42, 62      # px, at the default font sizes
+_AXIS_LABEL_MARGIN = 35                         # VisPy's default, px
+_CBAR_LABEL_W, _CBAR_W = 18, 74
+_CLICK_SLOP_PX = 4        # press→release travel that still counts as a click
+
+
+def _style_text(tv, style: dict, prefix: str = "") -> None:
+    """Apply a style's font / size / colour to a VisPy text visual, live."""
+    face = pe.face(style.get(prefix + "font"))
+    bold = bool(style.get(prefix + "bold", False))
+    italic = bool(style.get(prefix + "italic", False))
+    if (tv.face, bool(tv.bold), bool(tv.italic)) != (face, bold, italic):
+        tv._face, tv._bold, tv._italic = face, bold, italic
+        tv._update_font()
+        tv.text = tv.text  # glyph vertices belong to a font: rebuild them
+    size = float(style.get(prefix + "size", tv.font_size))
+    if float(tv.font_size) != size:
+        tv.font_size = size
+    tv.color = style.get(prefix + "color", "#000000")
+
+
+class _Highlight(QWidget):
+    """Outline around the selected element. A Qt overlay on the canvas, so it
+    is never part of a saved image."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.hide()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        accent = self.palette().highlight().color()
+        fill = QColor(accent)
+        fill.setAlpha(26)
+        p.setPen(QPen(accent, 1.5))
+        p.setBrush(QBrush(fill))
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.drawRoundedRect(r, 4, 4)
+        p.end()
 
 
 def _sig(x: float, n: int = 4) -> float:
@@ -204,6 +256,10 @@ class PlotTab(QWidget):
     layerChanged = pyqtSignal(int)
     # Emitted when the on-plot title is renamed; the window updates the tab.
     titleChanged = pyqtSignal(str)
+    # Editable elements: a click selects one ("" = selection cleared), a
+    # double-click asks for its editor (the side panel).
+    elementSelected = pyqtSignal(str)
+    elementActivated = pyqtSignal(str)
 
     def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
                  layers=None, parent: QWidget | None = None) -> None:
@@ -286,6 +342,18 @@ class PlotTab(QWidget):
         self._opacity = 1.0                     # 0..1 multiplier on marker alpha
         self._full_range: tuple | None = None   # colour column extent, for Min/Max
 
+        # Editable elements: one resolved style per element (the default for
+        # new plots, then this plot's edits), the selection and its outline.
+        self._el_style: dict[str, dict] = {
+            k: pe.default_style(k) for k in pe.keys_for(spec)}
+        self._selected: str | None = None
+        self._hl: _Highlight | None = None
+        self._press_pos = None       # left-button press, to tell click from drag
+        self._rect_cache: dict = {}  # element rects, valid for one frame
+        self._cbar_auto = ""         # the colour bar's automatic label
+        self._hand = False           # pointing-hand cursor shown?
+        self._fit_pending = False    # a Y-strip fit is queued for after a frame
+
         self._title_label = None  # a VisPy Label inside the canvas
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
@@ -359,6 +427,7 @@ class PlotTab(QWidget):
                 f"(import error: {exc})"
             )
         try:
+            pe.ensure_fonts()
             canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
             grid = canvas.central_widget.add_grid(margin=6)
             self._grid = grid
@@ -368,7 +437,7 @@ class PlotTab(QWidget):
             # would invent a stretchy phantom column that steals half the width.
             self._title_label = scene.Label(
                 self.title, color=_TITLE_TEXT, font_size=13)
-            self._title_label.height_max = 28
+            self._title_label.height_max = _TITLE_H
             grid.add_widget(self._title_label, row=0,
                             col=0 if self.spec.is_3d else 1)
             self._title_label.visible = self._show_title
@@ -390,7 +459,7 @@ class PlotTab(QWidget):
                     axis_color=_AXIS_LINE, tick_color=_AXIS_TICK,
                     text_color=_AXIS_TEXT,
                 )
-                self._yaxis.width_max = 62
+                self._yaxis.width_max = _YAXIS_W
                 grid.add_widget(self._yaxis, row=1, col=0)
                 self._xaxis = scene.AxisWidget(
                     orientation="bottom", axis_label=self.spec.x,
@@ -398,7 +467,7 @@ class PlotTab(QWidget):
                     axis_color=_AXIS_LINE, tick_color=_AXIS_TICK,
                     text_color=_AXIS_TEXT,
                 )
-                self._xaxis.height_max = 42
+                self._xaxis.height_max = _XAXIS_H
                 grid.add_widget(self._xaxis, row=2, col=1)
                 self._yaxis.link_view(view)
                 self._xaxis.link_view(view)
@@ -416,7 +485,7 @@ class PlotTab(QWidget):
             self._cbar_col += 1
             self._cbar_label = scene.Label(
                 "", rotation=-90, color=_AXIS_TEXT, font_size=9)
-            self._cbar_label.width_max = 18
+            self._cbar_label.width_max = _CBAR_LABEL_W
             grid.add_widget(self._cbar_label, row=1, col=self._cbar_label_col)
             self._cbar_label.visible = False
             self._scatter = scene.visuals.Markers()
@@ -425,6 +494,10 @@ class PlotTab(QWidget):
             canvas.events.mouse_move.connect(self._on_mouse_move)
             canvas.events.mouse_wheel.connect(self._on_wheel)
             canvas.events.mouse_double_click.connect(self._on_double_click)
+            canvas.events.mouse_press.connect(self._on_mouse_press)
+            canvas.events.mouse_release.connect(self._on_mouse_release)
+            canvas.events.draw.connect(self._on_draw)
+            self._apply_elements()  # saved defaults onto the fresh chrome
             return canvas.native
         except Exception as exc:  # noqa: BLE001 - GL context failure -> placeholder
             return _placeholder(f"Could not start the canvas:\n{exc}")
@@ -472,6 +545,7 @@ class PlotTab(QWidget):
         self._set_scatter(self._effective_size())
         self._build_hover_index(data)
         self._update_decor(data)
+        self._apply_elements()
         self._apply_visibility()
         if self._view is not None and first:
             # Defer the fit so the grid (incl. the just-added colourbar) has
@@ -517,12 +591,7 @@ class PlotTab(QWidget):
         self._full_range = data.full_range
         self._bar_data = data
         # The left axis measures the bar height (count / CoV / value), not the
-        # raw signal column — label it from what the bars actually are.
-        if self._yaxis is not None:
-            try:
-                self._yaxis.axis.axis_label = data.value_name
-            except Exception:  # noqa: BLE001 — labelling is cosmetic
-                pass
+        # raw signal column — _auto_text labels it from what the bars are.
 
         n = data.n
         w = data.width or 0.8
@@ -560,10 +629,14 @@ class PlotTab(QWidget):
         axis_y = ymin - 0.35 * gap
         label_y = ymin - gap
         if data.categorical and data.labels:  # category text under the x axis
+            # The labels hang from just under the rule, so a bigger font grows
+            # downwards, away from the bars. (VisPy's "bottom" anchor is the
+            # text's top edge in a y-up view.)
+            hang_y = ymin - 0.45 * gap
             for i, label in enumerate(data.labels):
                 t = scene.visuals.Text(
-                    label, pos=(float(data.centers[i]), label_y), color=_AXIS_TEXT,
-                    anchor_x="center", anchor_y="top", font_size=9,
+                    label, pos=(float(data.centers[i]), hang_y), color=_AXIS_TEXT,
+                    anchor_x="center", anchor_y="bottom", font_size=9,
                     parent=self._view.scene)
                 self._bar_labels.append(t)
 
@@ -595,6 +668,7 @@ class PlotTab(QWidget):
             y_lo = ymin
         self._data_bounds = (np.array([xlo, y_lo], "float32"),
                              np.array([xhi, ymax], "float32"))
+        self._apply_elements()
         self._apply_visibility()
         first = not self._rendered_once
         self._rendered_once = True
@@ -686,6 +760,7 @@ class PlotTab(QWidget):
         self._set_colorbar(clo, chi, data.value_name)
         self._data_bounds = (np.array([x0, y0], "float32"),
                              np.array([xmax + dx / 2, ymax + dy / 2], "float32"))
+        self._apply_elements()
         self._apply_visibility()
         first = not self._rendered_once
         self._rendered_once = True
@@ -819,16 +894,17 @@ class PlotTab(QWidget):
                 clim=(_sig(lo), _sig(hi)), border_width=1,
                 border_color="#888888",
             )
-            self._cbar.width_max = 74  # bar + end numbers (name is its own col)
+            self._cbar.width_max = _CBAR_W  # bar + end numbers (name: own col)
             self._cbar.bgcolor = _BG
             self._grid.add_widget(self._cbar, row=1, col=self._cbar_col)
         else:
             self._cbar.cmap = cm
             self._cbar.clim = (_sig(lo), _sig(hi))
+        self._cbar_auto = str(name)
         if self._cbar_label is not None:
-            self._cbar_label.text = str(name)
             self._cbar_label.visible = self._show_legend
         self._cbar.visible = self._show_legend
+        self._apply_element("cbar")  # label text + fonts (a new bar included)
 
     def _apply_visibility(self) -> None:
         if self._yaxis is not None:
@@ -854,6 +930,7 @@ class PlotTab(QWidget):
             self._cbar.visible = self._show_legend
         if self._cbar_label is not None:
             self._cbar_label.visible = self._show_legend and self._cbar is not None
+        self._elements_changed()  # a hidden element can't stay outlined
 
     # -- toolbar-driven controls ---------------------------------------
     def set_axes_visible(self, on: bool) -> None:
@@ -876,9 +953,12 @@ class PlotTab(QWidget):
         self._show_title = on
         if self._title_label is not None:
             self._title_label.visible = on
-            self._title_label.height_max = 28 if on else 0  # reclaim strip space
+            # Off reclaims the strip's space.
+            self._title_label.height_max = self._title_height() if on else 0
+            self._relayout()
             if self._canvas is not None:
                 self._canvas.update()
+        self._elements_changed()
 
     def _set_title(self, name: str) -> None:
         name = name.strip()
@@ -889,19 +969,373 @@ class PlotTab(QWidget):
             self._title_label.text = name
         self.titleChanged.emit(name)
 
-    def _on_double_click(self, event) -> None:
-        """Double-click the title strip (top band) to rename the plot."""
-        if not self._show_title or self._title_label is None:
-            return
-        pos = getattr(event, "pos", None)
-        if pos is None or pos[1] > _TITLE_STRIP_PX:
-            return
-        from PyQt6.QtWidgets import QInputDialog
+    # -- editable elements ----------------------------------------------
+    def _px(self, pt: float) -> float:
+        """Font points → canvas pixels."""
+        dpi = getattr(self._canvas, "dpi", None) or 96.0
+        return float(pt) * float(dpi) / 72.0
 
-        text, ok = QInputDialog.getText(
-            self, "Rename plot", "Title:", text=self.title)
-        if ok:
-            self._set_title(text)
+    def _title_height(self) -> float:
+        size = self._el_style["title"]["size"]
+        return max(18.0, _TITLE_H + 1.5 * (self._px(size) - self._px(13)))
+
+    def _auto_text(self, key: str) -> str:
+        """An element's automatic text — what it shows with no override."""
+        if key in ("xaxis", "xaxis3d"):
+            return str(self.spec.x or "")
+        if key == "yaxis":
+            if self._bar_data is not None:  # bars measure count / CoV / value
+                return str(self._bar_data.value_name)
+            return str(self.spec.y or "")
+        if key == "yaxis3d":
+            return str(self.spec.y or "")
+        if key == "zaxis3d":
+            return str(self.spec.z or "")
+        if key == "cbar":
+            return self._cbar_auto
+        return ""
+
+    def element_keys(self) -> list[str]:
+        """The editable elements on screen right now."""
+        return [k for k in self._el_style if self._element_present(k)]
+
+    def _element_present(self, key: str) -> bool:
+        if key == "title":
+            return self._title_label is not None and self._show_title
+        if key == "xaxis":
+            return self._xaxis is not None and bool(self._xaxis.visible)
+        if key == "yaxis":
+            return self._yaxis is not None and bool(self._yaxis.visible)
+        if key in _AXIS3D_KEYS:
+            return (self._show_axes
+                    and _AXIS3D_KEYS.index(key) < len(self._axis_labels))
+        if key == "categories":
+            return self._show_axes and bool(self._bar_labels)
+        if key == "cbar":
+            return self._cbar is not None and bool(self._cbar.visible)
+        return False
+
+    def element_values(self, key: str) -> dict:
+        """The element's current style, for the editor."""
+        vals = dict(self._el_style.get(key, {}))
+        if key == "title":
+            vals["text"] = self.title
+        return vals
+
+    def element_auto_text(self, key: str) -> str:
+        return self._auto_text(key)
+
+    def selected_element(self) -> str | None:
+        return self._selected
+
+    def set_element(self, key: str, name: str, value) -> None:
+        """Change one property of an element; the plot updates in place."""
+        style = self._el_style.get(key)
+        if style is None:
+            return
+        if key == "title" and name == "text":
+            self._set_title(str(value))  # the plot's name (and its tab's)
+            self._elements_changed()
+            return
+        if name not in style:
+            return
+        style[name] = value
+        self._apply_element(key)
+        self._elements_changed()
+
+    def reset_element(self, key: str, builtin: bool = False) -> None:
+        """Back to the default for new plots (or the built-in look). The text
+        is kept — only the styling resets."""
+        if key not in self._el_style:
+            return
+        fresh = pe.builtin_style(key) if builtin else pe.default_style(key)
+        if "text" in fresh:
+            fresh["text"] = self._el_style[key].get("text", "")
+        self._el_style[key] = fresh
+        self._apply_element(key)
+        self._elements_changed()
+
+    def save_element_default(self, key: str) -> None:
+        """Make this element's styling the default for new plots."""
+        if key in self._el_style:
+            pe.save_default(key, self._el_style[key])
+
+    def _apply_elements(self) -> None:
+        for key in self._el_style:
+            self._apply_element(key)
+
+    def _apply_element(self, key: str) -> None:
+        """Push an element's style onto its live VisPy objects."""
+        st = self._el_style.get(key)
+        if st is None or self._grid is None:
+            return
+        try:
+            if key == "title":
+                if self._title_label is not None:
+                    _style_text(self._title_label._text_visual, st)
+                    self._title_label.height_max = (
+                        self._title_height() if self._show_title else 0)
+            elif key in ("xaxis", "yaxis"):
+                self._apply_axis(key, st)
+            elif key in _AXIS3D_KEYS:
+                i = _AXIS3D_KEYS.index(key)
+                if i < len(self._axis_labels):
+                    label = self._axis_labels[i]
+                    label.text = st.get("text") or self._auto_text(key)
+                    _style_text(label, st)
+            elif key == "categories":
+                for label in self._bar_labels:
+                    _style_text(label, st)
+            elif key == "cbar":
+                if self._cbar_label is not None:
+                    self._cbar_label.text = st.get("text") or self._cbar_auto
+                    _style_text(self._cbar_label._text_visual, st)
+                    self._cbar_label.width_max = max(12.0, _CBAR_LABEL_W + 1.3 * (
+                        self._px(st["size"]) - self._px(9)))
+                if self._cbar is not None:
+                    for tick in self._cbar.ticks:
+                        _style_text(tick, st, "num_")
+                    self._cbar.width_max = max(48.0, _CBAR_W + 2.6 * (
+                        self._px(st["num_size"]) - self._px(12)))
+            self._relayout()
+        except Exception:  # noqa: BLE001 - styling is cosmetic; never break a plot
+            pass
+
+    def _relayout(self) -> None:
+        """Have the canvas grid pick up changed strip sizes (it only re-reads
+        a widget's size limits when its solver is rebuilt)."""
+        if self._grid is not None:
+            self._grid._need_solver_recreate = True
+            self._grid.update()
+
+    def _apply_axis(self, key: str, st: dict) -> None:
+        widget = self._xaxis if key == "xaxis" else self._yaxis
+        if widget is None:
+            return
+        axis = widget.axis
+        axis.axis_label = st.get("text") or self._auto_text(key)
+        _style_text(axis._axis_label_vis, st)
+        _style_text(axis._text, st, "tick_")
+        # Bigger fonts need a deeper strip and the title pushed further out.
+        d_title = self._px(st["size"]) - self._px(9)
+        d_tick = self._px(st["tick_size"]) - self._px(8)
+        if key == "xaxis":  # tick labels stack above the title
+            axis.axis_label_margin = max(
+                16.0, _AXIS_LABEL_MARGIN + d_tick + 0.5 * d_title)
+            widget.height_max = max(24.0, _XAXIS_H + d_tick + 1.3 * d_title)
+        else:               # tick labels sit beside the (rotated) title
+            self._fit_yaxis(force=True)
+
+    def _fit_yaxis(self, force: bool = False) -> None:
+        """Size the Y strip to the tick labels on screen, so the (rotated)
+        title never sits on top of them — however long the numbers get and
+        whatever the two font sizes are. Grows at once, shrinks lazily, so a
+        pan that flips "-9.5" to "-10" doesn't make the plot jitter."""
+        self._fit_pending = False
+        widget = self._yaxis
+        if widget is None:
+            return
+        st, axis = self._el_style["yaxis"], widget.axis
+        labels = axis._text.text or []
+        if isinstance(labels, str):
+            labels = [labels]
+        tick_font = QFont(st.get("tick_font") or pe.DEFAULT_FONT)
+        tick_font.setPixelSize(max(1, int(round(self._px(st["tick_size"])))))
+        fm = QFontMetricsF(tick_font)
+        widest = max((fm.horizontalAdvance(str(t)) for t in labels), default=0.0)
+        half_title = 0.6 * self._px(st["size"])  # the rotated title's half-depth
+        d_title = self._px(st["size"]) - self._px(9)
+        # Measured from the tick ends: tick-label gap + label + air + half title.
+        need = max(_AXIS_LABEL_MARGIN + 0.5 * d_title,
+                   float(axis.tick_label_margin) + widest + 4.0 + half_title)
+        cur = float(axis.axis_label_margin)
+        if force or need > cur + 1.0 or need < cur - 12.0:
+            axis.axis_label_margin = need
+            widget.width_max = max(
+                30.0, _YAXIS_W + (need - _AXIS_LABEL_MARGIN) + 0.7 * d_title)
+            self._relayout()
+
+    def _elements_changed(self) -> None:
+        """An element's look or presence changed: redraw; the outline follows
+        on the next frame (after the grid has re-laid out)."""
+        self._rect_cache = {}
+        if self._canvas is not None:
+            self._canvas.update()
+        QTimer.singleShot(0, self._sync_highlight)
+
+    # geometry (canvas pixels == the native widget's pixels)
+    def _widget_rect(self, widget) -> QRectF | None:
+        if widget is None:
+            return None
+        tr = widget.transforms.get_transform("visual", "canvas")
+        x0, y0 = (float(v) for v in tr.map((0, 0))[:2])
+        x1, y1 = (float(v) for v in tr.map(tuple(widget.size))[:2])
+        return QRectF(QPointF(min(x0, x1), min(y0, y1)),
+                      QPointF(max(x0, x1), max(y0, y1)))
+
+    def _text_box(self, text: str, st: dict, cx: float, cy: float, *,
+                  rotated: bool = False, top: bool = False) -> QRectF:
+        """Where a piece of text sits, from its font metrics. ``top`` anchors
+        the text's top edge at ``cy`` (else it is centred there)."""
+        font = QFont(st.get("font") or pe.DEFAULT_FONT)
+        font.setPixelSize(max(1, int(round(self._px(st.get("size", 9))))))
+        font.setBold(bool(st.get("bold", False)))
+        font.setItalic(bool(st.get("italic", False)))
+        fm = QFontMetricsF(font)
+        w, h = max(fm.horizontalAdvance(text or " "), 12.0), fm.height()
+        if rotated:
+            w, h = h, w
+        y = cy if top else cy - h / 2
+        return QRectF(cx - w / 2, y, w, h).adjusted(-6, -3, 6, 3)
+
+    def _scene_points(self, visual, pos) -> list[tuple[float, float]]:
+        """Project scene positions to canvas pixels (skipping any behind the
+        camera)."""
+        pts = np.atleast_2d(np.asarray(pos, dtype="float64"))
+        proj = np.atleast_2d(
+            visual.get_transform("visual", "canvas").map(pts))
+        out = []
+        for row in proj:
+            w = float(row[3]) if row.shape[0] > 3 else 1.0
+            if w > 1e-6:
+                out.append((float(row[0]) / w, float(row[1]) / w))
+        return out
+
+    def _element_rect(self, key: str) -> QRectF | None:
+        if key in self._rect_cache:
+            return self._rect_cache[key]
+        rect = None
+        try:
+            if self._element_present(key):
+                rect = self._compute_rect(key)
+        except Exception:  # noqa: BLE001 - no rect → simply not clickable
+            rect = None
+        self._rect_cache[key] = rect
+        return rect
+
+    def _compute_rect(self, key: str) -> QRectF | None:
+        st = self._el_style[key]
+        if key == "title":
+            strip = self._widget_rect(self._title_label)
+            c = strip.center()
+            return self._text_box(self.title, st, c.x(), c.y()).intersected(
+                strip.adjusted(0, -4, 0, 4))
+        if key == "xaxis":
+            # The title hangs a little below its strip (into the canvas
+            # margin), so the outline takes the title's own box in too.
+            strip = self._widget_rect(self._xaxis)
+            axis = self._xaxis.axis
+            below = float(axis.major_tick_length) + float(axis.axis_label_margin)
+            title = self._text_box(
+                st.get("text") or self._auto_text(key), st,
+                strip.center().x(), strip.top() + below)
+            canvas = QRectF(0, 0, *(float(v) for v in self._canvas.size))
+            return strip.united(title).intersected(canvas)
+        if key == "yaxis":
+            return self._widget_rect(self._yaxis)
+        if key == "cbar":
+            rect = self._widget_rect(self._cbar)
+            if self._cbar_label is not None and self._cbar_label.visible:
+                rect = rect.united(self._widget_rect(self._cbar_label))
+            return rect
+        if key in _AXIS3D_KEYS:
+            label = self._axis_labels[_AXIS3D_KEYS.index(key)]
+            pts = self._scene_points(label, label.pos)
+            if not pts:
+                return None
+            text = st.get("text") or self._auto_text(key)
+            return self._text_box(text, st, *pts[0])
+        if key == "categories":
+            rect = None
+            for label in self._bar_labels:
+                for x, y in self._scene_points(label, label.pos):
+                    box = self._text_box(str(label.text), st, x, y, top=True)
+                    rect = box if rect is None else rect.united(box)
+            view = self._widget_rect(self._view)
+            return rect.intersected(view) if rect is not None else None
+        return None
+
+    def _element_at(self, pos) -> str | None:
+        """The element under a canvas position (None over the data)."""
+        if pos is None:
+            return None
+        pt = QPointF(float(pos[0]), float(pos[1]))
+        for key in self._el_style:
+            rect = self._element_rect(key)
+            if rect is not None and rect.contains(pt):
+                return key
+        return None
+
+    def select_element(self, key: str | None) -> None:
+        """Select an element (outlined on the plot), or clear with None."""
+        key = key if key in self._el_style else None
+        if key == self._selected:
+            return
+        self._selected = key
+        self._sync_highlight()
+        self.elementSelected.emit(key or "")
+
+    def _sync_highlight(self) -> None:
+        if self._canvas is None:
+            return
+        rect = self._element_rect(self._selected) if self._selected else None
+        if rect is None or rect.isEmpty():
+            if self._hl is not None:
+                self._hl.hide()
+            return
+        if self._hl is None:
+            self._hl = _Highlight(self._canvas.native)
+        geo = rect.toAlignedRect()
+        if self._hl.geometry() != geo:
+            self._hl.setGeometry(geo)
+        if not self._hl.isVisible():
+            self._hl.show()
+            self._hl.raise_()
+
+    def _on_draw(self, _event) -> None:
+        # A new frame: the layout / camera may have moved every element.
+        self._rect_cache = {}
+        if self._selected is not None:
+            QTimer.singleShot(0, self._sync_highlight)
+        if self._yaxis is not None and not self._fit_pending:
+            self._fit_pending = True  # the tick labels may have changed
+            QTimer.singleShot(0, self._fit_yaxis)
+
+    def _on_mouse_press(self, event) -> None:
+        pos = getattr(event, "pos", None)
+        self._press_pos = (
+            (float(pos[0]), float(pos[1]))
+            if pos is not None and getattr(event, "button", None) == 1 else None)
+
+    def _on_mouse_release(self, event) -> None:
+        start, self._press_pos = self._press_pos, None
+        pos = getattr(event, "pos", None)
+        if start is None or pos is None or getattr(event, "button", None) != 1:
+            return
+        if ((pos[0] - start[0]) ** 2 + (pos[1] - start[1]) ** 2
+                > _CLICK_SLOP_PX ** 2):
+            return  # a drag (pan / rotate), not a click
+        self.select_element(self._element_at(pos))
+
+    def _on_double_click(self, event) -> None:
+        """Double-click an element to edit it in the side panel."""
+        key = self._element_at(getattr(event, "pos", None))
+        if key is None:
+            return
+        self.select_element(key)
+        self.elementActivated.emit(key)
+
+    def _hover_cursor(self, event) -> None:
+        """Pointing hand over anything that can be clicked to edit."""
+        if self._canvas is None or getattr(event, "buttons", None):
+            return
+        over = self._element_at(getattr(event, "pos", None)) is not None
+        if over != self._hand:
+            self._hand = over
+            if over:
+                self._canvas.native.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self._canvas.native.unsetCursor()
 
     def reset_view(self) -> None:
         if self._view is None:
@@ -1059,6 +1493,7 @@ class PlotTab(QWidget):
             "grid": self._show_grid, "bbox": self._show_bbox,
             "legend": self._show_legend, "title": self._show_title,
             "title_text": self.title,
+            "elements": {k: dict(v) for k, v in self._el_style.items()},
         }
 
     def apply_appearance(self, a: dict) -> None:
@@ -1076,9 +1511,13 @@ class PlotTab(QWidget):
         self._show_legend = a.get("legend", self._show_legend)
         self._show_title = a.get("title", self._show_title)
         self.title = a.get("title_text", self.title)
+        for key, style in (a.get("elements") or {}).items():
+            if key in self._el_style and isinstance(style, dict):
+                self._el_style[key].update(style)
         if self._title_label is not None:
             self._title_label.text = self.title
             self._title_label.visible = self._show_title
+        self._apply_elements()
 
     # -- overlay (errors / empty) on top of the canvas -----------------
     def _show_overlay(self, text: str) -> None:
@@ -1125,6 +1564,7 @@ class PlotTab(QWidget):
             self._hover_pos = None
 
     def _on_mouse_move(self, event) -> None:
+        self._hover_cursor(event)
         if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._bar_hover(event)
             return
@@ -1259,7 +1699,12 @@ class PlotTab(QWidget):
         self._contour_img = None
         self._contour_pts = None
         self._contour_data = None
+        self._axis_labels = []
         self._hide_tooltip()
+        if self._hl is not None:
+            self._hl.hide()
+            self._hl.deleteLater()
+            self._hl = None
         if self._canvas is not None:
             try:
                 self._canvas.close()
