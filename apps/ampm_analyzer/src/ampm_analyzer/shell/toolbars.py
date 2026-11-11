@@ -148,6 +148,8 @@ def _menu_button(
     return btn
 
 
+_RECORDING_RED = "#d93025"  # the Stop button while a macro is recording
+
 # -- Data toolset ------------------------------------------------------
 def populate_data(
     toolbar: QToolBar,
@@ -179,6 +181,9 @@ def populate_data(
     on_reset_filter=None,
     on_new_plot=None,
     on_export_excel=None,
+    recording: bool = False,
+    on_macro_record=None,
+    on_macro_run=None,
 ) -> None:
     columns = columns or []
 
@@ -296,6 +301,23 @@ def populate_data(
         xls.triggered.connect(lambda: on_export_excel())
     else:
         xls.setEnabled(False)
+    toolbar.addSeparator()
+
+    # Macros — record the actions performed here, save them to a file, and run
+    # a saved macro. The record button turns into a (red) Stop while recording;
+    # a macro can't be run in the middle of recording one.
+    if recording:
+        rec = _action(toolbar, "Stop recording and save the macro", "macro_stop",
+                      _RECORDING_RED)
+    else:
+        rec = _action(toolbar, "Record a macro", "macro_record", color)
+    if on_macro_record is not None:
+        rec.triggered.connect(lambda: on_macro_record())
+    run = _action(toolbar, "Run a macro from a file", "macro_run", color)
+    if on_macro_run is not None and not recording:
+        run.triggered.connect(lambda: on_macro_run())
+    else:
+        run.setEnabled(False)
 
 
 # -- Plot toolset ------------------------------------------------------

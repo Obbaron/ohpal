@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, theme, toolbars, uistate
+from . import icons, macros, theme, toolbars, uistate
 from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
@@ -190,6 +190,12 @@ class MainWindow(QMainWindow):
             QShortcut(QKeySequence(keys), self, activated=slot)
         self._sync_history_buttons()
 
+        # Macro recorder: captures the actions committed between Record and Stop.
+        self.recorder = macros.Recorder(self.actions, parent=self)
+        self.recorder.changed.connect(self._on_recorder_changed)
+        self._rec_was_active = False
+        self._macro_dir: str | None = None  # last folder used for macro files
+
         # File (backstage) tab — pinned left-most, non-closable.
         self.backstage = Backstage()
         self.backstage.newRequested.connect(self.controller.new_build)
@@ -315,7 +321,7 @@ class MainWindow(QMainWindow):
         # before the first query, so the controller's pipeline applies them to
         # the first result (and the setup form below can reflect the renames).
         self._grid_cache_dir = store.cache_dir
-        self.actions.reset()  # undo history is per build
+        self._reset_history()  # undo history (and a recording) is per build
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
         self.session.removed = list(state["removed"])
@@ -342,7 +348,7 @@ class MainWindow(QMainWindow):
         # (Re)building a DataStore via setup = a fresh start: drop any per-build
         # UI state loaded from this cache dir (derived/removed columns, grid
         # layout) and delete its file, so a stale layout isn't restored.
-        self.actions.reset()
+        self._reset_history()
         self.session.derivations = []
         self.session.removed = []
         self.controller.set_filters([])
@@ -366,7 +372,7 @@ class MainWindow(QMainWindow):
         # to refresh the toolbar (Show/hide columns menu) rather than treating
         # the columns as unchanged.
         self._last_columns = None
-        self.actions.reset()  # a rebuild starts a fresh history
+        self._reset_history()  # a rebuild starts a fresh history
         self.controller.build_datastore(
             form.scope(), form.thickness(), form.recipe()
         )
@@ -680,6 +686,12 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         sb.addWidget(self._progress)
 
+        # Shown only while a macro is being recorded.
+        self._rec_label = QLabel("")
+        self._rec_label.setStyleSheet("color: #d93025; font-weight: 600;")
+        self._rec_label.setVisible(False)
+        sb.addPermanentWidget(self._rec_label)
+
         self._log_btn = QToolButton()
         self._log_btn.setText("Show log")
         self._log_btn.setAutoRaise(True)
@@ -827,6 +839,9 @@ class MainWindow(QMainWindow):
                 on_reset_filter=self._on_reset_filters,
                 on_new_plot=lambda name=None: self._new_plot(name),
                 on_export_excel=self._export_excel,
+                recording=self.recorder.active,
+                on_macro_record=self._toggle_macro_recording,
+                on_macro_run=self._run_macro,
             )
         else:
             p = self._active_plot
@@ -957,7 +972,7 @@ class MainWindow(QMainWindow):
             return
         name, grid_key, mapping, dtype, _n = dlg.result_values()
         self._run("excel_import", name=name, key=grid_key, mapping=mapping,
-                  dtype=dtype)
+                  dtype=dtype, source=dlg.source_values())
 
     # -- contextual part-wise actions ----------------------------------
     def _add_part_calc(self) -> None:
@@ -1098,6 +1113,158 @@ class MainWindow(QMainWindow):
             btn = self._global_btns[key]
             btn.setEnabled(can)
             btn.setToolTip(f"{word}: {label} ({keys})" if can else f"{word} ({keys})")
+
+    def _reset_history(self) -> None:
+        """A build was loaded / set up / rebuilt: the undo history starts over,
+        and a macro recording in progress can't continue across builds."""
+        if self.recorder.active:
+            self.recorder.cancel()
+            self.set_status("Macro recording stopped (the build changed) — "
+                            "nothing was saved.")
+        self.actions.reset()
+
+    # -- macros ----------------------------------------------------------
+    def _macro_start_dir(self) -> str:
+        from pathlib import Path
+
+        return self._macro_dir or str(Path.home())
+
+    def _on_recorder_changed(self) -> None:
+        """Keep the status-bar indicator current; swap the toolbar's Record /
+        Stop button when recording starts or ends."""
+        rec = self.recorder
+        n = rec.count()
+        self._rec_label.setText(
+            f"● Recording macro — {n} step{'s' if n != 1 else ''}")
+        self._rec_label.setVisible(rec.active)
+        if rec.active != self._rec_was_active:
+            self._rec_was_active = rec.active
+            self.refresh_data_layers()  # rebuilds the Data toolbar if showing
+
+    def _toggle_macro_recording(self) -> None:
+        if not self.recorder.active:
+            self.recorder.start()
+            self.set_status("Recording a macro — perform the actions, then "
+                            "press Stop to save it.")
+            return
+        steps = self.recorder.stop()
+        if not steps:
+            self.set_status("Nothing was recorded.")
+            return
+        self._save_recording(steps)
+
+    def _save_recording(self, steps: list) -> None:
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .message_dialog import ask, tell
+
+        n = len(steps)
+        while True:
+            start = str(Path(self._macro_start_dir()) / f"macro{macros.SUFFIX}")
+            path, _sel = QFileDialog.getSaveFileName(
+                self, "Save macro", start, macros.FILE_FILTER)
+            if not path:
+                if ask(self, "Discard the recording?",
+                       f"The {n} recorded step{'s' if n != 1 else ''} will be lost.",
+                       ok_text="Discard", cancel_text="Save…"):
+                    self.set_status("Macro recording discarded.")
+                    return
+                continue
+            try:
+                out = macros.save(path, macros.macro_name(path), steps)
+            except OSError as exc:
+                tell(self, "Couldn't save the macro", str(exc))
+                continue
+            self._macro_dir = str(out.parent)
+            self.set_status(
+                f"Saved macro '{macros.macro_name(out)}' "
+                f"({n} step{'s' if n != 1 else ''}) to {out.name}.")
+            return
+
+    def _run_macro(self) -> None:
+        """Pick a macro file, preview its steps, then run them as one
+        all-or-nothing action (a single undo step)."""
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .macro_dialog import MacroIssuesDialog, MacroPreviewDialog
+
+        if self._data_tab is None or self.session.result is None:
+            self.set_status("Load a build before running a macro.")
+            return
+        path, _sel = QFileDialog.getOpenFileName(
+            self, "Run macro", self._macro_start_dir(), macros.FILE_FILTER)
+        if not path:
+            return
+        self._macro_dir = str(Path(path).parent)
+        try:
+            name, steps = macros.load(path)
+        except macros.MacroError as exc:
+            MacroIssuesDialog(macros.macro_name(path), [str(exc)], self).exec()
+            return
+        # Describe the steps under this build's column names.
+        descs = [
+            macros.describe(s["op"], macros.resolve(
+                s["op"], s["params"], self.session.renames))
+            for s in steps
+        ]
+        if MacroPreviewDialog(name, descs, self).exec() != QDialog.DialogCode.Accepted:
+            return
+        # Excel steps carry no data — each asks for its file before anything runs.
+        prepared = []
+        for i, s in enumerate(steps):
+            params = dict(s["params"])
+            if s["op"] == "excel_import":
+                issue = self._macro_excel_step(i, params)
+                if issue is None:
+                    self.set_status("Macro cancelled.")
+                    return
+                if issue:
+                    MacroIssuesDialog(
+                        name, [f"Step {i + 1} — {descs[i]}\n{issue}"], self).exec()
+                    return
+            prepared.append((s["op"], params))
+        failed, message = self.actions.run_batch(
+            f"Run macro '{name}'", prepared,
+            prepare=lambda op, p: macros.resolve(op, p, self.session.renames))
+        if failed is not None:
+            MacroIssuesDialog(
+                name, [f"Step {failed + 1} — {descs[failed]}\n{message}"], self
+            ).exec()
+            self.set_status(f"Macro '{name}' was not run — see the issues.")
+            return
+        n = len(steps)
+        self.set_status(f"Ran macro '{name}' ({n} step{'s' if n != 1 else ''}).")
+
+    def _macro_excel_step(self, index: int, params: dict):
+        """Ask for the Excel file behind a macro's import step and read the
+        recorded sheet / columns from it into ``params``. Returns "" on success,
+        an issue message, or None if the user cancelled."""
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .excel_dialog import parse_mapping
+
+        src = params.get("source") or {}
+        sheet, key_h, val_h = (src.get("sheet"), src.get("key_column"),
+                               src.get("value_column"))
+        if not (sheet and key_h and val_h):
+            return "The step doesn't say which sheet and columns to read."
+        path, _sel = QFileDialog.getOpenFileName(
+            self,
+            f"Macro step {index + 1}: Excel file for column '{params.get('name')}'",
+            self._macro_start_dir(), "Excel workbook (*.xlsx *.xlsm)")
+        if not path:
+            return None
+        try:
+            mapping, dtype, _n = parse_mapping(path, sheet, key_h, val_h)
+        except Exception as exc:  # noqa: BLE001 — unreadable file etc. → an issue
+            return f"{Path(path).name}: {exc}"
+        if not mapping:
+            return f"{Path(path).name}: no usable key/value rows in '{sheet}'."
+        params["mapping"], params["dtype"] = mapping, dtype
+        return ""
 
     def _toggle_sidebar(self, checked: bool) -> None:
         kind = self.stack.currentWidget().property("tabkind")

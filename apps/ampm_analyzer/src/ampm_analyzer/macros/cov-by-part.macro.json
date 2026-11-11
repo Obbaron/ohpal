@@ -1,0 +1,45 @@
+{
+  "format": "ampm-macro",
+  "version": 1,
+  "name": "cov-by-part",
+  "created": "2026-11-11T11:17:41",
+  "steps": [
+    {
+      "op": "parts_csv_import",
+      "params": {
+        "items": [
+          [
+            "Scan Volume",
+            "Hatches Power"
+          ],
+          [
+            "Scan Volume",
+            "Hatches Point Distance"
+          ],
+          [
+            "Scan Volume",
+            "Hatches Exposure Time"
+          ]
+        ]
+      }
+    },
+    {
+      "op": "derive",
+      "params": {
+        "name": "Hatches Speed",
+        "expr": "([Hatches Point Distance]/[Hatches Exposure Time])*1000",
+        "group": "",
+        "overwrite": false,
+        "after": ""
+      }
+    },
+    {
+      "op": "part_calc",
+      "params": {
+        "signal": "MeltVIEW melt pool (mean)",
+        "reducer": "cov",
+        "name": "CoV (meltpool)"
+      }
+    }
+  ]
+}

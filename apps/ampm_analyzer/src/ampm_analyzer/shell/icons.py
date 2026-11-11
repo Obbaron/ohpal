@@ -48,6 +48,9 @@ UI = {
     "filter": "filter", "remove_filter": "filter--remove",
     "reset_filter": "filter--reset", "clear_filters": "filter--reset",
     "export_excel": "XLS",
+    # macros
+    "macro_record": "recording--filled", "macro_stop": "stop--filled",
+    "macro_run": "script",
     # plot toolbar
     "reset_view": "fit-to-screen", "axes": "x-axis", "grid": "grid",
     "bbox": "cube", "legend": "legend", "title": "custom/title",

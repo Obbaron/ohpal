@@ -62,7 +62,11 @@ def _rename_pairs(before: list[str], after: list[str]) -> list[tuple[str, str]]:
 
 
 class Actions(QObject):
-    performed = pyqtSignal(str, dict)  # (op, params) of each committed action
+    # (op, params, renames in force before it ran) of each committed action —
+    # the macro recorder listens to these three.
+    performed = pyqtSignal(str, dict, dict)
+    undone = pyqtSignal()
+    redone = pyqtSignal()
 
     def __init__(self, host, controller, session, parent=None) -> None:
         super().__init__(parent)
@@ -167,14 +171,44 @@ class Actions(QObject):
                 self._host._reshape_plots()
             self.history.push(out.label or op, before, after)
             self._host._save_ui()
-            self.performed.emit(op, dict(params))
+            self.performed.emit(op, dict(params), dict(before["renames"]))
         return out
+
+    def run_batch(self, label: str, steps, prepare=None):
+        """Run a list of ``(op, params)`` as ONE all-or-nothing action (a macro
+        run): one undo step on success; on the first failing step everything is
+        rolled back. ``prepare(op, params)`` is called just before each step
+        (the macro runner uses it to resolve column names against the state the
+        earlier steps left). Returns ``(None, "")`` on success, else
+        ``(index_of_failed_step, message)``."""
+        before = self.capture()
+        for i, (op, params) in enumerate(steps):
+            handler = getattr(self, f"_do_{op}", None)
+            try:
+                if handler is None:
+                    out = Outcome(False, f"Unknown action {op!r}.")
+                else:
+                    out = handler(**(prepare(op, params) if prepare else params))
+            except Exception as exc:  # noqa: BLE001 — surface, roll back below
+                out = Outcome(False, f"Action failed: {exc}")
+            if not out.ok:
+                if self._differs(before, self.capture()):
+                    self.restore(before)
+                return i, out.message or "The step could not be applied."
+        after = self.capture()
+        if self._differs(before, after):
+            if self._differs(before, after, _SHAPE_KEYS):
+                self._host._reshape_plots()
+            self.history.push(label, before, after)
+            self._host._save_ui()
+        return None, ""
 
     def undo(self) -> str | None:
         entry = self.history.take_undo()
         if entry is None:
             return None
         self.restore(entry.before)
+        self.undone.emit()
         return entry.label
 
     def redo(self) -> str | None:
@@ -182,6 +216,7 @@ class Actions(QObject):
         if entry is None:
             return None
         self.restore(entry.after)
+        self.redone.emit()
         return entry.label
 
     def reset(self) -> None:
@@ -213,7 +248,9 @@ class Actions(QObject):
         return Outcome(True, f"Added label column '{name}' ({len(rules)} rule(s)).",
                        f"Add label column '{name}'")
 
-    def _do_excel_import(self, name, key, mapping, dtype="f64") -> Outcome:
+    def _do_excel_import(self, name, key, mapping, dtype="f64", source=None) -> Outcome:
+        # ``source`` (sheet + column headers) isn't needed to apply the join; it
+        # rides along so a recorded macro can re-read another file the same way.
         err = self._c.add_join_derivation(name, key, mapping, dtype)
         if err:
             return Outcome(False, f"Add from Excel failed: {err}")

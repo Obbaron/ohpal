@@ -53,6 +53,7 @@ class ExcelImportDialog(QDialog):
         self._path: str | None = None
         self._name_edited = False
         self._result = None
+        self._source: dict = {}
 
         # Frameless card (matches the calculation / label dialogs).
         self.setWindowFlags(
@@ -223,52 +224,12 @@ class ExcelImportDialog(QDialog):
 
     def _parse(self, key_h: str, val_h: str):
         """Return (mapping, dtype, n). Raises ValueError with a message."""
-        from openpyxl import load_workbook
+        return parse_mapping(self._path, self._sheet(), key_h, val_h)
 
-        wb = load_workbook(self._path, read_only=True, data_only=True)
-        try:
-            rows = wb[self._sheet()].iter_rows(values_only=True)
-            header = next(rows, None)
-            if header is None:
-                raise ValueError("The sheet is empty.")
-            hdr = ["" if c is None else str(c).strip() for c in header]
-            try:
-                ki, vi = hdr.index(key_h), hdr.index(val_h)
-            except ValueError:
-                raise ValueError("Couldn't find the chosen columns in the sheet.")
-            pairs = []
-            for row in rows:
-                k = row[ki] if ki < len(row) else None
-                v = row[vi] if vi < len(row) else None
-                if k is None or (isinstance(k, str) and not k.strip()):
-                    continue
-                if v is None or (isinstance(v, str) and not v.strip()):
-                    continue
-                pairs.append((norm_key(k), v))
-        finally:
-            wb.close()
-
-        seen, dups = set(), []
-        for nk, _v in pairs:
-            (dups.append(nk) if nk in seen else seen.add(nk))
-        if dups:
-            uniq = sorted(set(dups))
-            tail = " …" if len(uniq) > 5 else ""
-            raise ValueError(
-                f"Duplicate keys in '{key_h}': {', '.join(uniq[:5])}{tail}. "
-                "Dedupe in Excel and re-import."
-            )
-
-        def _num(x) -> bool:
-            try:
-                float(x)
-                return True
-            except (TypeError, ValueError):
-                return False
-
-        if pairs and all(_num(v) for _, v in pairs):
-            return {nk: float(v) for nk, v in pairs}, "f64", len(pairs)
-        return {nk: str(v) for nk, v in pairs}, "str", len(pairs)
+    def source_values(self) -> dict:
+        """Where the accepted column came from (sheet + headers) — recorded in
+        a macro so the same read can be repeated on another file."""
+        return dict(self._source)
 
     # -- accept --------------------------------------------------------
     def _accept(self) -> None:
@@ -294,8 +255,65 @@ class ExcelImportDialog(QDialog):
         if not mapping:
             return self._error("No usable key/value rows found in the sheet.")
         self._result = (name, grid_key, mapping, dtype, n)
+        self._source = {"sheet": self._sheet(), "key_column": key_h,
+                        "value_column": val_h}
         self.accept()
 
     def result_values(self):
         """(name, grid_key, mapping, dtype, n_rows) — valid after accept()."""
         return self._result
+
+
+def parse_mapping(path, sheet: str, key_h: str, val_h: str):
+    """Read a key -> value table from an Excel sheet.
+
+    Return (mapping, dtype, n). Raises ValueError with a message. Module-level
+    (no dialog needed) so a macro's Excel step can re-read a chosen file."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if sheet not in wb.sheetnames:
+            raise ValueError(f"The workbook has no sheet named {sheet!r}.")
+        rows = wb[sheet].iter_rows(values_only=True)
+        header = next(rows, None)
+        if header is None:
+            raise ValueError("The sheet is empty.")
+        hdr = ["" if c is None else str(c).strip() for c in header]
+        try:
+            ki, vi = hdr.index(key_h), hdr.index(val_h)
+        except ValueError:
+            raise ValueError("Couldn't find the chosen columns in the sheet.")
+        pairs = []
+        for row in rows:
+            k = row[ki] if ki < len(row) else None
+            v = row[vi] if vi < len(row) else None
+            if k is None or (isinstance(k, str) and not k.strip()):
+                continue
+            if v is None or (isinstance(v, str) and not v.strip()):
+                continue
+            pairs.append((norm_key(k), v))
+    finally:
+        wb.close()
+
+    seen, dups = set(), []
+    for nk, _v in pairs:
+        (dups.append(nk) if nk in seen else seen.add(nk))
+    if dups:
+        uniq = sorted(set(dups))
+        tail = " …" if len(uniq) > 5 else ""
+        raise ValueError(
+            f"Duplicate keys in '{key_h}': {', '.join(uniq[:5])}{tail}. "
+            "Dedupe in Excel and re-import."
+        )
+
+    def _num(x) -> bool:
+        try:
+            float(x)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    if pairs and all(_num(v) for _, v in pairs):
+        return {nk: float(v) for nk, v in pairs}, "f64", len(pairs)
+    return {nk: str(v) for nk, v in pairs}, "str", len(pairs)
