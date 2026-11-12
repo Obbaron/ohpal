@@ -242,14 +242,113 @@ class ContourData:
     full_range: tuple
     n: int                 # number of filled cells
     show_points: bool = True
+    # The smooth surface that is drawn: z interpolated between the measured
+    # points on a fine regular grid spanning ``extent``; NaN where there is
+    # nothing to interpolate from (outside the measured region).
+    field: np.ndarray = None           # (CONTOUR_RES, CONTOUR_RES) float32
+    extent: tuple = (0.0, 1.0, 0.0, 1.0)  # (xmin, xmax, ymin, ymax)
+
+
+CONTOUR_RES = 400      # samples per axis of the interpolated field
+CONTOUR_BANDS = 16     # filled bands aimed for (the step is rounded to be nice)
+
+
+def nice_levels(lo: float, hi: float, target: int = CONTOUR_BANDS) -> np.ndarray:
+    """Band edges covering [lo, hi] on a round step (1, 2, 3 or 5 x 10^k), at
+    most ``target`` bands of them: what a filled-contour plot calls levels."""
+    lo, hi = float(lo), float(hi)
+    if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+        return np.array([lo, lo + 1.0], dtype="float64")
+    raw = (hi - lo) / max(1, int(target))
+    mag = 10.0 ** np.floor(np.log10(raw))
+    step = next((m * mag for m in (1.0, 2.0, 3.0, 5.0, 10.0)
+                 if m * mag >= raw * 0.999), 10.0 * mag)
+    first = np.floor(lo / step + 1e-9) * step
+    count = int(np.ceil((hi - first) / step - 1e-9))
+    levels = first + step * np.arange(count + 1)
+    return np.round(levels, 12)
+
+
+def level_labels(levels: np.ndarray, most: int = 9) -> list[tuple[int, str]]:
+    """Which levels to label along a banded colour bar, and how: every level,
+    or every 2nd, 3rd… counted from the bottom, so that at most ``most`` are
+    labelled. All share the decimals the step needs. Returns (index, text)."""
+    n = len(levels) - 1
+    if n < 1:
+        return []
+    every = max(1, int(np.ceil((n + 1) / most)))
+    step = abs(float(levels[1] - levels[0]))
+    places = max(0, int(-np.floor(np.log10(step) + 1e-9))) if 0 < step < 1 else 0
+    return [(i, f"{float(levels[i]):.{places}f}") for i in range(0, n + 1, every)]
+
+
+def band_colors(levels: np.ndarray, cmap: str | None) -> np.ndarray:
+    """One rgba colour per band (``len(levels) - 1`` of them), spread evenly
+    over the colormap from its first colour to its last."""
+    n = max(1, len(levels) - 1)
+    t = np.array([0.5], "float32") if n == 1 else np.linspace(0, 1, n, dtype="float32")
+    return _apply_cmap(t, cmap or DEFAULT_COLORMAP).astype("float32")
+
+
+def band_image(field: np.ndarray, levels: np.ndarray, cmap: str | None) -> np.ndarray:
+    """The field as filled bands: every sample takes the colour of the band
+    its value falls in (values past the ends take the end bands); NaN is clear."""
+    colors = band_colors(levels, cmap)
+    finite = np.isfinite(field)
+    idx = np.digitize(np.where(finite, field, levels[0]), levels[1:-1])
+    rgba = colors[np.clip(idx, 0, len(colors) - 1)]
+    rgba[~finite] = 0.0
+    return rgba.astype("float32")
+
+
+def _interpolate(xs, ys, grid, px, py, pz, fx, fy) -> np.ndarray:
+    """z over the fine grid (``fx`` x ``fy``) from the measured points.
+
+    A complete rectangular set of measurements gets a smooth spline surface
+    through every point; an incomplete one is interpolated between whichever
+    points exist (cubic where possible) and left NaN outside them. The result
+    is kept within the measured range, so the picture never shows a value
+    beyond anything that was measured.
+    """
+    out = None
+    try:
+        if np.isfinite(grid).all() and len(xs) >= 2 and len(ys) >= 2:
+            from scipy.interpolate import RectBivariateSpline
+
+            spline = RectBivariateSpline(
+                ys, xs, grid.astype("float64"),
+                kx=min(3, len(ys) - 1), ky=min(3, len(xs) - 1))
+            out = spline(fy, fx)
+        elif len(pz) >= 3:
+            from scipy.interpolate import griddata
+
+            gx, gy = np.meshgrid(fx, fy)
+            pts = np.column_stack([px, py])
+            for method in ("cubic", "linear"):
+                try:
+                    out = griddata(pts, pz, (gx, gy), method=method, rescale=True)
+                    break
+                except Exception:  # noqa: BLE001 - e.g. too few / collinear points
+                    out = None
+    except Exception:  # noqa: BLE001 - SciPy missing or a degenerate layout
+        out = None
+    if out is None:
+        # Fallback: each fine sample takes its nearest measured cell.
+        ix = np.abs(fx[:, None] - xs[None, :]).argmin(axis=1)
+        iy = np.abs(fy[:, None] - ys[None, :]).argmin(axis=1)
+        out = grid[np.ix_(iy, ix)].astype("float64")
+    if len(pz):
+        out = np.clip(out, float(np.min(pz)), float(np.max(pz)))  # NaN stays NaN
+    return out.astype("float32")
 
 
 def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> ContourData:
-    """Grid ``spec.z`` over the (``spec.x``, ``spec.y``) plane.
+    """``spec.z`` as a smooth surface over the (``spec.x``, ``spec.y``) plane.
 
-    Long-form in: one row per measured (x, y). Each unique x is a grid column,
-    each unique y a grid row, the cell value the first z there; empty cells are
-    NaN (shown as gaps). Mirrors ``ohpal.ampm.plotting.contour``.
+    Long-form in: rows carrying a measured (x, y) and its z. Rows sharing an
+    (x, y) are averaged. ``z`` keeps the coarse measured grid (each unique x a
+    column, each unique y a row, NaN where nothing was measured); ``field`` is
+    the interpolated surface the plot draws as filled bands.
     """
     import polars as pl
 
@@ -266,7 +365,7 @@ def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> Contou
         empty = np.zeros((0, 0), "float32")
         return ContourData(empty, np.zeros(0, "float32"), np.zeros(0, "float32"),
                            np.zeros((0, 2), "float32"), z, x, y, (0.0, 1.0),
-                           (0.0, 1.0), 0, spec.show_points)
+                           (0.0, 1.0), 0, spec.show_points, empty)
 
     xs = np.sort(sub[x].unique().to_numpy().astype("float64"))
     ys = np.sort(sub[y].unique().to_numpy().astype("float64"))
@@ -274,7 +373,8 @@ def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> Contou
     yi = {float(v): i for i, v in enumerate(ys)}
     grid = np.full((len(ys), len(xs)), np.nan, dtype="float32")
     g = (sub.group_by([y, x], maintain_order=True)
-         .agg(pl.col(z).first().alias("_v")))
+         .agg(pl.col(z).cast(pl.Float64).mean().alias("_v"))
+         .filter(pl.col("_v").is_finite()))
     for row in g.iter_rows(named=True):
         grid[yi[float(row[y])], xi[float(row[x])]] = row["_v"]
 
@@ -285,10 +385,18 @@ def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> Contou
         lo, hi = float(np.nanmin(grid)), float(np.nanmax(grid))
     else:
         lo, hi = 0.0, 1.0
-    pts = sub.select([x, y]).to_numpy().astype("float32")
+    # One overlay marker per measured combination (not per row).
+    px = g[x].to_numpy().astype("float64")
+    py = g[y].to_numpy().astype("float64")
+    pz = g["_v"].to_numpy().astype("float64")
+    pts = np.column_stack([px, py]).astype("float32")
+    extent = (float(xs[0]), float(xs[-1]), float(ys[0]), float(ys[-1]))
+    fx = np.linspace(extent[0], extent[1], CONTOUR_RES)
+    fy = np.linspace(extent[2], extent[3], CONTOUR_RES)
+    field = _interpolate(xs, ys, grid, px, py, pz, fx, fy)
     return ContourData(grid, xs.astype("float32"), ys.astype("float32"), pts,
                        z, x, y, (lo, hi), (lo, hi), int(finite.sum()),
-                       spec.show_points)
+                       spec.show_points, field, extent)
 
 
 def _apply_cmap(t: np.ndarray, name: str) -> np.ndarray:

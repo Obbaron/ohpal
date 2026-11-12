@@ -204,8 +204,18 @@ def _clean(key: str, style: dict) -> dict:
     return out
 
 
-def builtin_style(key: str) -> dict:
-    return dict(ELEMENTS[key].defaults)
+# Built-in looks that differ for one kind of plot. A contour plot's colour bar
+# is labelled along its whole length, so its numbers start smaller.
+KIND_DEFAULTS: dict[str, dict[str, dict]] = {
+    "Contour": {"cbar": {"num_size": 9}},
+}
+
+
+def builtin_style(key: str, kind: str | None = None) -> dict:
+    """The built-in look of an element (``kind``: the plot's kind, for the
+    few looks that depend on it)."""
+    return {**ELEMENTS[key].defaults,
+            **KIND_DEFAULTS.get(kind or "", {}).get(key, {})}
 
 
 def saved_default(key: str) -> dict:
@@ -220,10 +230,10 @@ def saved_default(key: str) -> dict:
     return _clean(key, data) if isinstance(data, dict) else {}
 
 
-def default_style(key: str) -> dict:
+def default_style(key: str, kind: str | None = None) -> dict:
     """What a new plot starts from: the built-in look with the saved default
     on top."""
-    return {**builtin_style(key), **saved_default(key)}
+    return {**builtin_style(key, kind), **saved_default(key)}
 
 
 def save_default(key: str, style: dict) -> None:

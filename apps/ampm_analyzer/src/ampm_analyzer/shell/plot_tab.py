@@ -281,7 +281,8 @@ class PlotTab(QWidget):
 
         self._df = None
         self.raw = None  # the plot's own raw span query (for re-shaping)
-        self.cmap = DEFAULT_COLORMAP
+        # A contour plot starts on the familiar filled-contour colours.
+        self.cmap = "viridis" if spec.is_contour else DEFAULT_COLORMAP
         self.scale = "linear"
         self.crange = None  # auto-detected on first render; sliders then tweak
         self._rendered_once = False
@@ -316,10 +317,14 @@ class PlotTab(QWidget):
         self._bar_labels: list = []
         self._bar_data = None
 
-        # Contour visuals (a gridded image + the measured-point overlay).
+        # Contour visuals: the filled bands (an image of the interpolated
+        # field), the iso-lines on the band edges, the measured-point overlay.
         self._contour_img = None
         self._contour_pts = None
+        self._contour_lines = None
         self._contour_data = None
+        self._cbar_extra: list = []     # labels between the colour bar's ends
+        self._cbar_extra_at: list = []  # their positions along it, 0..1
 
         # Hover tooltip: the rows behind the drawn points + a floating label
         # near the cursor. 2D picks via a data-space KDTree; 3D projects the
@@ -345,7 +350,7 @@ class PlotTab(QWidget):
         # Editable elements: one resolved style per element (the default for
         # new plots, then this plot's edits), the selection and its outline.
         self._el_style: dict[str, dict] = {
-            k: pe.default_style(k) for k in pe.keys_for(spec)}
+            k: pe.default_style(k, spec.kind) for k in pe.keys_for(spec)}
         self._selected: str | None = None
         self._hl: _Highlight | None = None
         self._press_pos = None       # left-button press, to tell click from drag
@@ -353,6 +358,7 @@ class PlotTab(QWidget):
         self._cbar_auto = ""         # the colour bar's automatic label
         self._hand = False           # pointing-hand cursor shown?
         self._fit_pending = False    # a Y-strip fit is queued for after a frame
+        self._layout_sig = None      # where the view + axes sat last frame
 
         self._title_label = None  # a VisPy Label inside the canvas
         self._lay = QVBoxLayout(self)
@@ -706,36 +712,52 @@ class PlotTab(QWidget):
         self._full_range = data.full_range
         self._contour_data = data
 
-        # Colour the gridded field through the colormap; empty cells go clear.
+        # Filled bands: the interpolated surface, each sample coloured by the
+        # level band its value falls in. Empty regions stay clear.
         lo, hi = float(data.crange[0]), float(data.crange[1])
-        span = (hi - lo) or 1.0
-        z = data.z
-        t = np.clip((z - lo) / span, 0.0, 1.0)
-        rgba = plotdata._apply_cmap(
-            np.nan_to_num(t).ravel(), self.cmap).reshape(z.shape[0], z.shape[1], 4)
-        rgba[~np.isfinite(z)] = 0.0  # transparent gaps
-        rgba = rgba.astype("float32")
+        levels = plotdata.nice_levels(lo, hi)
+        field = data.field
+        rgba = plotdata.band_image(field, levels, self.cmap)
 
-        xs, ys = data.x_values, data.y_values
-        nx, ny = len(xs), len(ys)
-        xmin, xmax = float(xs.min()), float(xs.max())
-        ymin, ymax = float(ys.min()), float(ys.max())
-        dx = (xmax - xmin) / (nx - 1) if nx > 1 else 1.0
-        dy = (ymax - ymin) / (ny - 1) if ny > 1 else 1.0
-        x0, y0 = xmin - dx / 2, ymin - dy / 2
+        xmin, xmax, ymin, ymax = data.extent
+        ny, nx = field.shape
+        dx = (xmax - xmin) / (nx - 1) if nx > 1 and xmax > xmin else 1.0
+        dy = (ymax - ymin) / (ny - 1) if ny > 1 and ymax > ymin else 1.0
 
         if self._contour_img is None:
             self._contour_img = scene.visuals.Image(
-                rgba, parent=self._view.scene, interpolation="nearest")
+                rgba, parent=self._view.scene, interpolation="bilinear")
         else:
             self._contour_img.set_data(rgba)
             if self._contour_img.parent is None:
                 self._contour_img.parent = self._view.scene
-        # Texel (col,row) centre -> data (x,y); row 0 = smallest y (y up).
+        # Sample (col, row) sits at data (xmin + col*dx, ymin + row*dy); an
+        # image texel is drawn around its sample, hence the half-step shift.
         self._contour_img.transform = STTransform(
-            scale=(dx, dy), translate=(x0, y0))
+            scale=(dx, dy), translate=(xmin - dx / 2, ymin - dy / 2))
         self._contour_img.order = 0
         self._contour_img.visible = True
+
+        # Thin iso-lines on the band edges sharpen the bands, as in a
+        # filled-contour plot. (Skipped over a field with empty regions.)
+        inner = [float(v) for v in levels[1:-1]]
+        if inner and bool(np.isfinite(field).all()):
+            if self._contour_lines is None:
+                self._contour_lines = scene.visuals.Isocurve(
+                    field, levels=inner, color_lev=(0.0, 0.0, 0.0, 0.16),
+                    width=1, antialias=True, parent=self._view.scene)
+                self._contour_lines.set_gl_state("translucent", depth_test=False)
+            else:
+                self._contour_lines.levels = inner
+                self._contour_lines.set_data(field)
+                if self._contour_lines.parent is None:
+                    self._contour_lines.parent = self._view.scene
+            self._contour_lines.transform = STTransform(
+                scale=(dx, dy), translate=(xmin, ymin))
+            self._contour_lines.order = 1
+            self._contour_lines.visible = True
+        elif self._contour_lines is not None:
+            self._contour_lines.visible = False
 
         # Overlay the measured (x, y) samples, drawn above the field.
         if data.show_points and data.points.shape[0]:
@@ -749,17 +771,16 @@ class PlotTab(QWidget):
                 data.points, face_color=(1, 1, 1, 0.9),
                 edge_color=(0, 0, 0, 0.7), edge_width=1, size=6, symbol="disc")
             self._contour_pts.antialias = 1
-            self._contour_pts.order = 1   # draw on top of the image
+            self._contour_pts.order = 2   # on top of the bands and lines
             self._contour_pts.visible = True
         elif self._contour_pts is not None:
             self._contour_pts.visible = False
 
-        clo, chi = lo, hi
-        if chi <= clo:  # flat field → a readable colourbar still needs a span
-            chi = clo + 1.0
-        self._set_colorbar(clo, chi, data.value_name)
-        self._data_bounds = (np.array([x0, y0], "float32"),
-                             np.array([xmax + dx / 2, ymax + dy / 2], "float32"))
+        # The colour bar shows the same bands, labelled at round levels.
+        self._set_colorbar(float(levels[0]), float(levels[-1]), data.value_name,
+                           levels=levels)
+        self._data_bounds = (np.array([xmin, ymin], "float32"),
+                             np.array([xmax, ymax], "float32"))
         self._apply_elements()
         self._apply_visibility()
         first = not self._rendered_once
@@ -880,11 +901,20 @@ class PlotTab(QWidget):
             if self._cbar_label is not None:
                 self._cbar_label.visible = False
 
-    def _set_colorbar(self, lo, hi, name) -> None:
+    def _set_colorbar(self, lo, hi, name, levels=None) -> None:
+        """Show the colour bar for [lo, hi]. With ``levels`` (a contour plot's
+        band edges) the bar is drawn in the same discrete bands and labelled
+        at round levels along its length, not only at its ends."""
         from vispy import scene
         from vispy.color import Colormap
 
-        cm = Colormap(colormap_stops(self.cmap))
+        if levels is not None and len(levels) > 2:
+            colors = plotdata.band_colors(np.asarray(levels), self.cmap)
+            cm = Colormap(colors, controls=np.linspace(0.0, 1.0, len(colors) + 1),
+                          interpolation="zero")
+        else:
+            levels = None
+            cm = Colormap(colormap_stops(self.cmap))
         if self._cbar is None:
             # No built-in label: the name is a separate vertical Label in the
             # column to the left (see _build_canvas). The bar carries only the
@@ -900,11 +930,57 @@ class PlotTab(QWidget):
         else:
             self._cbar.cmap = cm
             self._cbar.clim = (_sig(lo), _sig(hi))
+        if levels is not None:
+            # The bar's own two labels are just text: write them like the
+            # other levels (the top one only when it falls on the stride).
+            marks = dict(plotdata.level_labels(np.asarray(levels)))
+            self._cbar.clim = (marks.get(0, ""), marks.get(len(levels) - 1, ""))
         self._cbar_auto = str(name)
         if self._cbar_label is not None:
             self._cbar_label.visible = self._show_legend
         self._cbar.visible = self._show_legend
+        self._set_cbar_ticks(levels, lo, hi)
         self._apply_element("cbar")  # label text + fonts (a new bar included)
+
+    def _set_cbar_ticks(self, levels, lo, hi) -> None:
+        """Labels along a banded colour bar. VisPy's bar only labels its two
+        ends; these extra labels sit between them at round levels."""
+        from vispy import scene
+
+        for t in self._cbar_extra:
+            t.parent = None
+        self._cbar_extra, self._cbar_extra_at = [], []
+        if levels is None or self._cbar is None or hi <= lo:
+            return
+        last = len(levels) - 1
+        for index, text in plotdata.level_labels(np.asarray(levels)):
+            if index in (0, last):
+                continue  # the bar's own end labels
+            label = scene.visuals.Text(
+                text, parent=self._cbar, color="black", font_size=12)
+            self._cbar_extra.append(label)
+            self._cbar_extra_at.append(
+                (float(levels[index]) - lo) / (hi - lo))
+        self._place_cbar_ticks()
+
+    def _place_cbar_ticks(self) -> None:
+        """Put the extra labels between the bar's own end labels (whose
+        positions VisPy recomputes whenever the bar is laid out)."""
+        if not self._cbar_extra or self._cbar is None:
+            return
+        try:
+            low, high = self._cbar.ticks
+            p0 = np.asarray(low.pos, dtype="float64").reshape(-1)[:2]
+            p1 = np.asarray(high.pos, dtype="float64").reshape(-1)[:2]
+            for label, frac in zip(self._cbar_extra, self._cbar_extra_at):
+                pos = p0 + (p1 - p0) * frac
+                old = np.asarray(label.pos, dtype="float64").reshape(-1)[:2]
+                if not np.allclose(old, pos, atol=0.25):
+                    label.pos = (float(pos[0]), float(pos[1]))
+                label.anchors = low.anchors
+                label.visible = bool(self._cbar.visible)
+        except Exception:  # noqa: BLE001 - labels are cosmetic
+            pass
 
     def _apply_visibility(self) -> None:
         if self._yaxis is not None:
@@ -1048,7 +1124,9 @@ class PlotTab(QWidget):
         is kept — only the styling resets."""
         if key not in self._el_style:
             return
-        fresh = pe.builtin_style(key) if builtin else pe.default_style(key)
+        kind = self.spec.kind
+        fresh = (pe.builtin_style(key, kind) if builtin
+                 else pe.default_style(key, kind))
         if "text" in fresh:
             fresh["text"] = self._el_style[key].get("text", "")
         self._el_style[key] = fresh
@@ -1093,13 +1171,36 @@ class PlotTab(QWidget):
                     self._cbar_label.width_max = max(12.0, _CBAR_LABEL_W + 1.3 * (
                         self._px(st["size"]) - self._px(9)))
                 if self._cbar is not None:
-                    for tick in self._cbar.ticks:
+                    for tick in [*self._cbar.ticks, *self._cbar_extra]:
                         _style_text(tick, st, "num_")
-                    self._cbar.width_max = max(48.0, _CBAR_W + 2.6 * (
-                        self._px(st["num_size"]) - self._px(12)))
+                    self._cbar.width_max = self._cbar_width(st)
             self._relayout()
         except Exception:  # noqa: BLE001 - styling is cosmetic; never break a plot
             pass
+
+    def _cbar_width(self, st: dict) -> float:
+        """How wide the colour bar's column must be for its numbers.
+
+        A plain bar has a number at each end only and keeps its usual width.
+        A banded (contour) bar is labelled all the way along, right beside
+        the bar's name, so its column is fitted to the text: the bar sits in
+        the middle with the numbers on one side, hence twice (the widest
+        number + a gap) plus the bar."""
+        usual = max(48.0, _CBAR_W + 2.6 * (
+            self._px(st["num_size"]) - self._px(12)))
+        if not self._cbar_extra:
+            return usual
+        labels = [str(t.text) for t in [*self._cbar.ticks, *self._cbar_extra]]
+        font = QFont(st.get("num_font") or pe.DEFAULT_FONT)
+        font.setPixelSize(max(1, int(round(self._px(st["num_size"])))))
+        fm = QFontMetricsF(font)
+        widest = max((fm.horizontalAdvance(t) for t in labels), default=0.0)
+        try:
+            bar = 2.0 * float(self._cbar._colorbar._halfdim[1])
+        except Exception:  # noqa: BLE001
+            bar = 22.0
+        bar = min(max(bar, 12.0), 40.0)
+        return max(usual, 2.0 * (widest + 12.0) + bar)
 
     def _relayout(self) -> None:
         """Have the canvas grid pick up changed strip sizes (it only re-reads
@@ -1295,11 +1396,41 @@ class PlotTab(QWidget):
     def _on_draw(self, _event) -> None:
         # A new frame: the layout / camera may have moved every element.
         self._rect_cache = {}
+        self._place_cbar_ticks()
+        self._check_axes_layout()
         if self._selected is not None:
             QTimer.singleShot(0, self._sync_highlight)
         if self._yaxis is not None and not self._fit_pending:
             self._fit_pending = True  # the tick labels may have changed
             QTimer.singleShot(0, self._fit_yaxis)
+
+    def _check_axes_layout(self) -> None:
+        """Keep the axes' numbers lined up with the data. An axis re-reads the
+        view only when the camera moves, so when the grid shifts the view or
+        an axis strip (the Y strip refitting to its labels, the colour bar
+        column changing width) the ticks would stay where they were."""
+        if self._xaxis is None and self._yaxis is None:
+            return
+        try:
+            sig = tuple(
+                tuple(round(float(v), 1) for v in (*w.pos, *w.size))
+                for w in (self._view, self._xaxis, self._yaxis) if w is not None)
+        except Exception:  # noqa: BLE001
+            return
+        if sig != self._layout_sig:
+            self._layout_sig = sig
+            QTimer.singleShot(0, self._resync_axes)
+
+    def _resync_axes(self) -> None:
+        if self._canvas is None:
+            return
+        for axis in (self._xaxis, self._yaxis):
+            if axis is not None and getattr(axis, "_linked_view", None) is not None:
+                try:
+                    axis._view_changed()
+                except Exception:  # noqa: BLE001 - never break a plot over ticks
+                    pass
+        self._canvas.update()
 
     def _on_mouse_press(self, event) -> None:
         pos = getattr(event, "pos", None)
@@ -1354,8 +1485,14 @@ class PlotTab(QWidget):
             self._view.camera.set_range(x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]),
                                         z=_span(lo[2], hi[2]), margin=0.12)
         else:
-            self._view.camera.set_range(x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]),
-                                        margin=0.12)
+            # A contour fills its axes edge to edge, like a filled-contour
+            # plot (with a sliver of room when the measured points are marked,
+            # so the ones on the border are not cut in half).
+            margin = 0.12
+            if self.spec.is_contour:
+                margin = 0.03 if self.spec.show_points else 0.0
+            self._view.camera.set_range(
+                x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]), margin=margin)
             # Record the fit width as the zoom-adaptive reference, then size.
             try:
                 self._fit_width = float(self._view.camera.rect.width)
@@ -1698,7 +1835,9 @@ class PlotTab(QWidget):
         self._bar_data = None
         self._contour_img = None
         self._contour_pts = None
+        self._contour_lines = None
         self._contour_data = None
+        self._cbar_extra, self._cbar_extra_at = [], []
         self._axis_labels = []
         self._hide_tooltip()
         if self._hl is not None:
