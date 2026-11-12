@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.setCentralWidget(central)
+        self._prime_opengl()
 
         # Tab strip (view switcher) with the "+" new-plot button alongside it.
         self.tabbar = QTabBar()
@@ -799,6 +800,28 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self._log_btn)
         self._log_window = None
         self._help_window = None
+
+    def _prime_opengl(self) -> None:
+        """Make the window OpenGL-capable before it is first shown.
+
+        A plot's canvas is a ``QOpenGLWidget``. The first one added to an
+        ordinary window makes Qt switch the whole window to an OpenGL surface,
+        which it can only do by destroying the native window and creating a
+        new one: the app visibly closed and reopened on the first plot. A
+        hidden OpenGL widget that is there from the start means the window is
+        created OpenGL-capable, so that first plot is just another tab.
+        """
+        try:
+            from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+
+            primer = QOpenGLWidget(self)
+            primer.setFixedSize(1, 1)
+            primer.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            primer.hide()  # never drawn: its presence in the tree is enough
+            self._gl_primer = primer
+        except Exception:  # noqa: BLE001 - no OpenGL widgets: plots show a
+            self._gl_primer = None  # placeholder anyway, nothing to prime
 
     def set_status(self, text: str, *, log: bool = True) -> None:
         self._log.setText(text)
