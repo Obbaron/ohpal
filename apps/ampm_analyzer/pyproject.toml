@@ -31,7 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 ampm_analyzer = ["assets/*"]
-"ampm_analyzer.shell" = ["assets/icons/carbon/*.svg", "assets/icons/carbon/LICENSE", "assets/icons/custom/*.svg", "assets/fonts/*.ttf", "assets/fonts/LICENSE"]
+"ampm_analyzer.shell" = ["assets/icons/carbon/*.svg", "assets/icons/carbon/LICENSE", "assets/icons/custom/*.svg", "assets/fonts/*.ttf", "assets/fonts/LICENSE", "assets/help/*.md"]
 
 [tool.uv.sources]
 ohpal-ampm = { workspace = true }

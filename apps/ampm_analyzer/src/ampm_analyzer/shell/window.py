@@ -127,6 +127,9 @@ class MainWindow(QMainWindow):
             btn.setIcon(icons.ui(key, color))
             if key == "settings":
                 btn.clicked.connect(self._open_settings)
+            elif key == "help":
+                btn.setToolTip("Help (F1)")
+                btn.clicked.connect(self._open_help)
             row.addWidget(btn)
             self._global_btns[key] = btn
         root.addWidget(tab_row)
@@ -186,7 +189,7 @@ class MainWindow(QMainWindow):
         self._global_btns["undo"].clicked.connect(self._undo)
         self._global_btns["redo"].clicked.connect(self._redo)
         for keys, slot in (("Ctrl+Z", self._undo), ("Ctrl+Shift+Z", self._redo),
-                           ("Ctrl+Y", self._redo)):
+                           ("Ctrl+Y", self._redo), ("F1", self._open_help)):
             QShortcut(QKeySequence(keys), self, activated=slot)
         self._sync_history_buttons()
 
@@ -795,11 +798,42 @@ class MainWindow(QMainWindow):
         self._log_btn.clicked.connect(self._open_log)
         sb.addPermanentWidget(self._log_btn)
         self._log_window = None
+        self._help_window = None
 
     def set_status(self, text: str, *, log: bool = True) -> None:
         self._log.setText(text)
         if log:  # log=False re-shows a line that is already in the log
             self.log_bus.log_line(text)
+
+    # -- help --------------------------------------------------------------
+    def _help_context(self) -> list[str]:
+        """Where the user is, as help-context keys from most to least specific.
+        Articles claim these keys in their ``context:`` header."""
+        widget = self.stack.widget(self.tabbar.currentIndex())
+        kind = widget.property("tabkind") if widget is not None else "file"
+        if kind == "file":
+            on_setup = self.backstage.main_stack.currentIndex() == 1
+            return ["file.datastore" if on_setup else "file.start", "file"]
+        if kind == "data":
+            # Recording is a mode the user is in; anything else is the tab.
+            return (["data.macros"] if self.recorder.active else []) + ["data"]
+        keys = []
+        plot = self._active_plot
+        if plot is not None:
+            if self.panel.isVisible() and self.panel.element_key() is not None:
+                keys.append("plot.elements")
+            keys.append(f"plot.{plot.spec.kind}")
+        keys.append("plot")
+        return keys
+
+    def _open_help(self) -> None:
+        """The Help button / F1: open help on the article for the current
+        tab, page or plot."""
+        from .help_window import HelpWindow
+
+        if self._help_window is None:
+            self._help_window = HelpWindow(self)
+        self._help_window.open_for(self._help_context())
 
     def _open_log(self) -> None:
         from .logconsole import LogWindow
