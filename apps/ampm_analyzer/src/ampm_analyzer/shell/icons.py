@@ -30,6 +30,9 @@ _cache: dict[tuple[str, str, int], QIcon] = {}
 # -- semantic UI icons -------------------------------------------------
 UI = {
     "undo": "undo", "redo": "redo", "help": "help", "settings": "settings",
+    # window buttons on the app's own title bar
+    "win_min": "custom/win-minimize", "win_max": "custom/win-maximize",
+    "win_restore": "custom/win-restore", "win_close": "close",
     # backstage
     "load_packet": "data--base", "create_excel": "XLS", "open": "folder",
     "export": "export", "info": "information", "close": "close",

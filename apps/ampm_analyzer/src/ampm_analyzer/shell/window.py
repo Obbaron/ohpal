@@ -13,8 +13,8 @@ actual data and plot actions are inert, to be connected in a later pass.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtCore import QEvent, Qt, QSize
+from PyQt6.QtGui import QKeySequence, QPainter, QPalette, QPen, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, macros, theme, toolbars, uistate
+from . import icons, macros, theme, titlebar, toolbars, uistate
 from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
@@ -84,6 +84,15 @@ class MainWindow(QMainWindow):
     def __init__(self, log_bus=None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
+        # No native frame: the tab row is the title bar (see titlebar.py). The
+        # min / max / close hints keep the taskbar and system menu behaving.
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint)
+        self.setContentsMargins(1, 1, 1, 1)  # room for the 1px window border
         self.resize(1300, 820)
 
         from .logconsole import LogBus
@@ -109,12 +118,21 @@ class MainWindow(QMainWindow):
 
         # No "+" new-plot shortcut: creating a plot needs setup, so plots are
         # created from the Data toolbar's "New plot" button instead.
-        tab_row = QWidget()
+        # The tab row is also the window's title bar: app icon, tabs, an empty
+        # stretch that drags the window, the global buttons, the window buttons.
+        tab_row = titlebar.TitleBar()
         tab_row.setObjectName("TabRow")
+        tab_row.setMinimumHeight(titlebar.BAR_HEIGHT)
+        self._title_bar = tab_row
         row = QHBoxLayout(tab_row)
-        row.setContentsMargins(4, 2, 4, 0)
+        row.setContentsMargins(8, 0, 0, 0)
         row.setSpacing(2)
-        row.addWidget(self.tabbar)
+        self._title_icon = QLabel()
+        self._title_icon.setFixedSize(18, 18)
+        self._title_icon.setScaledContents(True)
+        row.addWidget(self._title_icon)
+        row.addSpacing(4)
+        row.addWidget(self.tabbar, 0, Qt.AlignmentFlag.AlignBottom)
         row.addStretch(1)
         # Global cluster, pinned right of the tabs — persistent on every tab,
         # including File (where the context toolbar is hidden).
@@ -133,6 +151,9 @@ class MainWindow(QMainWindow):
                 btn.clicked.connect(self._open_help)
             row.addWidget(btn)
             self._global_btns[key] = btn
+        row.addSpacing(8)
+        self._win_btns = titlebar.WindowButtons(self, color)
+        row.addWidget(self._win_btns, 0, Qt.AlignmentFlag.AlignTop)
         root.addWidget(tab_row)
 
         # Context-swapping toolbar — now a plain widget in the layout, below the
@@ -234,6 +255,10 @@ class MainWindow(QMainWindow):
         self.tabbar.setCurrentIndex(0)
         self._on_tab_changed(0)
         self.set_status("Ready")
+
+        # Resize strips along the edges, created last so they sit on top of
+        # everything else (there is no native frame to resize by).
+        self._grips = titlebar.ResizeGrips(self)
 
     # -- page/tab management (tab bar + stack kept in lockstep) --------
     def _add_page(self, widget: QWidget, title: str, *, closable: bool = True) -> int:
@@ -801,6 +826,41 @@ class MainWindow(QMainWindow):
         self._log_window = None
         self._help_window = None
 
+    # -- frameless window: border, resize grips, state ----------------------
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """The 1px border that stands in for the native frame's edge."""
+        super().paintEvent(event)
+        if self.isMaximized() or self.isFullScreen():
+            return
+        painter = QPainter(self)
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Mid), 1))
+        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        painter.end()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if getattr(self, "_grips", None) is not None:
+            self._grips.place()
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            # Maximised: no border, nothing to resize, "restore" on the button.
+            edge = 0 if (self.isMaximized() or self.isFullScreen()) else 1
+            self.setContentsMargins(edge, edge, edge, edge)
+            if getattr(self, "_win_btns", None) is not None:
+                self._win_btns.sync()
+            if getattr(self, "_grips", None) is not None:
+                self._grips.place()
+            self.update()
+
+    def event(self, event) -> bool:
+        # The window icon is shown on our own bar; follow it when it is set.
+        if (event.type() == QEvent.Type.WindowIconChange
+                and getattr(self, "_title_icon", None) is not None):
+            self._title_icon.setPixmap(self.windowIcon().pixmap(36, 36))
+        return super().event(event)
+
     def _prime_opengl(self) -> None:
         """Make the window OpenGL-capable before it is first shown.
 
@@ -911,6 +971,7 @@ class MainWindow(QMainWindow):
         color = self._icon_color()
         for key, btn in self._global_btns.items():
             btn.setIcon(icons.ui(key, color))
+        self._win_btns.retint(color)
         self._sync_toolbar(self.tabbar.currentIndex())  # rebuild with new colour
         self.backstage.apply_icons(color)
 

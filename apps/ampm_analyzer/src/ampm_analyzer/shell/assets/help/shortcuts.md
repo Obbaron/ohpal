@@ -16,6 +16,14 @@ keywords: shortcut, keyboard, mouse, keys, ctrl, f1, double-click, hotkey
 | **Enter** | Confirms a header rename or a dialog |
 | **Esc** | Cancels a header rename or a dialog |
 
+## Window
+
+| Action | Does |
+| --- | --- |
+| Drag the empty part of the title bar | Moves the window |
+| Double-click it | Maximises or restores the window |
+| Drag an edge or corner | Resizes the window |
+
 ## Data tab
 
 | Action | Does |
