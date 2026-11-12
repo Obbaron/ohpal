@@ -31,6 +31,7 @@ the options that depend on it.
 Tick the columns you want to load, and type a new name on the right of any you
 want renamed. A new build starts with a default set already ticked and
 renamed (for example *MeltVIEW melt pool (mean)* becomes *Meltpool*).
+[About the data](help:about-data) explains what each column is.
 
 The columns at the bottom of the list are **required** and always load:
 position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and

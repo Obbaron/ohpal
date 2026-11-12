@@ -7,7 +7,10 @@ keywords: overview, introduction, start, layout, tabs, window, tour
 # Welcome to AMPM Analyzer
 
 AMPM Analyzer turns a build's process-monitoring export into a table you can
-shape and a set of plots you can explore. A typical session looks like this:
+shape and a set of plots you can explore. For what that export contains and
+what each column means, see [About the data](help:about-data).
+
+A typical session looks like this:
 
 1. **Open a build** from the File tab. The first time, you build its
    *DataStore*, a fast copy of the build's data. See
