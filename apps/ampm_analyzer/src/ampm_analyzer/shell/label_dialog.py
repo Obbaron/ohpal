@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .card import DraggableCard
 from . import colref
 from .derive import DeriveError, compile_predicate
 
@@ -59,7 +60,7 @@ class _Rule(QWidget):
         row.addWidget(rm)
 
 
-class GroupLabelDialog(QDialog):
+class GroupLabelDialog(DraggableCard, QDialog):
     def __init__(self, columns, parent=None, *, taken=None, renames=None) -> None:
         super().__init__(parent)
         self._columns = list(columns)

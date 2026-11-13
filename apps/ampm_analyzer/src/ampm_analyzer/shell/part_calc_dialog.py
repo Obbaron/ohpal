@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .card import DraggableCard
 from .widgets import fix_combo
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
@@ -39,7 +40,7 @@ _REDUCERS = (
 )
 
 
-class PartCalcDialog(QDialog):
+class PartCalcDialog(DraggableCard, QDialog):
     def __init__(self, columns, part_col: str, parent=None, *, taken=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Per-part calculation")

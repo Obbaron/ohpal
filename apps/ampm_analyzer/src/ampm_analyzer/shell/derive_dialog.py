@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .card import DraggableCard
 from . import colref
 from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_expr
 from .derive_editor import FormulaEdit, FormulaHighlighter
@@ -44,7 +45,7 @@ _PRIMARY_QSS = (
 )
 
 
-class DeriveColumnDialog(QDialog):
+class DeriveColumnDialog(DraggableCard, QDialog):
     def __init__(self, columns, parent=None, *, taken=None, renames=None) -> None:
         super().__init__(parent)
         self._columns = list(columns)

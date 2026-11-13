@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
+from .card import DraggableCard
 from . import colref, export
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
@@ -58,7 +59,7 @@ def _section(text: str) -> QLabel:
     return lbl
 
 
-class ExcelExportDialog(QDialog):
+class ExcelExportDialog(DraggableCard, QDialog):
     def __init__(self, columns, parent=None, *, layers=None, current_layer=None,
                  key_default="part_id", start_dir=None, renames=None) -> None:
         super().__init__(parent)

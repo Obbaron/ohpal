@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .card import DraggableCard
+
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
     "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
@@ -24,7 +26,7 @@ _PRIMARY_QSS = (
 )
 
 
-class _ListCard(QDialog):
+class _ListCard(DraggableCard, QDialog):
     """A frameless card: title, an optional line of context, a read-only list."""
 
     def __init__(self, title: str, intro: str, lines: list[str], parent=None, *,

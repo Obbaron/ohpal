@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .card import DraggableCard
 from .plotspec import BAR_AGGS, COV_MODES, PlotSpec, default_spec
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
@@ -38,7 +39,7 @@ _PRIMARY_QSS = (
 )
 
 
-class NewPlotDialog(QDialog):
+class NewPlotDialog(DraggableCard, QDialog):
     def __init__(self, kind: str, columns, layers=None, current_layer=None,
                  parent=None, *, renames=None) -> None:
         super().__init__(parent)

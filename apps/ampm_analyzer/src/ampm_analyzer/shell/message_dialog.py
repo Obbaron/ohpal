@@ -26,6 +26,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .card import DraggableCard
+
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
     "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
@@ -35,7 +37,7 @@ _PRIMARY_QSS = (
 )
 
 
-class CardMessage(QDialog):
+class CardMessage(DraggableCard, QDialog):
     """A frameless-card confirm / notice dialog.
 
     ``confirm=True`` shows an accent primary button plus a secondary one and

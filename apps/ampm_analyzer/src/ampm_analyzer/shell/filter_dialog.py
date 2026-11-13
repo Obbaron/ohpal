@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .card import DraggableCard
 from . import colref
 from .derive import _AGGREGATE, _ELEMENTWISE, DeriveError, compile_predicate
 from .derive_editor import FormulaEdit, FormulaHighlighter
@@ -87,7 +88,7 @@ class _TemplateCard(QFrame):
         self.clicked.emit(self._text)
 
 
-class FilterConditionDialog(QDialog):
+class FilterConditionDialog(DraggableCard, QDialog):
     def __init__(self, columns, parent=None, *, initial: str = "",
                  renames=None) -> None:
         super().__init__(parent)

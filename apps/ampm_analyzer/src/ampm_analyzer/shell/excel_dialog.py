@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .card import DraggableCard
 from .derive import norm_key
 from .widgets import fix_combo
 
@@ -43,7 +44,7 @@ _PRIMARY_QSS = (
 )
 
 
-class ExcelImportDialog(QDialog):
+class ExcelImportDialog(DraggableCard, QDialog):
     def __init__(self, grid_columns, parent=None, *, taken=None,
                  start_dir=None) -> None:
         super().__init__(parent)

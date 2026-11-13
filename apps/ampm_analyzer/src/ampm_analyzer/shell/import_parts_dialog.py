@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .card import DraggableCard
+
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
     "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
@@ -85,7 +87,7 @@ class _SectionPage(QWidget):
         return out
 
 
-class ImportPartsCSVDialog(QDialog):
+class ImportPartsCSVDialog(DraggableCard, QDialog):
     def __init__(self, sections, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Import parts CSV")

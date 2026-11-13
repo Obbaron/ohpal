@@ -1084,7 +1084,7 @@ class MainWindow(QMainWindow):
         if p is None:
             return
         from pathlib import Path
-        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from PyQt6.QtWidgets import QFileDialog
 
         safe = "".join(
             c if (c.isalnum() or c in " -_") else "_" for c in p.title
@@ -1106,8 +1106,8 @@ class MainWindow(QMainWindow):
         if p.save_image(path):
             self.statusBar().showMessage(f"Saved {Path(path).name}", 4000)
         else:
-            QMessageBox.warning(self, "Screenshot",
-                                "Couldn't save the plot image.")
+            from .message_dialog import tell
+            tell(self, "Screenshot", "Couldn't save the plot image.")
 
     def _on_layer_changed(self, layer: int) -> None:
         self.controller.show_layer(layer)

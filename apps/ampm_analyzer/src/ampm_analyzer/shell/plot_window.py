@@ -20,7 +20,6 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QMainWindow,
-    QMessageBox,
     QSplitter,
     QToolBar,
 )
@@ -242,8 +241,8 @@ class DetachedPlotWindow(QMainWindow):
         if self._tab.save_image(path):
             self.statusBar().showMessage(f"Saved {Path(path).name}", 4000)
         else:
-            QMessageBox.warning(self, "Screenshot",
-                                "Couldn't save the plot image.")
+            from .message_dialog import tell
+            tell(self, "Screenshot", "Couldn't save the plot image.")
 
     # -- teardown ------------------------------------------------------
     def closeEvent(self, event) -> None:

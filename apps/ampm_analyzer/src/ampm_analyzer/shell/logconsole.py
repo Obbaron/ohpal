@@ -12,18 +12,21 @@ from __future__ import annotations
 import threading
 from collections import deque
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
-    QMainWindow,
-    QMessageBox,
+    QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizeGrip,
     QVBoxLayout,
     QWidget,
 )
+
+from .card import DraggableCard
 
 
 class LogBus(QObject):
@@ -79,36 +82,64 @@ class StreamTee:
             pass
 
 
-class LogWindow(QMainWindow):
-    """A separate window showing the captured console output."""
+class LogWindow(DraggableCard, QWidget):
+    """A frameless-card window showing the captured console output.
+
+    Matches the app's other popups: no native title bar (drag any inert part
+    to move it), a rounded card, and a corner grip to resize."""
 
     def __init__(self, bus: LogBus, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Log")
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMinimumSize(420, 240)
         self.resize(760, 420)
         self._bus = bus
 
-        body = QWidget()
-        lay = QVBoxLayout(body)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("LogCard")
+        card.setStyleSheet(
+            "#LogCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }"
+        )
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+
+        title = QLabel("Log")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        lay.addWidget(title)
+
         self.view = QPlainTextEdit()
         self.view.setReadOnly(True)
+        self.view.setFrameShape(QFrame.Shape.NoFrame)
         self.view.setFont(QFont("monospace", 10))
         self.view.setMaximumBlockCount(10000)
         self.view.setPlainText(bus.history())
         self._scroll_to_end()
-        lay.addWidget(self.view)
+        lay.addWidget(self.view, 1)
 
         row = QHBoxLayout()
-        row.addStretch(1)
         export = QPushButton("Export log")
         export.clicked.connect(self._export)
         row.addWidget(export)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear)
         row.addWidget(clear)
+        row.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.close)
+        row.addWidget(close)
+        # A corner grip to resize the frameless window.
+        row.addWidget(QSizeGrip(self), 0,
+                      Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
         lay.addLayout(row)
 
-        self.setCentralWidget(body)
         bus.message.connect(self._append)
 
     def _append(self, text: str) -> None:
@@ -132,8 +163,8 @@ class LogWindow(QMainWindow):
         try:
             Path(path).write_text(self._bus.history(), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.warning(self, "Export log",
-                                f"Couldn't save the log:\n{exc}")
+            from .message_dialog import tell
+            tell(self, "Export log", f"Couldn't save the log:\n{exc}")
 
     def _clear(self) -> None:
         self._bus.clear()
