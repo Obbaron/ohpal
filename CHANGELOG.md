@@ -39,6 +39,9 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   popped out into their own windows and docked back.
 - **Undo / redo** of data shaping, and **macros**: record actions, save them to a
   file, check and run them on another build, recent macros one click away.
+  Macros live in a **macro folder** (default `Documents\AMPM Analyzer\Macros`,
+  changeable in Settings, for example to a shared team folder); Save and Browse
+  start there and the Run menu lists its macros.
 - **Help.** A searchable in-app guide of 29 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,

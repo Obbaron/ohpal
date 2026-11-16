@@ -174,6 +174,8 @@ def populate_data(
     on_macro_record=None,
     on_macro_run=None,
     recent_macros: list[tuple[str, str]] | None = None,
+    folder_macros: list[tuple[str, str]] | None = None,
+    on_open_macro_folder=None,
 ) -> None:
     columns = columns or []
 
@@ -303,17 +305,30 @@ def populate_data(
         rec = _action(toolbar, "Record a macro", "macro_record", color)
     if on_macro_record is not None:
         rec.triggered.connect(lambda: on_macro_record())
-    if recent_macros and on_macro_run is not None and not recording:
-        # Recently used macros one click away; Browse… for any other file.
+    recent_macros = list(recent_macros or [])
+    seen = {p for _, p in recent_macros}
+    folder_macros = [(n, p) for n, p in (folder_macros or []) if p not in seen]
+    if (recent_macros or folder_macros) and on_macro_run is not None \
+            and not recording:
+        # Recent macros, then the rest of the macro folder, one click away;
+        # Browse… for any other file.
         run_btn = _menu_button(toolbar, "Run a macro", "macro_run", color)
         menu = run_btn.menu()
         menu.setToolTipsVisible(True)
-        for label, path in recent_macros:
-            act = menu.addAction(label)
-            act.setToolTip(path)
-            act.triggered.connect(lambda _=False, p=path: on_macro_run(p))
+        for title, items in (("Recent", recent_macros),
+                             ("Macro folder", folder_macros)):
+            if not items:
+                continue
+            menu.addSection(title)
+            for label, path in items:
+                act = menu.addAction(label)
+                act.setToolTip(path)
+                act.triggered.connect(lambda _=False, p=path: on_macro_run(p))
         menu.addSeparator()
         menu.addAction("Browse…").triggered.connect(lambda: on_macro_run())
+        if on_open_macro_folder is not None:
+            menu.addAction("Open macro folder").triggered.connect(
+                lambda: on_open_macro_folder())
     else:
         run = _action(toolbar, "Run a macro from a file", "macro_run", color)
         if on_macro_run is not None and not recording:

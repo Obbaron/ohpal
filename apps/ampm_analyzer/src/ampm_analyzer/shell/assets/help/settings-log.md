@@ -2,14 +2,18 @@
 title: Settings, status bar and log
 section: Reference
 order: 10
-keywords: settings, theme, dark, light, status, progress, log, console, export log, background, messages
+keywords: settings, theme, dark, light, macro folder, status, progress, log, console, export log, background, messages
 ---
 # Settings, status bar and log
 
 ## Settings
 
-The **Settings** button at the top right sets the theme: **Auto (system)**,
-**Light** or **Dark**.
+The **Settings** button at the top right holds:
+
+- **Theme**: **Auto (system)**, **Light** or **Dark**.
+- **Macros**: where macros are saved and listed from. **Open macro folder**,
+  **Change macro folder…**, and **Use the default folder**
+  (Documents\AMPM Analyzer\Macros). See [Macros](help:macros).
 
 ## Status bar
 

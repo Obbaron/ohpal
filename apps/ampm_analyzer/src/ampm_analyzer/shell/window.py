@@ -946,10 +946,17 @@ class MainWindow(QMainWindow):
 
     # -- settings / theme ----------------------------------------------
     def _open_settings(self) -> None:
-        from PyQt6.QtGui import QActionGroup, QCursor
+        from PyQt6.QtGui import QCursor
+
+        self._settings_menu().exec(QCursor.pos())
+
+    def _settings_menu(self):
+        """The Settings (gear) menu: theme and the macro folder."""
+        from PyQt6.QtGui import QActionGroup
         from PyQt6.QtWidgets import QMenu
 
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         menu.addSection("Theme")
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -959,7 +966,24 @@ class MainWindow(QMainWindow):
             act.setChecked(choice == self._theme_choice)
             group.addAction(act)
             act.triggered.connect(lambda _checked, c=choice: self._set_theme_choice(c))
-        menu.exec(QCursor.pos())
+        menu.addSection("Macros")
+        from PyQt6.QtCore import Qt
+
+        full = str(macros.folder())
+        shown = menu.fontMetrics().elidedText(
+            full, Qt.TextElideMode.ElideMiddle, 340)
+        where = menu.addAction(f"Folder: {shown}")
+        where.setToolTip(full)
+        where.setEnabled(False)  # shows where macros go; not a command
+        menu.addAction("Open macro folder").triggered.connect(
+            self._open_macro_folder)
+        menu.addAction("Change macro folder…").triggered.connect(
+            self._choose_macro_folder)
+        if not macros.is_default_folder():
+            reset = menu.addAction("Use the default folder")
+            reset.setToolTip(str(macros.default_folder()))
+            reset.triggered.connect(self._reset_macro_folder)
+        return menu
 
     def _icon_color(self) -> str:
         return theme.icon_color(QApplication.instance())
@@ -1062,6 +1086,9 @@ class MainWindow(QMainWindow):
                 on_macro_record=self._toggle_macro_recording,
                 on_macro_run=self._run_macro,
                 recent_macros=[(macros.macro_name(p), p) for p in macros.recent()],
+                folder_macros=[(macros.macro_name(p), p)
+                               for p in macros.in_folder()],
+                on_open_macro_folder=self._open_macro_folder,
             )
         else:
             p = self._active_plot
@@ -1402,9 +1429,53 @@ class MainWindow(QMainWindow):
 
     # -- macros ----------------------------------------------------------
     def _macro_start_dir(self) -> str:
+        """Where a macro's own file dialogs start (its Excel export / import
+        steps): the folder the last macro came from."""
         from pathlib import Path
 
         return self._macro_dir or str(Path.home())
+
+    def _macro_folder_dir(self) -> str:
+        """Where Save macro and Browse start: the macro folder (Settings), or
+        the default one if it can't be reached (an offline share)."""
+        path = macros.ensure_folder()
+        if path is None:
+            self.set_status(f"The macro folder isn't available ({macros.folder()}); "
+                            "using the default.")
+            path = macros.default_folder()
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                from pathlib import Path
+                path = Path.home()
+        return str(path)
+
+    def _open_macro_folder(self) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        path = macros.ensure_folder()
+        if path is None:
+            self.set_status(f"The macro folder isn't available: {macros.folder()}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _choose_macro_folder(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Macro folder", str(macros.folder()))
+        if not path:
+            return
+        macros.set_folder(path)
+        self.set_status(f"Macros are now saved to and listed from {path}.")
+        self.refresh_data_layers()  # the Run menu lists the new folder
+
+    def _reset_macro_folder(self) -> None:
+        macros.set_folder(None)
+        self.set_status(f"Macros are saved to the default folder, "
+                        f"{macros.default_folder()}.")
+        self.refresh_data_layers()
 
     def _on_recorder_changed(self) -> None:
         """Keep the status-bar indicator current; swap the toolbar's Record /
@@ -1438,7 +1509,7 @@ class MainWindow(QMainWindow):
 
         n = len(steps)
         while True:
-            start = str(Path(self._macro_start_dir()) / f"macro{macros.SUFFIX}")
+            start = str(Path(self._macro_folder_dir()) / f"macro{macros.SUFFIX}")
             path, _sel = QFileDialog.getSaveFileName(
                 self, "Save macro", start, macros.FILE_FILTER)
             if not path:
@@ -1482,7 +1553,7 @@ class MainWindow(QMainWindow):
             return
         if not path:
             path, _sel = QFileDialog.getOpenFileName(
-                self, "Run macro", self._macro_start_dir(), macros.FILE_FILTER)
+                self, "Run macro", self._macro_folder_dir(), macros.FILE_FILTER)
             if not path:
                 return
         self._macro_dir = str(Path(path).parent)

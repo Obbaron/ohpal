@@ -31,7 +31,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSettings, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, QStandardPaths, pyqtSignal
 
 FORMAT = "ampm-macro"
 VERSION = 1
@@ -92,6 +92,62 @@ def remember(path) -> None:
     path = str(Path(path))
     paths = [path] + [p for p in recent() if p != path]
     _settings().setValue(_RECENT_KEY, json.dumps(paths[:_RECENT_MAX]))
+
+
+# -- the macro folder: where macros are saved and looked for -------------
+_FOLDER_KEY = "macros/folder"
+FOLDER_LIST_MAX = 20   # macros from the folder listed on the Run menu
+
+
+def default_folder() -> Path:
+    """``Documents/AMPM Analyzer/Macros``: visible, backed up with the user's
+    documents, and untouched by reinstalling the app."""
+    docs = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation)
+    return Path(docs or Path.home()) / "AMPM Analyzer" / "Macros"
+
+
+def folder() -> Path:
+    """The macro folder: the one chosen in Settings, else the default."""
+    chosen = _settings().value(_FOLDER_KEY, "") or ""
+    return Path(chosen) if chosen else default_folder()
+
+
+def is_default_folder() -> bool:
+    return not (_settings().value(_FOLDER_KEY, "") or "")
+
+
+def set_folder(path) -> None:
+    """Choose the macro folder (None, or the default itself: back to the
+    default)."""
+    s = _settings()
+    if path is None or Path(path) == default_folder():
+        s.remove(_FOLDER_KEY)
+    else:
+        s.setValue(_FOLDER_KEY, str(Path(path)))
+
+
+def ensure_folder() -> Path | None:
+    """The macro folder, created if needed; None when it can't be reached (a
+    network share that is offline, a folder without write access)."""
+    path = folder()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return path if path.is_dir() else None
+    return path
+
+
+def in_folder(limit: int = FOLDER_LIST_MAX) -> list[str]:
+    """The macro files in the macro folder, by name (none if it can't be
+    read)."""
+    try:
+        files = [p for p in folder().iterdir()
+                 if p.is_file() and p.name.lower().endswith(SUFFIX)]
+    except OSError:
+        return []
+    files.sort(key=lambda p: macro_name(p).lower())
+    return [str(p) for p in files[:limit]]
 
 
 class MacroError(ValueError):

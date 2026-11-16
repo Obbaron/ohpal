@@ -2,7 +2,7 @@
 title: Macros
 section: Data
 order: 90
-keywords: macro, record, stop, run, replay, automate, repeat, recent, issues, steps, batch, file, json
+keywords: macro, record, stop, run, replay, automate, repeat, recent, issues, steps, batch, file, json, folder, macro folder, documents, shared, network, settings
 context: data.macros
 ---
 # Macros
@@ -15,8 +15,9 @@ so you can run the same routine on another build.
 1. Press **Record a macro** on the Data toolbar. The button turns into a red
    **Stop**, and the status bar counts the steps as you go.
 2. Do the work: add columns, import part data, filter, create plots, export.
-3. Press **Stop**. You are asked where to save the macro (a `.macro.json`
-   file).
+3. Press **Stop**. You are asked to name the macro; the save dialog opens in
+   your macro folder (see *Where macros are kept* below). Macros are
+   `.macro.json` files.
 
 Undoing a step while recording takes it out of the macro. If nothing was
 recorded, nothing is saved.
@@ -34,8 +35,9 @@ recorded, nothing is saved.
 
 ## Running
 
-Press **Run a macro**. Once you have saved or run a macro, the button lists
-your recent macros; **Browse…** opens any other file.
+Press **Run a macro**. Once you have a macro, the button opens a menu: your
+**Recent** macros, then the others in your **Macro folder**. **Browse…**
+opens any other file, and **Open macro folder** shows the folder.
 
 1. A preview lists the steps. Press **Run** to go ahead.
 2. The whole macro is checked against the build first. If any step cannot
@@ -62,6 +64,26 @@ written.
 
 Values you typed, such as a threshold in a filter or the limits in a label
 rule, are replayed exactly as recorded.
+
+## Where macros are kept
+
+Macros are saved to, and listed from, the **macro folder**. By default it is
+**Documents\AMPM Analyzer\Macros**, created the first time it is needed:
+easy to find, backed up with your documents, and kept when the app is
+updated.
+
+To change it, open **Settings** (the gear in the title bar) and, under
+**Macros**:
+
+- **Open macro folder** shows it in Explorer.
+- **Change macro folder…** picks another, for example a shared network
+  folder so a team uses the same macros.
+- **Use the default folder** goes back to Documents.
+
+You can still save a macro anywhere, and run one from anywhere with
+**Browse…**; recently used ones stay on the Run menu wherever they are. If the
+chosen folder is not available (a network drive that is offline), the
+dialogs open in the default folder instead.
 
 ## Editing a macro
 
