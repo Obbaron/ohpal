@@ -19,7 +19,6 @@ import bisect
 
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QComboBox,
     QLabel,
     QMenu,
     QSizePolicy,
@@ -30,7 +29,6 @@ from PyQt6.QtWidgets import (
 )
 
 from . import icons
-from .widgets import fix_combo
 
 
 class LayerSpinBox(QSpinBox):
@@ -91,15 +89,6 @@ def _action(
     act.setCheckable(checkable)
     toolbar.addAction(act)
     return act
-
-
-def _combo(toolbar: QToolBar, label: str, items: list[str], width: int = 110) -> QComboBox:
-    toolbar.addWidget(_muted(label))
-    cb = fix_combo(QComboBox())
-    cb.addItems(items)
-    cb.setFixedWidth(width)
-    toolbar.addWidget(cb)
-    return cb
 
 
 def _muted(text: str) -> QLabel:
@@ -367,11 +356,6 @@ def populate_plot(
     bbox.setEnabled(bool(states.get("is_3d")))  # bbox is a 3D decoration
     _toggle("Legend", "legend", "legend", on_legend)
     _toggle("Title", "title", "title", on_title)
-    toolbar.addSeparator()
-    # Select
-    _combo(toolbar, "Select", ["None", "Click", "Box", "Lasso"], width=80)
-    _action(toolbar, "Clear", "clear_sel", color)
-    _action(toolbar, "Invert", "invert_sel", color)
     toolbar.addSeparator()
     # Export
     shot = _action(toolbar, "Screenshot", "screenshot", color)

@@ -31,9 +31,6 @@ keywords: zoom, pan, rotate, reset view, axes, grid, bbox, legend, colour bar, t
 | **Screenshot** | Saves the plot as an image (PNG, JPEG, BMP or TIFF). |
 | **Pop out** | Moves the plot to its own window; see [Plot windows](help:plot-windows). |
 
-The **Select**, **Clear** and **Invert** controls are reserved for selecting
-points on the plot and are not active yet.
-
 ## Side panel
 
 The panel holds the controls you adjust by eye. Changes apply immediately.

@@ -57,9 +57,7 @@ UI = {
     # plot toolbar
     "reset_view": "fit-to-screen", "axes": "x-axis", "grid": "grid",
     "bbox": "cube", "legend": "legend", "title": "custom/title",
-    "select": "select--01",
-    "clear_sel": "close", "invert_sel": "select--02",
-    "sel_box": "select--window", "sel_lasso": "lasso", "screenshot": "camera",
+    "clear_sel": "close", "screenshot": "camera",
     "popout": "custom/popout", "dockin": "custom/dockin",
     # panel
     "marker": "dot-mark", "colormap": "color-palette",
