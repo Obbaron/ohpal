@@ -25,7 +25,9 @@ It always covers the whole build.
 - **Between the measured points the surface is interpolated.** The plot draws
   a smooth surface through the values you measured; it has no data in
   between. Turn on **Show measured points** to see where the real data is,
-  and treat features that sit between points with caution.
+  and treat features that sit between points with caution. **Measured
+  points** on the toolbar shows or hides them later; **Level lines** does
+  the same for the lines between bands.
 - **Blank areas** are regions with no measured combinations around them. The
   surface is only drawn between points, never beyond them.
 - The surface never shows a value above the highest or below the lowest one

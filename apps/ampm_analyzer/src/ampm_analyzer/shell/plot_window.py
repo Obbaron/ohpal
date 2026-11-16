@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFileDialog,
     QMainWindow,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from . import derive, toolbars
 from .dock import SidePanel
 from .plot_tab import PlotTab
+from .workers import release_after
 
 
 class DetachedPlotWindow(QMainWindow):
@@ -70,6 +71,7 @@ class DetachedPlotWindow(QMainWindow):
         self._wire_panel()
 
         self._tab.titleChanged.connect(self._on_renamed)
+        self._tab.controlsChanged.connect(self._on_controls_changed)
         if spec.is_layer_viewer:
             self._tab.layerChanged.connect(self._scrub)
 
@@ -82,19 +84,30 @@ class DetachedPlotWindow(QMainWindow):
         toolbars.populate_plot(
             self._toolbar,
             color=self._icon_color,
+            controls=t.controls(),
+            value=t.control_value,
+            on_control=self._control,
             sidebar_open=not self._panel.isHidden(),
             on_toggle_sidebar=self._toggle_panel,
-            states=t.toggle_states(),
-            on_reset_view=t.reset_view,
-            on_axes=t.set_axes_visible,
-            on_grid=t.set_grid_visible,
-            on_bbox=t.set_bbox_visible,
-            on_legend=t.set_legend_visible,
-            on_title=t.set_title_visible,
-            on_screenshot=self._screenshot,
             on_dock=self._request_dock,  # re-dock into the main window as a tab
-            # no on_popout — a detached plot is already its own window
+            # no on_popout: a detached plot is already its own window
         )
+
+    def _control(self, key: str, value=None) -> None:
+        if key == "screenshot":
+            self._screenshot()
+        else:
+            self._tab.set_control(key, value)
+
+    def _on_controls_changed(self) -> None:
+        """The plot's controls changed: rebuild the toolbar (deferred, so a
+        button is never deleted inside its own click) and the panel."""
+        def rebuild():
+            self._toolbar.clear()
+            self._build_toolbar()
+            if self._panel.isVisible():
+                self._panel.sync_plot(self._tab.panel_state())
+        QTimer.singleShot(0, rebuild)
 
     def _request_dock(self) -> None:
         self.dockRequested.emit(self)
@@ -199,7 +212,7 @@ class DetachedPlotWindow(QMainWindow):
         worker.error.connect(self._on_query_error)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        release_after(thread, worker)  # not deleteLater: see workers
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_thread)
         self._thread, self._worker = thread, worker

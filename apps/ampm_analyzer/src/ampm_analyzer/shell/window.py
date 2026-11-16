@@ -13,7 +13,7 @@ actual data and plot actions are inert, to be connected in a later pass.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, QSize
+from PyQt6.QtCore import QEvent, Qt, QSize, QTimer
 from PyQt6.QtGui import QKeySequence, QPainter, QPalette, QPen, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -528,6 +528,8 @@ class MainWindow(QMainWindow):
 
     # -- editable plot elements ------------------------------------------
     def _wire_plot_elements(self, tab) -> None:
+        tab.controlsChanged.connect(
+            lambda t=tab: self._on_plot_controls_changed(t))
         tab.elementActivated.connect(
             lambda key, t=tab: self._open_element_panel(t, key))
         tab.elementSelected.connect(
@@ -1066,18 +1068,33 @@ class MainWindow(QMainWindow):
             toolbars.populate_plot(
                 self.toolbar,
                 color=color,
+                controls=p.controls() if p is not None else (),
+                value=p.control_value if p is not None else None,
+                on_control=lambda k, v=None: self._plot_control(p, k, v),
                 sidebar_open=self.panel.isVisible(),
                 on_toggle_sidebar=self._toggle_sidebar,
-                states=p.toggle_states() if p is not None else None,
-                on_reset_view=lambda: p and p.reset_view(),
-                on_axes=lambda v: p and p.set_axes_visible(v),
-                on_grid=lambda v: p and p.set_grid_visible(v),
-                on_bbox=lambda v: p and p.set_bbox_visible(v),
-                on_legend=lambda v: p and p.set_legend_visible(v),
-                on_title=lambda v: p and p.set_title_visible(v),
-                on_screenshot=self._screenshot_plot,
                 on_popout=self._popout_plot,
             )
+
+    def _plot_control(self, tab, key: str, value=None) -> None:
+        """A plot toolbar control: the screenshot asks where to save; the
+        rest are the plot's own."""
+        if tab is None or tab is not self._active_plot:
+            return
+        if key == "screenshot":
+            self._screenshot_plot()
+        else:
+            tab.set_control(key, value)
+
+    def _on_plot_controls_changed(self, tab) -> None:
+        """The active plot's controls changed (a legend appeared, say):
+        rebuild its toolbar and side panel. Deferred, so a toolbar button
+        is never deleted inside its own click."""
+        def rebuild():
+            if tab is self._active_plot:
+                self._sync_toolbar(self.tabbar.currentIndex())
+                self.panel.sync_plot(tab.panel_state())
+        QTimer.singleShot(0, rebuild)
 
     def _screenshot_plot(self) -> None:
         """Save the active plot to an image file (location + type via dialog)."""

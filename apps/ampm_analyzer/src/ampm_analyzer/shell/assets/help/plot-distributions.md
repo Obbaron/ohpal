@@ -31,6 +31,10 @@ built from.
 
 Every row is used: nothing is sampled, however large the build.
 
+On the toolbar, **Fill under curves** turns the shading off (clearer with
+many overlapping curves) and **Bandwidth** switches between Scott and
+Silverman without making a new plot.
+
 ## Violin
 
 One **violin** per category, side by side. Each is the KDE of that
@@ -49,6 +53,9 @@ Each violin spans exactly the range of its own values, and all have the same
 greatest width. Violins are coloured by their median, like bars by their
 height, with a colour bar; the side panel's colour controls apply. Hover a
 violin for its count, quartiles, median, minimum and maximum.
+
+**Quartile box and median** and **Bandwidth** are also on the toolbar, to
+change after the plot is made.
 
 ## Reading them
 

@@ -2,7 +2,7 @@
 title: Layer plots
 section: Plots
 order: 30
-keywords: layer viewer, single layer, slider, scrub, step, layer by layer
+keywords: layer viewer, single layer, slider, scrub, step, layer by layer, previous layer, next layer
 context: plot.Layer Viewer, plot.Single Layer
 ---
 # Layer plots
@@ -15,7 +15,8 @@ whether the layer can change.
 Shows one layer and has a **slider** under the plot. Drag it to move through
 the build; the plot redraws for each layer you stop on. The view does not
 reset as you move, so you can zoom into one part and watch it layer by layer.
-The current layer is shown beside the slider.
+The current layer is shown beside the slider. **Previous layer** and
+**Next layer** on the toolbar step one layer at a time.
 
 ## Single Layer
 

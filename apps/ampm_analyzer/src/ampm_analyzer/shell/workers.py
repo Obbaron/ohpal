@@ -17,9 +17,40 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
 from .state import QueryResult
+
+# Workers whose threads are still winding down (see ``release_after``).
+_RETIRING: set = set()
+
+
+def release_after(thread, worker) -> None:
+    """Free ``worker`` on the main thread once ``thread`` has finished.
+
+    Not ``thread.finished.connect(worker.deleteLater)``: that destroys the
+    worker on its own thread, where its destructor disconnects it from the
+    (Python-wrapped) QThread, and PyQt then waits for the GIL while holding
+    one of Qt's connection locks. If the main thread is making a connection
+    at that moment (rebuilding a toolbar, say) it holds the GIL and waits on
+    the same lock, and the app freezes.
+
+    Instead, the moment the worker reports (``finished`` or ``error``, still
+    on its own thread) it hands itself to the main thread, and it is kept
+    here until its thread has stopped. Dropping that last reference on the
+    main thread then deletes it there."""
+    main = QCoreApplication.instance().thread()
+
+    def hand_over(*_args) -> None:
+        if worker.thread() is QThread.currentThread():  # once: finished or error
+            worker.moveToThread(main)
+
+    direct = Qt.ConnectionType.DirectConnection
+    for signal in (worker.finished, worker.error):
+        signal.connect(hand_over, direct)
+    pair = (thread, worker)
+    _RETIRING.add(pair)
+    thread.finished.connect(lambda: _RETIRING.discard(pair))
 
 
 class LoadWorker(QObject):

@@ -50,6 +50,11 @@ class PlotSpec:
     k: int = 10                   # k-distance: which neighbour (= min_samples)
     eps_xy: float = 1.0           # k-distance: DBSCAN's XY radius (Z scaling,
     eps_z: float = 1.0            #   and the guide line) and its Z radius
+    # Changed from the plot's toolbar after it is made:
+    fill: bool = True             # kde: shade under the curves
+    sort: str = "name"            # bar / cov: order the bars by name | value
+    show_lines: bool = True       # contour: level lines between the bands
+    show_ref: bool = True         # k-distance: the dashed eps guide
 
     @property
     def is_3d(self) -> bool:

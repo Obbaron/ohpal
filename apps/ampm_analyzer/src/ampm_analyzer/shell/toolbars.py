@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import bisect
 
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
@@ -324,44 +324,57 @@ def populate_data(
 
 # -- Plot toolset ------------------------------------------------------
 def populate_plot(
-    toolbar: QToolBar, *, color: str, sidebar_open: bool = False,
-    on_toggle_sidebar=None, states: dict | None = None,
-    on_reset_view=None, on_axes=None, on_grid=None, on_bbox=None, on_legend=None,
-    on_screenshot=None, on_title=None, on_popout=None, on_dock=None,
+    toolbar: QToolBar, *, color: str, controls=(), value=None, on_control=None,
+    sidebar_open: bool = False, on_toggle_sidebar=None, on_popout=None,
+    on_dock=None,
 ) -> None:
-    states = states or {}
+    """The plot toolset, built from the plot's own controls.
 
-    def _toggle(text: str, icon: str, key: str, cb) -> QAction:
-        act = _action(toolbar, text, icon, color, checkable=True)
-        act.setChecked(bool(states.get(key)))
-        if cb is not None:
-            act.toggled.connect(cb)
-        return act
+    ``controls`` is what the plot offers right now (``PlotTab.controls()``, a
+    list of ``plotcontrols.Control``), already in toolbar order; nothing here
+    knows which plot kinds have which buttons. ``value(key)`` gives a
+    control's current value, and ``on_control(key, value)`` applies one
+    (``value`` is None for one-shot controls).
+    """
+    value = value or (lambda _key: None)
 
-    # Panel toggle — same control as the Data toolbar.
+    def fire(key, v=None):
+        if on_control is not None:
+            on_control(key, v)
+
+    # Panel toggle: same control as the Data toolbar.
     panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
     panel.setChecked(sidebar_open)
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
-    toolbar.addSeparator()
-    # View
-    reset = _action(toolbar, "Reset view", "reset_view", color)
-    if on_reset_view is not None:
-        reset.triggered.connect(lambda: on_reset_view())
-    toolbar.addSeparator()
-    # Scene toggles — drive the active plot's decorations.
-    _toggle("Axes", "axes", "axes", on_axes)
-    _toggle("Grid", "grid", "grid", on_grid)
-    bbox = _toggle("BBox", "bbox", "bbox", on_bbox)
-    bbox.setEnabled(bool(states.get("is_3d")))  # bbox is a 3D decoration
-    _toggle("Legend", "legend", "legend", on_legend)
-    _toggle("Title", "title", "title", on_title)
-    toolbar.addSeparator()
-    # Export
-    shot = _action(toolbar, "Screenshot", "screenshot", color)
-    if on_screenshot is not None:
-        shot.triggered.connect(lambda: on_screenshot())
-    # Pop out / dock in — pushed to the far right with an expanding spacer.
+
+    group = None
+    for c in controls:
+        if c.group != group:  # a separator between groups
+            toolbar.addSeparator()
+            group = c.group
+        if c.kind == "toggle":
+            act = _action(toolbar, c.label, c.icon, color, checkable=True)
+            act.setChecked(bool(value(c.key)))
+            act.toggled.connect(lambda on, k=c.key: fire(k, on))
+        elif c.kind == "action":
+            act = _action(toolbar, c.label, c.icon, color)
+            act.triggered.connect(lambda _=False, k=c.key: fire(k))
+        elif c.kind in ("choice", "menu"):
+            btn = _menu_button(toolbar, c.label, c.icon, color)
+            menu = btn.menu()
+            menu.setTitle(c.label)
+            ticks = QActionGroup(menu) if c.kind == "choice" else None
+            current = value(c.key)
+            for v, text in c.choices:
+                act = menu.addAction(text)
+                if ticks is not None:  # exclusive: the current value ticked
+                    act.setCheckable(True)
+                    act.setChecked(v == current)
+                    ticks.addAction(act)
+                act.triggered.connect(lambda _=False, k=c.key, v=v: fire(k, v))
+
+    # Pop out / dock in: pushed to the far right with an expanding spacer.
     spacer = QWidget()
     spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     toolbar.addWidget(spacer)

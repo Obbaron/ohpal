@@ -28,6 +28,9 @@ A CoV Summary draws one bar per group, over the whole build.
 A group whose mean is essentially zero has no meaningful CoV, so it shows no
 value.
 
+**Sort bars** on the toolbar puts the least steady groups first (**By
+value**) or returns to the group order (**By name**).
+
 ## The same numbers as columns
 
 To use a CoV in other plots or an export, add it as a column with

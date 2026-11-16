@@ -29,6 +29,7 @@ out.
 
 The dashed red line is the XY radius in the plot's settings, labelled with
 its value, so you can see at a glance which points it would include.
+**eps guide line** on the toolbar hides it.
 
 ## Settings
 

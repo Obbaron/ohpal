@@ -158,10 +158,30 @@ def build_bars(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
         )
     labels = [str(v) for v in g[cat].to_list()]
     heights = g["_v"].to_numpy().astype("float32")
+    labels, heights = _sort_bars(labels, heights, spec.sort)
     colors, lo, hi = _bar_colors(heights, cmap, crange)
     n = len(labels)
     return BarData(np.arange(n, dtype="float32"), heights, colors, val, cat,
                    labels, True, 0.8, (lo, hi), (lo, hi), n)
+
+
+def _natural_key(value) -> tuple:
+    """Sort text the way people count: "Part(2)" before "Part(10)"."""
+    import re
+
+    parts = re.split(r"(\d+)", "" if value is None else str(value))
+    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p.lower())
+                 for p in parts if p)
+
+
+def _sort_bars(labels: list, heights: np.ndarray, how: str | None):
+    """Bars in name order (as grouped), or tallest first ("value"); bars with
+    no value go last."""
+    if how != "value" or len(labels) < 2:
+        return labels, heights
+    key = np.where(np.isfinite(heights), -heights.astype("float64"), np.inf)
+    order = np.argsort(key, kind="stable")
+    return [labels[i] for i in order], heights[order]
 
 
 def build_histogram(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
@@ -223,6 +243,7 @@ def build_cov(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
                        value_name, grp, None, True, 0.8, None, None, 0)
     labels = [_short_part(str(v)) for v in cov_df[grp].to_list()]
     heights = cov_df[cov_col].to_numpy().astype("float32")
+    labels, heights = _sort_bars(labels, heights, spec.sort)
     colors, lo, hi = _bar_colors(heights, cmap, crange)
     n = len(labels)
     return BarData(np.arange(n, dtype="float32"), heights, colors,
@@ -736,20 +757,21 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
         return (colors, ("colorbar", rng[0], rng[1], spec.color),
                 (rng[0], rng[1]), full_range)
 
-    # Categorical: stable codes -> palette, with a legend of the categories.
-    import polars as pl
-
-    uniques = s.unique(maintain_order=True).to_list()
+    # Categorical: one colour per category, with a legend of the categories.
+    # Categories are sorted, so a category keeps its colour whatever rows (or
+    # layer) are on screen. Up to 8 take the colour-blind-safe palette; more
+    # are spread along the colormap so every one is distinct.
+    uniques = sorted(s.unique().to_list(),
+                     key=lambda v: (v is None, _natural_key(v)))
     code_of = {v: i for i, v in enumerate(uniques)}
-    codes_full = s.to_list()
-    codes = np.array([code_of.get(v, 0) for v in codes_full], dtype=int)
+    codes = np.array([code_of.get(v, 0) for v in s.to_list()], dtype=int)
     codes = codes if idx is None else codes[idx]
-    pal = _CATEGORICAL
-    colors = np.ones((len(codes), 4), dtype="float32")
-    colors[:, :3] = pal[codes % len(pal)]
-    colors[:, 3] = 1.0
-    legend = [
-        (str(v), tuple(pal[i % len(pal)]) + (1.0,))
-        for i, v in enumerate(uniques)
-    ]
+    if len(uniques) <= len(_CATEGORICAL):
+        pal = np.column_stack([_CATEGORICAL[:max(1, len(uniques))],
+                               np.ones(max(1, len(uniques)), "float32")])
+    else:
+        pal = _sample_colors(len(uniques), cmap)
+        pal[:, 3] = 1.0
+    colors = pal[codes].astype("float32")
+    legend = [(str(v), tuple(float(c) for c in pal[i])) for i, v in enumerate(uniques)]
     return colors, legend, None, None

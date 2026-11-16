@@ -24,7 +24,7 @@ from .message_dialog import ask as _ask, tell as _tell
 from .datastore_settings import REQUIRED_COLUMNS
 from .recents import RecentStore
 from .state import BuildSession, QueryResult
-from .workers import CacheWorker, QueryWorker
+from .workers import CacheWorker, QueryWorker, release_after
 
 # Same packet-filename shape the DataStore expects.
 _PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNORECASE)
@@ -132,7 +132,7 @@ class AppController(QObject):
         worker.error.connect(on_error)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        release_after(thread, worker)  # not deleteLater: see workers
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_side)
         self._side_thread, self._side_worker = thread, worker
@@ -623,7 +623,7 @@ class AppController(QObject):
     def _wire_teardown(self, thread: QThread, worker) -> None:
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        release_after(thread, worker)  # not deleteLater: see workers
         thread.finished.connect(thread.deleteLater)
         # Only clear if this is still the current thread — a query chained off a
         # cache build starts a new thread before the old one finishes tearing
@@ -982,7 +982,7 @@ class AppController(QObject):
         worker.error.connect(self._on_mask_error)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        release_after(thread, worker)  # not deleteLater: see workers
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_mask_thread)
         self._mask_thread, self._mask_worker = thread, worker
@@ -1237,7 +1237,7 @@ class AppController(QObject):
         worker.error.connect(lambda msg, s=store: self._on_dbscan_error(s, msg))
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
+        release_after(thread, worker)  # not deleteLater: see workers
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._clear_dbscan)
         self._dbscan_thread, self._dbscan_worker = thread, worker

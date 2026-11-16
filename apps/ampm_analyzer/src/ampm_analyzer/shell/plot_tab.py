@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import plot_elements as pe
+from . import plotcontrols
 from . import plotdata
 from .plotdata import DEFAULT_COLORMAP, colormap_stops
 from .plotspec import PlotSpec
@@ -72,6 +73,17 @@ _VIOLIN_ALPHA = 0.85
 _VIOLIN_EDGE = (0.16, 0.18, 0.22, 0.55)
 _VIOLIN_INNER = (0.16, 0.18, 0.22, 0.85)  # whisker + quartile box
 _LEGEND_MAX = 24  # group names labelled on a KDE legend (more: every 2nd...)
+# Categorical scatter colours past this many come from the colormap (so the
+# side panel's Map applies to them); fewer use the fixed palette.
+_PALETTE_MAX = 8
+
+# 3D view presets: (elevation, azimuth) in degrees for the turntable camera.
+_CAMERA_PRESETS = {"top": (90.0, 0.0), "front": (0.0, 0.0),
+                   "side": (0.0, 90.0), "iso": (30.0, 45.0)}
+# Toolbar options that live on the spec (they change what is drawn, so a
+# change re-renders); the rest are view state on the tab.
+_SPEC_OPTIONS = ("show_box", "fill", "bandwidth", "bins", "sort",
+                 "show_points", "show_lines", "show_ref")
 
 # Editable elements. Chrome sizes below are the built-in look's; a bigger font
 # grows its strip by the difference so text is never clipped.
@@ -268,6 +280,9 @@ class PlotTab(QWidget):
     # double-click asks for its editor (the side panel).
     elementSelected = pyqtSignal(str)
     elementActivated = pyqtSignal(str)
+    # The set of toolbar controls that apply changed (a legend appeared, the
+    # level lines became drawable...): the host rebuilds its toolbar.
+    controlsChanged = pyqtSignal()
 
     def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
                  layers=None, parent: QWidget | None = None) -> None:
@@ -303,6 +318,12 @@ class PlotTab(QWidget):
         self._show_bbox = spec.is_3d
         self._show_legend = True
         self._show_title = True
+        # Spatial 2D plots keep one X unit == one Y unit unless unlocked.
+        self._equal_axes = True
+        self._has_legend = False     # a colour bar / legend is on the plot
+        self._legend_cmap = False    # categorical colours from the colormap
+        self._contour_lines_ok = False  # the field allows level lines
+        self._controls_sig = None    # the controls last reported
 
         self._canvas = None
         self._view = None
@@ -483,7 +504,9 @@ class PlotTab(QWidget):
             else:
                 view = grid.add_view(row=1, col=1)
                 # aspect=1 → one X unit == one Y unit, so parts aren't skewed.
-                view.camera = scene.cameras.PanZoomCamera(aspect=1)
+                # (Chart plots free it when they first render.)
+                view.camera = scene.cameras.PanZoomCamera(
+                    aspect=1 if self._equal_axes else None)
                 self._cbar_col = 2
                 self._yaxis = scene.AxisWidget(
                     orientation="left", axis_label=self.spec.y,
@@ -775,7 +798,7 @@ class PlotTab(QWidget):
             line.parent = None
         self._curve_lines = []
         x = np.asarray(data.x, dtype="float32")
-        if self.spec.is_kde:
+        if self.spec.is_kde and self.spec.fill:
             m = x.size
             verts, faces, cols = [], [], []
             for c, ys in enumerate(data.ys):
@@ -815,8 +838,8 @@ class PlotTab(QWidget):
 
         ymax = max(float(np.max(ys)) for ys in data.ys) if data.ys else 1.0
         xlo, xhi = float(x[0]), float(x[-1])
-        if data.reference is not None:  # headroom for the guide and its label
-            ymax = max(ymax, 1.08 * float(data.reference))
+        if data.reference is not None and self.spec.show_ref:
+            ymax = max(ymax, 1.08 * float(data.reference))  # guide + label room
         if ymax <= 0:
             ymax = 1.0
         self._set_reference(data, xlo, xhi, lift=0.012 * ymax)
@@ -826,11 +849,8 @@ class PlotTab(QWidget):
         if self.spec.is_kde and data.group_name and data.n > 1:
             self._set_colorbar(0.0, 1.0, data.group_name,
                                categories=(data.names, data.colors))
-        elif self._cbar is not None:
-            self._cbar.visible = False
-            if self._cbar_label is not None:
-                self._cbar_label.visible = False
-            self._set_cbar_ticks(None, 0.0, 1.0)
+        else:
+            self._hide_colorbar()
         self._full_range = None
         self._data_bounds = (np.array([xlo, 0.0], "float32"),
                              np.array([xhi, ymax], "float32"))
@@ -845,7 +865,7 @@ class PlotTab(QWidget):
         """The k-distance curve's dashed guide at the XY radius (eps)."""
         from vispy import scene
 
-        if data.reference is None:
+        if data.reference is None or not self.spec.show_ref:
             for item in (self._ref_line, self._ref_label):
                 if item is not None:
                     item.parent = None
@@ -1142,7 +1162,8 @@ class PlotTab(QWidget):
         # Thin iso-lines on the band edges sharpen the bands, as in a
         # filled-contour plot. (Skipped over a field with empty regions.)
         inner = [float(v) for v in levels[1:-1]]
-        if inner and bool(np.isfinite(field).all()):
+        self._contour_lines_ok = bool(inner) and bool(np.isfinite(field).all())
+        if self._contour_lines_ok and self.spec.show_lines:
             if self._contour_lines is None:
                 self._contour_lines = scene.visuals.Isocurve(
                     field, levels=inner, color_lev=(0.0, 0.0, 0.0, 0.16),
@@ -1294,13 +1315,30 @@ class PlotTab(QWidget):
 
     def _update_legend(self, data) -> None:
         leg = data.legend
+        self._legend_cmap = False
         if isinstance(leg, tuple) and leg and leg[0] == "colorbar":
             _, lo, hi, name = leg
             self._set_colorbar(lo, hi, name)
-        elif self._cbar is not None:
-            self._cbar.visible = False  # categorical/none: no colourbar (yet)
-            if self._cbar_label is not None:
-                self._cbar_label.visible = False
+        elif isinstance(leg, list) and leg:
+            # Coloured by a text column: a legend of its categories (swatches
+            # in the colour-bar column, as for a KDE's groups).
+            names = [str(n) for n, _ in leg]
+            colors = np.array([c for _, c in leg], "float32")
+            self._legend_cmap = len(names) > _PALETTE_MAX
+            self._set_colorbar(0.0, 1.0, self.spec.color or "",
+                               categories=(names, colors))
+        else:
+            self._hide_colorbar()
+
+    def _hide_colorbar(self) -> None:
+        """No colour bar or legend on this plot (single colour, one curve)."""
+        self._has_legend = False
+        self._cbar_is_legend = False
+        if self._cbar is not None:
+            self._cbar.visible = False
+        if self._cbar_label is not None:
+            self._cbar_label.visible = False
+        self._set_cbar_ticks(None, 0.0, 1.0)
 
     def _set_colorbar(self, lo, hi, name, levels=None, categories=None) -> None:
         """Show the colour bar for [lo, hi]. With ``levels`` (a contour plot's
@@ -1312,6 +1350,7 @@ class PlotTab(QWidget):
         from vispy.color import Colormap
 
         self._cbar_is_legend = categories is not None
+        self._has_legend = True
         if categories is not None:
             levels = None
             swatches = np.asarray(categories[1], "float32")[::-1]
@@ -1434,11 +1473,13 @@ class PlotTab(QWidget):
             self._bar_axis.visible = self._show_axes
         for t in self._bar_labels:
             t.visible = self._show_axes
+        legend = self._show_legend and self._has_legend
         if self._cbar is not None:
-            self._cbar.visible = self._show_legend
+            self._cbar.visible = legend
         if self._cbar_label is not None:
-            self._cbar_label.visible = self._show_legend and self._cbar is not None
+            self._cbar_label.visible = legend and self._cbar is not None
         self._elements_changed()  # a hidden element can't stay outlined
+        self._note_controls()
 
     # -- toolbar-driven controls ---------------------------------------
     def set_axes_visible(self, on: bool) -> None:
@@ -1467,6 +1508,131 @@ class PlotTab(QWidget):
             if self._canvas is not None:
                 self._canvas.update()
         self._elements_changed()
+
+    # -- contextual controls (what the toolbar offers for this plot) -----
+    def _is_spatial(self) -> bool:
+        """A 2D plot of positions (scatter, layer views): equal axes apply."""
+        s = self.spec
+        return not (s.is_3d or s.is_bar or s.is_hist or s.is_cov
+                    or s.is_contour or s.is_curve or s.is_violin)
+
+    def _has_points(self) -> bool:
+        """Drawn as markers whose size, symbol and opacity can be set."""
+        return self.spec.is_3d or self._is_spatial()
+
+    def controls(self) -> list:
+        """The toolbar controls that apply to this plot right now: its view's
+        controls (``plotcontrols``), less any with nothing to act on (a
+        legend needs one on the plot, a bounding box a 3D scene, the level
+        lines a field without gaps, the eps guide a k-distance curve)."""
+        from dataclasses import replace
+
+        s = self.spec
+        curve = self._curve_data
+        out = []
+        for c in plotcontrols.controls_for(s.kind):
+            k = c.key
+            if k == "bbox" and not s.is_3d:
+                continue
+            if k == "legend" and not self._has_legend:
+                continue
+            if k == "show_lines" and not self._contour_lines_ok:
+                continue
+            if k == "show_ref" and (curve is None or curve.reference is None):
+                continue
+            if k in ("layer_prev", "layer_next") and len(self._layers) < 2:
+                continue
+            if k == "bins" and s.bins not in [v for v, _ in c.choices]:
+                c = replace(c, choices=tuple(sorted(
+                    (*c.choices, (s.bins, str(s.bins))))))
+            out.append(c)
+        return out
+
+    def control_value(self, key: str):
+        """A control's current value (on/off, or the chosen value); None for
+        one-shot controls."""
+        flags = {
+            "axes": self._show_axes, "grid": self._show_grid,
+            "bbox": self._show_bbox, "legend": self._show_legend,
+            "title": self._show_title, "equal_axes": self._equal_axes,
+        }
+        if key in flags:
+            return flags[key]
+        if key in _SPEC_OPTIONS:
+            return getattr(self.spec, key)
+        return None
+
+    def set_control(self, key: str, value=None) -> None:
+        """Apply a toolbar control by key. (Screenshot belongs to the host,
+        which asks where to save.)"""
+        toggles = {
+            "axes": self.set_axes_visible, "grid": self.set_grid_visible,
+            "bbox": self.set_bbox_visible, "legend": self.set_legend_visible,
+            "title": self.set_title_visible, "equal_axes": self.set_equal_axes,
+        }
+        if key in toggles:
+            toggles[key](bool(value))
+        elif key == "reset_view":
+            self.reset_view()
+        elif key == "camera":
+            self.set_camera_view(str(value))
+        elif key == "layer_prev":
+            self.step_layer(-1)
+        elif key == "layer_next":
+            self.step_layer(1)
+        elif key in _SPEC_OPTIONS:
+            self.set_option(key, value)
+
+    def _note_controls(self) -> None:
+        """Tell the host when the controls on offer change."""
+        sig = tuple((c.key, c.choices) for c in self.controls())
+        if sig != self._controls_sig:
+            self._controls_sig = sig
+            self.controlsChanged.emit()
+
+    def set_equal_axes(self, on: bool) -> None:
+        """Lock (or free) one X unit to one Y unit, then re-frame."""
+        self._equal_axes = bool(on)
+        if self._view is None or not self._is_spatial():
+            return
+        try:
+            self._view.camera.aspect = 1 if self._equal_axes else None
+        except Exception:  # noqa: BLE001
+            return
+        self.reset_view()
+
+    def set_camera_view(self, name: str) -> None:
+        """Turn a 3D plot to a preset angle (top, front, side, iso)."""
+        angles = _CAMERA_PRESETS.get(name)
+        if angles is None or self._view is None or not self.spec.is_3d:
+            return
+        cam = self._view.camera
+        cam.elevation, cam.azimuth = angles
+        self.reset_view()
+
+    def step_layer(self, step: int) -> None:
+        """Layer Viewer: move the scrubber one layer back or on."""
+        if self._slider is None:
+            return
+        i = self._slider.value() + int(step)
+        self._slider.setValue(max(0, min(self._slider.maximum(), i)))
+
+    def set_option(self, key: str, value) -> None:
+        """Change one of the plot's drawing options and redraw."""
+        from dataclasses import replace
+
+        old = getattr(self.spec, key)
+        value = type(old)(value)
+        if value == old:
+            return
+        # A new spec, not an edit: the macro step that made this plot keeps
+        # the spec it recorded.
+        self.spec = replace(self.spec, **{key: value})
+        if key == "bins":
+            self.crange = None  # new bins, new counts: re-detect the colours
+        self._render()
+        if key in ("bins", "bandwidth", "show_ref", "show_points"):
+            QTimer.singleShot(0, self.reset_view)  # the extent moved
 
     def _set_title(self, name: str) -> None:
         name = name.strip()
@@ -2049,17 +2215,12 @@ class PlotTab(QWidget):
             "cmap": self.cmap,
             "scale": "Log" if self.scale == "log" else "Linear",
             "has_color": has_color,
-            # KDE: the map colours the curves; scale and range don't apply.
-            "map_only": bool(self.spec.is_kde),
+            # The map colours KDE curves and many categories; scale and
+            # range don't apply to them.
+            "map_only": bool(self.spec.is_kde or self._legend_cmap),
+            "has_points": self._has_points(),
             "cmin": cmin if cmin is not None else 0,
             "cmax": cmax if cmax is not None else 100,
-        }
-
-    def toggle_states(self) -> dict:
-        return {
-            "axes": self._show_axes, "grid": self._show_grid,
-            "bbox": self._show_bbox, "legend": self._show_legend,
-            "title": self._show_title, "is_3d": self.spec.is_3d,
         }
 
     def appearance(self) -> dict:
@@ -2070,7 +2231,7 @@ class PlotTab(QWidget):
             "opacity": self._opacity, "axes": self._show_axes,
             "grid": self._show_grid, "bbox": self._show_bbox,
             "legend": self._show_legend, "title": self._show_title,
-            "title_text": self.title,
+            "equal_axes": self._equal_axes, "title_text": self.title,
             "elements": {k: dict(v) for k, v in self._el_style.items()},
         }
 
@@ -2088,6 +2249,9 @@ class PlotTab(QWidget):
         self._show_bbox = a.get("bbox", self._show_bbox)
         self._show_legend = a.get("legend", self._show_legend)
         self._show_title = a.get("title", self._show_title)
+        self._equal_axes = a.get("equal_axes", self._equal_axes)
+        if self._view is not None and self._is_spatial():
+            self._view.camera.aspect = 1 if self._equal_axes else None
         self.title = a.get("title_text", self.title)
         for key, style in (a.get("elements") or {}).items():
             if key in self._el_style and isinstance(style, dict):

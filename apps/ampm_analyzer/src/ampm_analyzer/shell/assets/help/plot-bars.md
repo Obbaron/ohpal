@@ -2,7 +2,7 @@
 title: Bar charts and histograms
 section: Plots
 order: 40
-keywords: bar, histogram, bins, category, aggregate, mean, count, as-is, distribution
+keywords: bar, histogram, bins, category, aggregate, mean, count, as-is, distribution, sort, order, by value
 context: plot.Bar, plot.Histogram
 ---
 # Bar charts and histograms
@@ -23,13 +23,15 @@ example a CoV you calculated `by [part_id]`. It takes that number directly
 instead of averaging it again.
 
 The bars are coloured by their height, with a colour bar. Hover a bar to read
-its value.
+its value. **Sort bars** on the toolbar orders them **By name** (the
+default) or **By value**, tallest first.
 
 ## Histogram
 
 The distribution of one **column**: its range is cut into **bins** and each
 bar counts the rows that fall in a bin. More bins show more detail; fewer
-give a smoother shape. Hover a bar for its range and count.
+give a smoother shape. **Bins** on the toolbar changes the count without
+making a new plot. Hover a bar for its range and count.
 
 ## Layers
 

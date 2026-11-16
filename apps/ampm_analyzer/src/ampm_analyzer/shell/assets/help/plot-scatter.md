@@ -2,7 +2,7 @@
 title: Scatter plots
 section: Plots
 order: 20
-keywords: scatter, 2d, 3d, points, colour, markers, rotate, hover, tooltip, sample, bounding box
+keywords: scatter, 2d, 3d, points, colour, markers, rotate, hover, tooltip, sample, bounding box, legend, categories, equal axes, aspect, top, front, side, iso, view
 context: plot.2D Scatter, plot.3D Scatter
 ---
 # Scatter plots
@@ -17,11 +17,27 @@ It starts on a single layer, because a top-down view of many layers draws them
 on top of each other. Choose **All layers** or a **Range** in the dialog when
 that is what you want, for example to plot one signal against another.
 
+When the axes are not positions (one signal against another, say), turn off
+**Equal axes (1:1)** on the toolbar so the plot fills the window.
+
 ## 3D Scatter
 
 Points in space, with a floor grid and a bounding box. Use the position
 columns and **Z** to see the build as printed, or put any three columns on the
 axes. It starts on all layers.
+
+**3D view** on the toolbar turns the plot to a set angle: **Top** (looking
+down on the plate), **Front**, **Side** or **Iso**. The axes keep their true
+scale, so a build only a few layers tall looks thin from the front.
+
+## Colours and the legend
+
+Coloured by a numeric column, the points follow a colour map, with a colour
+bar beside the plot. Coloured by a text column (`part_id`, a
+[label](help:columns-label)), each category gets its own colour and a legend
+names them, in natural order (Part(2) before Part(10)). A category keeps its
+colour whatever layers are shown. Without a colour column there is no
+legend, and no **Legend** button.
 
 ## Reading values
 

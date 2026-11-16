@@ -158,12 +158,18 @@ class SidePanel(QWidget):
         set_combo(self.scale_combo, state.get("scale", "Linear"))
         set_slider(self.min_slider, state.get("cmin", 0))
         set_slider(self.max_slider, state.get("cmax", 100))
-        # Colour controls are meaningful only with a numeric colour column.
-        # A KDE uses the map for its curves, but has no scale or range.
+        # Only what applies to this plot is shown. Points: plots drawn as
+        # markers. Colour: a numeric colour column, or the map alone where it
+        # colours curves or many categories (no scale or range then).
+        points = bool(state.get("has_points", True))
         map_only = bool(state.get("map_only", False))
-        self.colour_box.setEnabled(bool(state.get("has_color", False)) or map_only)
+        colour = bool(state.get("has_color", False)) or map_only
+        self.points_box.setVisible(points)
+        self.selected_box.setVisible(points)
+        self.colour_box.setVisible(colour)
         for w in (self.scale_combo, self.min_slider, self.max_slider):
-            w.setEnabled(not map_only)
+            self._colour_form.setRowVisible(w, not map_only)
+        self.plot_note.setVisible(not (points or colour))
 
     def show_for(self, kind: str) -> None:
         page = self._pages.get(kind)
@@ -274,7 +280,8 @@ class SidePanel(QWidget):
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(12)
 
-        points = QGroupBox("Points")
+        # Each group shows only on plots it applies to (see sync_plot).
+        self.points_box = points = QGroupBox("Points")
         pf = QFormLayout(points)
         self.marker_combo = fix_combo(QComboBox())
         self.marker_combo.addItems(["disc", "square", "ring", "cross"])
@@ -289,7 +296,7 @@ class SidePanel(QWidget):
         lay.addWidget(points)
 
         self.colour_box = QGroupBox("Colour")
-        cf = QFormLayout(self.colour_box)
+        self._colour_form = cf = QFormLayout(self.colour_box)
         self.map_combo = fix_combo(QComboBox())
         self.map_combo.addItems(
             ["BlueRed", "RedBlue", "viridis", "plasma", "magma", "turbo", "turbo_r"]
@@ -308,10 +315,19 @@ class SidePanel(QWidget):
         cf.addRow("Max", self.max_slider)
         lay.addWidget(self.colour_box)
 
-        selected = QGroupBox("Selected part")
+        self.selected_box = selected = QGroupBox("Selected part")
         sf = QVBoxLayout(selected)
         sf.addWidget(QLabel("Nothing selected."))
         lay.addWidget(selected)
+
+        # When a plot has none of the above (a single k-distance curve).
+        self.plot_note = QLabel(
+            "This plot has no point or colour settings. Double-click its "
+            "title, an axis or the legend to style it.")
+        self.plot_note.setWordWrap(True)
+        self.plot_note.setStyleSheet("color: palette(placeholder-text);")
+        self.plot_note.setVisible(False)
+        lay.addWidget(self.plot_note)
 
         lay.addStretch(1)
         return w
