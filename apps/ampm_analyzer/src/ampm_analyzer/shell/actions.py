@@ -268,7 +268,8 @@ class Actions(QObject):
         return None, "", notes
 
     # -- macro pre-check -------------------------------------------------
-    def check_batch(self, steps, resolve) -> list[tuple[int, str]]:
+    def check_batch(self, steps, resolve,
+                    missing: list | None = None) -> list[tuple[int, str]]:
         """Check a whole macro against this build WITHOUT changing anything.
 
         Walks the steps over a simulated column state (:class:`_Sim`) and
@@ -280,7 +281,13 @@ class Actions(QObject):
         it) enforces, and are deliberately a little stricter where a handler
         would quietly skip or rename: on a different build that silence would
         hide a wrong result. ``run_batch`` still rolls back if a step fails
-        anyway, so a gap here can't leave a half-applied macro."""
+        anyway, so a gap here can't leave a half-applied macro.
+
+        ``missing``, when given, collects the columns the macro reads that
+        neither this build nor an earlier step provides (by the name stored in
+        the macro), so the caller can offer substitutes."""
+        from .macros import references
+
         sim = _Sim(self._c, self._s)
         ctx: dict = {}  # per-run cache (parts CSV reads)
         issues: list[tuple[int, str]] = []
@@ -289,8 +296,14 @@ class Actions(QObject):
             if checker is None:
                 issues.append((i, f"Unknown action {op!r}."))
                 continue
+            resolved = resolve(op, params, sim.renames)
+            if missing is not None:
+                known = set(sim.derivable())
+                for name in references(op, resolved):
+                    if name not in known and name not in missing:
+                        missing.append(name)
             try:
-                found = checker(sim, ctx, **resolve(op, params, sim.renames))
+                found = checker(sim, ctx, **resolved)
             except TypeError as exc:  # a hand-edited step with wrong settings
                 found = [f"The step's settings aren't valid: {exc}"]
             except Exception as exc:  # noqa: BLE001 — report, never crash
@@ -482,6 +495,11 @@ class Actions(QObject):
         if name not in sim.removed:
             return [f"{name!r} isn't a removed column."]
         sim.removed.remove(name)
+        return []
+
+    def _check_set_visible(self, sim, ctx, name, visible) -> list[str]:
+        if name not in sim.current():
+            return [f"Column {name!r} isn't in the grid."]
         return []
 
     def _check_filter_add(self, sim, ctx, condition) -> list[str]:

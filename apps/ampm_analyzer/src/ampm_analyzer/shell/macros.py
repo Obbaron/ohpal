@@ -14,12 +14,19 @@ Record and Stop. Three rules make a recording replayable on another build:
   records only *which* columns to import and re-reads the target build's CSV.
   An Excel-import step records the sheet + column headers and asks for the
   file when run; its key/value table is dropped from the file.
-- **View-only actions are not recorded** (show/hide), nor are undo/redo
-  themselves: an undo while recording simply drops the step it undid.
-- **Outputs are steps too** — creating a plot, exporting to Excel. They change
+- **Showing / hiding a column is a step**; undo/redo themselves are not: an
+  undo while recording simply drops the step it undid.
+- **Outputs are steps too**: creating a plot, exporting to Excel. They change
   nothing that undo tracks, so an undo never removes them from a recording. A
-  plot is stored as created (type, columns, layer span, options); an export
-  stores what to write but not where — it asks for the file when run.
+  plot is stored as it ended up: its type, columns and layer span, plus any
+  option changed from the plot toolbar while recording (sort, bins, ...). An
+  export stores what to write but not where: it asks for the file when run.
+- **Values can be asked for when run.** A step may list fields in ``ask``
+  (a filter condition, a formula, a label rule's condition, a layer span);
+  running the macro asks for each, with the recorded value filled in.
+
+When a build lacks a column the macro reads, the run offers to map it to one
+of the build's columns instead (:func:`missing_columns`, :func:`substitute`).
 
 The file is plain, versioned JSON so it can be read and hand-edited.
 """
@@ -58,6 +65,7 @@ _SCHEMA: dict[str, dict] = {
     "rename": {"names": ("old",)},  # "new" is the literal new name
     "remove": {"lists": ("names",)},
     "restore": {"names": ("name",)},
+    "set_visible": {"names": ("name",)},
     "filter_add": {"refs": ("condition",)},
     "filter_edit": {"refs": ("condition",)},
     "filter_remove": {},
@@ -243,6 +251,9 @@ def describe(op: str, p: dict) -> str:
         return f"Remove column(s): {', '.join(p.get('names') or [])}"
     if op == "restore":
         return f"Restore column '{p.get('name')}'"
+    if op == "set_visible":
+        verb = "Show" if p.get("visible") else "Hide"
+        return f"{verb} column '{p.get('name')}'"
     if op == "filter_add":
         return f"Add filter: {p.get('condition')}"
     if op == "filter_edit":
@@ -298,6 +309,117 @@ def _span_text(span) -> str:
     return f"layer {lo}"
 
 
+# -- the columns a step reads, and substituting them ---------------------
+# Names a step creates rather than reads (so they're never "missing").
+_CREATES: dict[str, tuple] = {
+    "derive": ("name",), "label": ("name",), "excel_import": ("name",),
+    "part_calc": ("name",),
+}
+
+
+def references(op: str, params: dict) -> list[str]:
+    """The column names a step reads, in order (no duplicates): what must
+    exist on the build for the step to run."""
+    spec = _SCHEMA.get(op, {})
+    made = set(_CREATES.get(op, ()))
+    out: list[str] = []
+
+    def add(name) -> None:
+        if isinstance(name, str) and name and name not in out:
+            out.append(name)
+
+    def add_refs(text) -> None:
+        for m in _BRACKET.finditer(text or ""):
+            for part in m.group(1).split(","):
+                add(part.strip())
+
+    for key in spec.get("names", ()):
+        if key not in made:
+            add(params.get(key))
+    for key in spec.get("lists", ()):
+        for name in params.get(key) or []:
+            add(name)
+    for key in spec.get("refs", ()):
+        add_refs(params.get(key))
+    for key in spec.get("rules", ()):
+        for rule in params.get(key) or []:
+            add_refs(rule.get("cond"))
+    for key, fields in spec.get("nested", {}).items():
+        nested = params.get(key) or {}
+        for f in fields:
+            add(nested.get(f))
+    for key in spec.get("pairs", ()):
+        for pair in params.get(key) or []:
+            add(pair[0] if pair else None)
+    return out
+
+
+def substitute(steps: list[dict], mapping: dict) -> list[dict]:
+    """The steps with column names swapped through ``mapping`` (stored name ->
+    stored name), for running a macro on a build that names a column
+    differently. The steps given are not changed."""
+    if not mapping:
+        return [dict(s) for s in steps]
+    return [{**s, "params": _translate(s["op"], s["params"], mapping)}
+            for s in steps]
+
+
+# -- values asked for when the macro runs --------------------------------
+# A step's ``ask`` lists field paths: "condition", "expr", "span", "scope",
+# or "rules.<i>.cond" for a label rule.
+SPAN_FIELDS = ("span", "scope")
+
+
+def promptable(op: str, params: dict) -> list[tuple[str, str]]:
+    """The fields of a step that can be asked for when run, as
+    ``(field, label)``."""
+    if op in ("filter_add", "filter_edit"):
+        return [("condition", "Filter condition")]
+    if op == "derive":
+        return [("expr", f"Formula for '{params.get('name')}'")]
+    if op == "label":
+        rules = params.get("rules") or []
+        if len(rules) == 1:
+            return [("rules.0.cond", f"Condition for '{params.get('name')}'")]
+        return [(f"rules.{i}.cond",
+                 f"Condition {i + 1} for '{params.get('name')}'")
+                for i in range(len(rules))]
+    if op == "plot":
+        return [("span", "Layers")]
+    if op == "export_excel":
+        return [("scope", "Layers")]
+    return []
+
+
+def get_field(params: dict, field: str):
+    if field.startswith("rules."):
+        _, i, key = field.split(".")
+        rules = params.get("rules") or []
+        i = int(i)
+        return rules[i].get(key) if 0 <= i < len(rules) else None
+    return params.get(field)
+
+
+def set_field(params: dict, field: str, value) -> dict:
+    """``params`` with one field replaced (a copy; rules are copied too)."""
+    out = dict(params)
+    if field.startswith("rules."):
+        _, i, key = field.split(".")
+        rules = [dict(r) for r in out.get("rules") or []]
+        rules[int(i)][key] = value
+        out["rules"] = rules
+    else:
+        out[field] = value
+    return out
+
+
+def asked(step: dict) -> list[tuple[str, str]]:
+    """The ``(field, label)`` pairs a step asks for when run."""
+    wanted = set(step.get("ask") or [])
+    return [(f, lbl) for f, lbl in promptable(step["op"], step["params"])
+            if f in wanted]
+
+
 # -- file I/O -----------------------------------------------------------
 def save(path, name: str, steps: list[dict]) -> Path:
     """Write a macro file; returns the path actually written (suffix added)."""
@@ -350,7 +472,18 @@ def load(path) -> tuple[str, list[dict]]:
         op = step.get("op")
         if op not in OPS:
             raise MacroError(f"Step {i} uses an unknown action {op!r}.")
-        out.append({"op": op, "params": dict(step.get("params") or {})})
+        params = dict(step.get("params") or {})
+        entry = {"op": op, "params": params}
+        ask = step.get("ask")
+        if ask is not None:
+            fields = {f for f, _ in promptable(op, params)}
+            if not isinstance(ask, list) or not all(
+                    isinstance(f, str) and f in fields for f in ask):
+                raise MacroError(
+                    f"Step {i} asks for values it doesn't have: {ask!r}.")
+            if ask:
+                entry["ask"] = list(dict.fromkeys(ask))
+        out.append(entry)
     return str(doc.get("name") or macro_name(path)), out
 
 
@@ -359,10 +492,14 @@ class Recorder(QObject):
     """Captures the actions committed between ``start()`` and ``stop()``.
 
     It mirrors the undo stack for the span of the recording: every committed
-    action pushes a mark (its step, or None for a non-recordable action such as
-    show/hide); an undo takes the newest undoable mark out, a redo puts it back
+    action pushes a mark (its step, or None for an action a macro can't
+    replay); an undo takes the newest undoable mark out, a redo puts it back
     where it was. So an undone action leaves the macro, and undo/redo never
-    appear as steps. Outputs (plots, exports) are marks undo skips over."""
+    appear as steps. Outputs (plots, exports) are marks undo skips over.
+
+    A plot's step can be linked to the plot (``link_output``) so that changing
+    one of its options while recording updates the step (``update_output``):
+    the macro keeps the plot as it ended up."""
 
     changed = pyqtSignal()  # recording started / stopped / step count changed
 
@@ -374,6 +511,7 @@ class Recorder(QObject):
         # marks taken off by undo: (position they were at, step)
         self._undone: list[tuple[int, dict | None]] = []
         self._pre_undone = 0                    # undos reaching before start
+        self._outputs: dict[int, tuple[object, dict]] = {}  # id(plot) -> step
         actions.performed.connect(self._on_performed)
         actions.noted.connect(self._on_noted)
         actions.undone.connect(self._on_undone)
@@ -382,6 +520,7 @@ class Recorder(QObject):
     def start(self) -> None:
         self.active = True
         self._marks, self._undone, self._pre_undone = [], [], 0
+        self._outputs = {}
         self.changed.emit()
 
     def stop(self) -> list[dict]:
@@ -394,7 +533,31 @@ class Recorder(QObject):
         if self.active:
             self.active = False
             self._marks, self._undone, self._pre_undone = [], [], 0
+            self._outputs = {}
             self.changed.emit()
+
+    # -- outputs that change after they're made (a plot's options) ---------
+    def link_output(self, token) -> None:
+        """Link the output just recorded (the newest step) to ``token``, the
+        plot it made, so later changes to that plot can update it."""
+        if self.active and self._marks and self._marks[-1][0] is not None:
+            self._outputs[id(token)] = (token, self._marks[-1][0])
+
+    def relink_output(self, old, new) -> None:
+        """The plot moved to a new object (popped out, docked back)."""
+        entry = self._outputs.pop(id(old), None)
+        if entry is not None:
+            self._outputs[id(new)] = (new, entry[1])
+
+    def update_output(self, token, op: str, params: dict, renames: dict) -> bool:
+        """Replace the linked step's params (a plot whose options changed).
+        True when ``token`` had a step in this recording."""
+        entry = self._outputs.get(id(token))
+        if not self.active or entry is None or entry[1]["op"] != op:
+            return False
+        entry[1]["params"] = canonical(op, params, renames)
+        self.changed.emit()
+        return True
 
     def steps(self) -> list[dict]:
         return [step for step, _undoable in self._marks if step is not None]

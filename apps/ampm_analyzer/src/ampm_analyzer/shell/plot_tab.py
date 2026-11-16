@@ -283,6 +283,8 @@ class PlotTab(QWidget):
     # The set of toolbar controls that apply changed (a legend appeared, the
     # level lines became drawable...): the host rebuilds its toolbar.
     controlsChanged = pyqtSignal()
+    # A drawing option changed the spec (a macro being recorded keeps it).
+    specChanged = pyqtSignal()
 
     def __init__(self, spec: PlotSpec, span=None, title: str | None = None,
                  layers=None, parent: QWidget | None = None) -> None:
@@ -1625,12 +1627,13 @@ class PlotTab(QWidget):
         value = type(old)(value)
         if value == old:
             return
-        # A new spec, not an edit: the macro step that made this plot keeps
-        # the spec it recorded.
+        # A new spec, not an edit: a macro step already saved keeps the spec
+        # it recorded (one being recorded follows it: specChanged).
         self.spec = replace(self.spec, **{key: value})
         if key == "bins":
             self.crange = None  # new bins, new counts: re-detect the colours
         self._render()
+        self.specChanged.emit()
         if key in ("bins", "bandwidth", "show_ref", "show_points"):
             QTimer.singleShot(0, self.reset_view)  # the extent moved
 

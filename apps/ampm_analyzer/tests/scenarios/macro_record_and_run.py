@@ -31,6 +31,7 @@ files = {"save": None, "open": []}
 QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (files["save"], ""))
 QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (files["open"].pop(0), ""))
 macro_dialog.MacroPreviewDialog.exec = lambda self: QDialog.DialogCode.Accepted
+macro_dialog.MacroSaveDialog.exec = lambda self: QDialog.DialogCode.Accepted  # Stop: nothing asked when run
 issues = []
 def _issues_exec(self):
     issues.append([self.list.item(i).text() for i in range(self.list.count())])
@@ -65,19 +66,19 @@ csv_col = next(x for x in body.columns if x != "part_id")
 w._run("parts_csv_import", items=[[sec, csv_col]])
 w._run("excel_import", name="gas", key="layer", mapping=map_a, dtype=dtype_a,
        source={"sheet": "Props", "key_column": "Layer", "value_column": "Gas"})
-w._run("set_visible", name="gas", visible=False)          # view-only: not recorded
+w._run("set_visible", name="gas", visible=False)          # show/hide: a step too
 w._run("rename", old="Meltpool", new="MP")                # macro renames the source col
 w._run("derive", name="half", expr="[MP] / 2 + [dbl]")
 w._run("derive", name="oops", expr="[layer] * 9"); w._undo()   # undone → dropped
 w._run("filter_add", condition="[MP] > -1"); w._undo(); w._redo()  # redone → kept
 w._run("remove", names=["Demand focus"])
-assert R.count() == 9, R.count()
-assert "9 steps" in w._rec_label.text(), w._rec_label.text()
+assert R.count() == 10, R.count()
+assert "10 steps" in w._rec_label.text(), w._rec_label.text()
 # undo past the start of the recording, then redo: recording unaffected
 for _ in range(R.count() + 2): w._undo()
 assert R.count() == 0
 for _ in range(20): w._redo()
-assert R.count() == 9, R.count()
+assert R.count() == 10, R.count()
 recorded_state = state()
 
 files["save"] = os.path.join(TMP, "prep")                 # no suffix typed
@@ -86,7 +87,7 @@ mfile = os.path.join(TMP, "prep.macro.json"); assert os.path.exists(mfile), os.l
 doc = json.loads(open(mfile).read())
 ops = [st["op"] for st in doc["steps"]]
 assert ops == ["derive", "label", "part_calc", "parts_csv_import", "excel_import",
-               "rename", "derive", "filter_add", "remove"], ops
+               "set_visible", "rename", "derive", "filter_add", "remove"], ops
 assert doc["format"] == "ampm-macro" and doc["version"] == 1 and doc["name"] == "prep"
 P = [st["params"] for st in doc["steps"]]
 # canonical: source column stored under its ORIGINAL name everywhere
@@ -94,9 +95,10 @@ assert P[0]["expr"] == f"[{SRC}] * 2" and P[0]["after"] == SRC, P[0]
 assert P[1]["rules"][0]["cond"] == f"[{SRC}] > 0 and [dbl] > 0", P[1]
 assert P[2]["signal"] == SRC
 assert "mapping" not in P[4] and P[4]["source"]["sheet"] == "Props"   # no data in file
-assert P[5] == {"old": SRC, "new": "MP"}, P[5]
-assert P[6]["expr"] == f"[{SRC}] / 2 + [dbl]", P[6]
-assert P[7]["condition"] == f"[{SRC}] > -1", P[7]
+assert P[5] == {"name": "gas", "visible": False}, P[5]
+assert P[6] == {"old": SRC, "new": "MP"}, P[6]
+assert P[7]["expr"] == f"[{SRC}] / 2 + [dbl]", P[7]
+assert P[8]["condition"] == f"[{SRC}] > -1", P[8]
 print("recorded + saved:", ops)
 
 # --- run on the same build, from the pre-recording state ----------------
@@ -155,7 +157,7 @@ assert not issues and state() == before
 for content, frag in (("{not json", "valid JSON"), ('{"format": "x"}', "isn't an AMPM macro"),
                       ('{"format":"ampm-macro","version":99,"steps":[1]}', "version"),
                       ('{"format":"ampm-macro","version":1,"steps":[]}', "no steps"),
-                      ('{"format":"ampm-macro","version":1,"steps":[{"op":"set_visible","params":{}}]}', "unknown action"),
+                      ('{"format":"ampm-macro","version":1,"steps":[{"op":"explode","params":{}}]}', "unknown action"),
                       ('{"format":"ampm-macro","version":1,"steps":[{"op":"__init__","params":{}}]}', "unknown action")):
     f = os.path.join(TMP, "v.macro.json"); open(f, "w").write(content)
     try: macros.load(f); raise SystemExit(f"accepted bad file: {content}")

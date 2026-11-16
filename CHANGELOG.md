@@ -46,6 +46,12 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   Macros live in a **macro folder** (default `Documents\AMPM Analyzer\Macros`,
   changeable in Settings, for example to a shared team folder); Save and Browse
   start there and the Run menu lists its macros.
+  Showing and hiding columns are recorded, and a plot's step keeps the plot
+  toolbar options changed while recording. On Stop, values such as a filter's
+  condition or a plot's layers can be marked **Ask when run**: the macro then
+  asks for them each time, with the recorded value filled in. When a build
+  lacks a column the macro reads, the issues list offers the build's columns
+  to use instead for that run.
 - **Help.** A searchable in-app guide of 29 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,

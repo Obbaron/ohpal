@@ -103,6 +103,7 @@ files = {"save": [], "open": []}
 QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (files["save"].pop(0), ""))
 QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (files["open"].pop(0), ""))
 macro_dialog.MacroPreviewDialog.exec = lambda self: QDialog.DialogCode.Accepted
+macro_dialog.MacroSaveDialog.exec = lambda self: QDialog.DialogCode.Accepted  # Stop: nothing asked when run
 macro_dialog.MacroIssuesDialog.exec = lambda self: QDialog.DialogCode.Accepted
 def run_button():
     for b in w.toolbar.findChildren(QToolButton):

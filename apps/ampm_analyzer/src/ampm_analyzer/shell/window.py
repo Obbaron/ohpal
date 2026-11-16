@@ -488,11 +488,13 @@ class MainWindow(QMainWindow):
             return
         spec = dlg.spec()
         span = dlg.span()  # ("all", None, None) or ("range", lo, hi)
-        self._open_plot(spec, span)
-        # An output, not an undo step — but a macro being recorded keeps it.
+        tab = self._open_plot(spec, span)
+        # An output, not an undo step, but a macro being recorded keeps it,
+        # and follows the plot's later option changes (_on_plot_spec_changed).
         from dataclasses import asdict
 
         self.actions.note("plot", spec=asdict(spec), span=list(span))
+        self.recorder.link_output(tab)
 
     def _open_plot(self, spec, span):
         """Create a plot tab for ``spec`` over ``span`` and start its query.
@@ -528,6 +530,7 @@ class MainWindow(QMainWindow):
 
     # -- editable plot elements ------------------------------------------
     def _wire_plot_elements(self, tab) -> None:
+        tab.specChanged.connect(lambda t=tab: self._on_plot_spec_changed(t))
         tab.controlsChanged.connect(
             lambda t=tab: self._on_plot_controls_changed(t))
         tab.elementActivated.connect(
@@ -608,12 +611,27 @@ class MainWindow(QMainWindow):
         )
         win.closed.connect(self._on_detached_closed)
         win.dockRequested.connect(self._dock_plot)
+        # A plot made while recording stays linked to its macro step.
+        self.recorder.relink_output(p, win._tab)
+        win._tab.specChanged.connect(
+            lambda t=win._tab: self._on_plot_spec_changed(t))
         self._detached.append(win)
         win.show()
         # Remove the original docked tab (the window now owns this plot).
         idx = self.stack.indexOf(p)
         if idx >= 0:
             self._close_tab(idx)
+
+    def _on_plot_spec_changed(self, tab) -> None:
+        """A plot's option changed: if it was made while recording, its macro
+        step now records the plot as it is."""
+        from dataclasses import asdict
+
+        if self.recorder.update_output(
+                tab, "plot", {"spec": asdict(tab.spec), "span": list(tab.span)},
+                self.session.renames):
+            self.set_status("The macro being recorded keeps this plot's new "
+                            "setting.")
 
     def _on_detached_closed(self, win) -> None:
         if win in self._detached:
@@ -638,6 +656,7 @@ class MainWindow(QMainWindow):
             tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
         tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
         self._wire_plot_elements(tab)
+        self.recorder.relink_output(win._tab, tab)
         index = self._add_page(tab, tab.title, closable=True)
         self.tabbar.setCurrentIndex(index)
         self._feed_plot(tab, payload["raw"])  # shape via context + render
@@ -1556,6 +1575,16 @@ class MainWindow(QMainWindow):
         from .message_dialog import ask, tell
 
         n = len(steps)
+        while True:  # which values to ask for when run (if any can be)
+            chosen = self._choose_asked_values(steps)
+            if chosen is not None:
+                steps = chosen
+                break
+            if ask(self, "Discard the recording?",
+                   f"The {n} recorded step{'s' if n != 1 else ''} will be lost.",
+                   ok_text="Discard", cancel_text="Back"):
+                self.set_status("Macro recording discarded.")
+                return
         while True:
             start = str(Path(self._macro_folder_dir()) / f"macro{macros.SUFFIX}")
             path, _sel = QFileDialog.getSaveFileName(
@@ -1587,6 +1616,77 @@ class MainWindow(QMainWindow):
         macros.remember(path)
         QTimer.singleShot(0, self.refresh_data_layers)
 
+    def _choose_asked_values(self, steps: list) -> list | None:
+        """On Stop: let the user tick values the macro should ask for when it
+        runs. Returns the steps (with ``ask`` lists), unchanged when no step
+        has such a value; None if the card was cancelled."""
+        from .macro_dialog import MacroSaveDialog, span_text
+
+        renames = self.session.renames
+        items = []
+        for i, step in enumerate(steps):
+            shown = macros.resolve(step["op"], step["params"], renames)
+            for field, label in macros.promptable(step["op"], step["params"]):
+                value = macros.get_field(shown, field)
+                text = (span_text(value) if field in macros.SPAN_FIELDS
+                        else str(value or ""))
+                items.append((i, field, macros.describe(step["op"], shown),
+                              label, text))
+        if not items:
+            return steps
+        dlg = MacroSaveDialog(len(steps), items, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        chosen = dlg.chosen()
+        out = []
+        for i, step in enumerate(steps):
+            step = {k: v for k, v in step.items() if k != "ask"}
+            if chosen.get(i):
+                step["ask"] = chosen[i]
+            out.append(step)
+        return out
+
+    def _ask_macro_inputs(self, name: str, steps: list) -> list | None:
+        """Ask for the values a macro's steps ask for (the recorded ones
+        filled in) and put the answers into the steps. Returns the steps;
+        None if cancelled."""
+        from .macro_dialog import MacroInputsDialog
+
+        renames = self.session.renames
+        items, where = [], {}
+        for i, step in enumerate(steps):
+            shown = macros.resolve(step["op"], step["params"], renames)
+            for field, label in macros.asked(step):
+                key = f"{i}:{field}"
+                kind = "span" if field in macros.SPAN_FIELDS else "text"
+                items.append((key, f"Step {i + 1}: "
+                              + macros.describe(step["op"], shown),
+                              label, kind, macros.get_field(shown, field)))
+                where[key] = (i, field)
+        if not items:
+            return steps
+        store = self.session.store
+        layers = list(store.layers) if store is not None else []
+        dlg = MacroInputsDialog(name, items, layers, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        out = [dict(s) for s in steps]
+        for key, value in dlg.values().items():
+            i, field = where[key]
+            op = out[i]["op"]
+            # Answers use this build's column names: store them as the macro
+            # does (original names), like the rest of the step.
+            shown = macros.resolve(op, out[i]["params"], renames)
+            out[i]["params"] = macros.canonical(
+                op, macros.set_field(shown, field, value), renames)
+        return out
+
+    def _stored_name(self, display: str) -> str:
+        """A grid column's name as a macro stores it (a source column by its
+        original datastore name)."""
+        inverse = {disp: orig for orig, disp in self.session.renames.items()}
+        return inverse.get(display, display)
+
     def _run_macro(self, path: str | None = None) -> None:
         """Run a macro — ``path`` from the recent list, or picked from a file
         dialog: check it, preview its steps, then run them as one all-or-nothing
@@ -1611,24 +1711,41 @@ class MainWindow(QMainWindow):
             MacroIssuesDialog(macros.macro_name(path), [str(exc)], self).exec()
             return
         self._remember_macro(path)
-        # Describe the steps under this build's column names.
-        descs = [
-            macros.describe(s["op"], macros.resolve(
-                s["op"], s["params"], self.session.renames))
-            for s in steps
-        ]
+        # Values the macro asks for, before anything is checked.
+        steps = self._ask_macro_inputs(name, steps)
+        if steps is None:
+            self.set_status("Macro cancelled.")
+            return
         # Check the WHOLE macro against this build before anything changes, and
-        # list every problem at once.
-        found = self.actions.check_batch(
-            [(s["op"], s["params"]) for s in steps], macros.resolve)
-        if found:
+        # list every problem at once. A column the build lacks can be swapped
+        # for one of its own, then the macro is checked again.
+        recorded, swaps = steps, {}
+        while True:
+            steps = macros.substitute(recorded, swaps)
+            descs = [  # under this build's column names
+                macros.describe(s["op"], macros.resolve(
+                    s["op"], s["params"], self.session.renames))
+                for s in steps
+            ]
+            missing: list[str] = []
+            found = self.actions.check_batch(
+                [(s["op"], s["params"]) for s in steps], macros.resolve,
+                missing)
+            if not found:
+                break
             by_step: dict[int, list[str]] = {}
             for i, msg in found:
                 by_step.setdefault(i, []).append(msg)
-            MacroIssuesDialog(name, [
+            dlg = MacroIssuesDialog(name, [
                 f"Step {i + 1} — {descs[i]}\n" + "\n".join(f"   • {m}" for m in msgs)
                 for i, msgs in sorted(by_step.items())
-            ], self).exec()
+            ], self, missing=missing,
+                columns=list(self.session.result.df.columns))
+            if (dlg.exec() == QDialog.DialogCode.Accepted and missing
+                    and dlg.substitutions()):
+                for col, chosen in dlg.substitutions().items():
+                    swaps[col] = self._stored_name(chosen)
+                continue
             self.set_status(
                 f"Macro '{name}' was not run — {len(by_step)} step"
                 f"{'s have' if len(by_step) != 1 else ' has'} issues.")
@@ -1667,9 +1784,12 @@ class MainWindow(QMainWindow):
             self.set_status(f"Macro '{name}' was not run — see the issues.")
             return
         n = len(steps)
+        used = "".join(
+            f" Used '{self.session.renames.get(new, new)}' for '{old}'."
+            for old, new in swaps.items())
         self.set_status(
             f"Ran macro '{name}' ({n} step{'s' if n != 1 else ''})."
-            + "".join(f" {note}" for note in notes))
+            + used + "".join(f" {note}" for note in notes))
 
     def _macro_export_step(self, index: int, params: dict):
         """Ask where a macro's Excel-export step should save. Returns the path,

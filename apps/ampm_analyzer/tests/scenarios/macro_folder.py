@@ -31,6 +31,9 @@ def fake_open(parent, title, start, filt):
     return "", filt
 QFileDialog.getSaveFileName = staticmethod(fake_save); QFileDialog.getOpenFileName = staticmethod(fake_open)
 step = {"op": "filter_add", "params": {"condition": "[layer] > 0"}}
+from ampm_analyzer.shell import macro_dialog
+from PyQt6.QtWidgets import QDialog
+macro_dialog.MacroSaveDialog.exec = lambda self: QDialog.DialogCode.Accepted  # Stop: nothing asked when run
 w._save_recording([step])
 assert Path(asked["save"]).parent == macros.default_folder(), asked
 saved = macros.default_folder() / "cov by part.macro.json"; assert saved.is_file()
