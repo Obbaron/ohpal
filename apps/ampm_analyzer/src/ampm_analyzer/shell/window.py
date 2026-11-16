@@ -482,7 +482,8 @@ class MainWindow(QMainWindow):
         columns = list(self.session.result.df.columns)
         layers = list(store.layers) if store is not None else []
         dlg = NewPlotDialog(kind, columns, layers, self.session.current_layer,
-                            self, renames=self.session.renames)
+                            self, renames=self.session.renames,
+                            dbscan=self.controller.dbscan_params())
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.spec()

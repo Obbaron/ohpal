@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -24,11 +25,12 @@ from PyQt6.QtWidgets import (
 )
 
 from .card import DraggableCard
-from .plotspec import BAR_AGGS, COV_MODES, PlotSpec, default_spec
+from .plotspec import BANDWIDTHS, BAR_AGGS, COV_MODES, PlotSpec, default_spec
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
 
 _NONE = "— none —"
+_NONE_2D = "None (2D)"
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
@@ -41,7 +43,7 @@ _PRIMARY_QSS = (
 
 class NewPlotDialog(DraggableCard, QDialog):
     def __init__(self, kind: str, columns, layers=None, current_layer=None,
-                 parent=None, *, renames=None) -> None:
+                 parent=None, *, renames=None, dbscan=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"New {kind}")
         self._kind = kind
@@ -51,7 +53,7 @@ class NewPlotDialog(DraggableCard, QDialog):
             current_layer if current_layer is not None
             else (self._layers[0] if self._layers else None)
         )
-        base = default_spec(kind, self._columns, renames)
+        base = default_spec(kind, self._columns, renames, dbscan=dbscan)
 
         # Frameless card (matches the calculation / filter dialogs): drop the
         # window chrome; a translucent window lets the rounded QFrame show.
@@ -92,7 +94,77 @@ class NewPlotDialog(DraggableCard, QDialog):
         self.cov_mode_combo = None
         self.show_points_chk = None
         self.sl_layer = None
-        if base.is_hist:
+        self.group_combo = None
+        self.bw_combo = None
+        self.box_chk = None
+        self.k_spin = None
+        self.epsxy_spin = None
+        self.epsz_spin = None
+
+        def bandwidth_combo(current: str) -> QComboBox:
+            cb = fix_combo(QComboBox())
+            cb.addItems([b.capitalize() for b in BANDWIDTHS])
+            cb.setCurrentText(current.capitalize())
+            cb.setToolTip("How smooth the density is: Scott's or Silverman's "
+                          "rule, as in scipy's gaussian_kde")
+            return cb
+
+        if base.is_kde:
+            # KDE: a column's density, optionally one curve per group.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("Column", self.x_combo)
+            self.y_combo = None
+            self.group_combo = fix_combo(QComboBox())
+            self.group_combo.addItem(_NONE)
+            self.group_combo.addItems(self._columns)
+            if base.group_by in self._columns:
+                self.group_combo.setCurrentText(base.group_by)
+            form.addRow("One curve per", self.group_combo)
+            self.bw_combo = bandwidth_combo(base.bandwidth)
+            form.addRow("Bandwidth", self.bw_combo)
+        elif base.is_violin:
+            # Violin: a value's distribution per category.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("Category", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Value", self.y_combo)
+            self.bw_combo = bandwidth_combo(base.bandwidth)
+            form.addRow("Bandwidth", self.bw_combo)
+            self.box_chk = QCheckBox("Show quartile box and median")
+            self.box_chk.setChecked(bool(base.show_box))
+            form.addRow("", self.box_chk)
+        elif base.is_kdist:
+            # K-distance: DBSCAN's neighbourhood, to read eps off the elbow.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("X", self.x_combo)
+            self.y_combo = axis_combo(base.y)
+            form.addRow("Y", self.y_combo)
+            self.z_combo = fix_combo(QComboBox())
+            self.z_combo.addItem(_NONE_2D)
+            self.z_combo.addItems(self._columns)
+            if base.z in self._columns:
+                self.z_combo.setCurrentText(base.z)
+            form.addRow("Z", self.z_combo)
+            self.k_spin = QSpinBox()
+            self.k_spin.setRange(1, 500)
+            self.k_spin.setValue(int(base.k))
+            self.k_spin.setToolTip("Which neighbour to measure: use the "
+                                   "min_samples you plan to give DBSCAN")
+            form.addRow("Neighbour (k)", self.k_spin)
+            self.epsxy_spin = self._radius_spin(base.eps_xy)
+            self.epsxy_spin.setToolTip("DBSCAN's XY radius, in mm. Drawn on the "
+                                       "plot as a dashed line to compare with "
+                                       "the elbow.")
+            form.addRow("XY radius (eps)", self.epsxy_spin)
+            self.epsz_spin = self._radius_spin(base.eps_z)
+            self.epsz_spin.setToolTip("DBSCAN's Z radius, in mm. Only the ratio "
+                                      "to the XY radius matters here: it scales "
+                                      "Z before the distances are measured.")
+            form.addRow("Z radius", self.epsz_spin)
+            self.z_combo.currentTextChanged.connect(
+                lambda t: self.epsz_spin.setEnabled(t != _NONE_2D))
+            self.epsz_spin.setEnabled(self.z_combo.currentText() != _NONE_2D)
+        elif base.is_hist:
             # Histogram: one numeric column + a bin count.
             self.x_combo = axis_combo(base.x)
             form.addRow("Column", self.x_combo)
@@ -192,7 +264,8 @@ class NewPlotDialog(DraggableCard, QDialog):
             )
             self.lo_spin.set_layers(self._layers, self._layers[0])
             self.hi_spin.set_layers(self._layers, self._layers[-1])
-        if base.is_3d or base.is_bar or base.is_hist:
+        if (base.is_3d or base.is_bar or base.is_hist or base.is_kde
+                or base.is_violin or base.is_kdist):
             self.radio_all.setChecked(True)
         else:
             self.radio_single.setChecked(True)
@@ -236,7 +309,45 @@ class NewPlotDialog(DraggableCard, QDialog):
         self.lo_spin.setEnabled(on_range)
         self.hi_spin.setEnabled(on_range)
 
+    @staticmethod
+    def _radius_spin(value: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setDecimals(3)
+        spin.setRange(0.001, 1000.0)
+        spin.setSingleStep(0.01)
+        spin.setSuffix(" mm")
+        spin.setValue(float(value))
+        return spin
+
     def spec(self) -> PlotSpec:
+        if self.k_spin is not None:  # k-distance
+            z = self.z_combo.currentText()
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y=self.y_combo.currentText(),
+                z=None if z == _NONE_2D else z,
+                k=self.k_spin.value(),
+                eps_xy=self.epsxy_spin.value(),
+                eps_z=self.epsz_spin.value(),
+            )
+        if self.group_combo is not None:  # KDE
+            grp = self.group_combo.currentText()
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y="density",
+                group_by=None if grp == _NONE else grp,
+                bandwidth=self.bw_combo.currentText().lower(),
+            )
+        if self.box_chk is not None:  # violin
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y=self.y_combo.currentText(),
+                bandwidth=self.bw_combo.currentText().lower(),
+                show_box=self.box_chk.isChecked(),
+            )
         if self.bins_spin is not None:  # histogram
             return PlotSpec(
                 kind=self._kind,

@@ -64,6 +64,14 @@ _AXIS_LINE = _BG
 _AXIS_TICK = "#8a94a6"
 _AXIS_TEXT = "#5a6472"
 _TITLE_TEXT = "#2a2f3a"   # plot title: darker than the axis text
+# Distribution plots.
+_CURVE_BLUE = (0.16, 0.40, 0.78, 1.0)   # the single k-distance curve
+_KDE_FILL_ALPHA = 0.18   # under a KDE curve; fainter as curves multiply
+_REF_RED = (0.80, 0.20, 0.20, 1.0)      # the k-distance curve's eps guide
+_VIOLIN_ALPHA = 0.85
+_VIOLIN_EDGE = (0.16, 0.18, 0.22, 0.55)
+_VIOLIN_INNER = (0.16, 0.18, 0.22, 0.85)  # whisker + quartile box
+_LEGEND_MAX = 24  # group names labelled on a KDE legend (more: every 2nd...)
 
 # Editable elements. Chrome sizes below are the built-in look's; a bigger font
 # grows its strip by the difference so text is never clipped.
@@ -317,6 +325,24 @@ class PlotTab(QWidget):
         self._bar_labels: list = []
         self._bar_data = None
 
+        # Distribution plots. Curves (KDE, k-distance): one line each over a
+        # translucent fill, plus a dashed guide line. Violins: one mesh of
+        # shapes, their outlines, and the quartile boxes / medians. The data
+        # behind them is kept, so recolouring doesn't recompute densities.
+        self._cbar_is_legend = False  # the colour-bar column is a group legend
+        self._curve_data = None
+        self._curve_lines: list = []
+        self._curve_fill = None
+        self._ref_line = None
+        self._ref_label = None
+        self._violin_data = None
+        self._violin_mesh = None
+        self._violin_edges = None
+        self._violin_marks = None
+        self._dist_df = None      # the dataframe the cached data came from
+        self._dist_key = None     # and the settings it was built with
+        self._dist_data = None
+
         # Contour visuals: the filled bands (an image of the interpolated
         # field), the iso-lines on the band edges, the measured-point overlay.
         self._contour_img = None
@@ -528,6 +554,12 @@ class PlotTab(QWidget):
         if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._render_bars()
             return
+        if self.spec.is_curve:
+            self._render_curves()
+            return
+        if self.spec.is_violin:
+            self._render_violins()
+            return
         try:
             data = plotdata.build(self._df, self.spec, cmap=self.cmap,
                                   scale=self.scale, crange=self.crange)
@@ -620,31 +652,11 @@ class PlotTab(QWidget):
         else:
             self._bars.set_data(vertices=verts, faces=faces, vertex_colors=vcol)
 
-        for t in self._bar_labels:
-            t.parent = None
-        self._bar_labels = []
         hvals = data.heights[np.isfinite(data.heights)]
         ymin = min(0.0, float(hvals.min()) if hvals.size else 0.0)
         ymax = max(0.0, float(hvals.max()) if hvals.size else 1.0)
         if ymax <= ymin:  # flat/degenerate heights → give the view a real span
             ymax = ymin + 1.0
-        # The x axis is a rule just below the bars' baseline (ymin); category
-        # labels drop a further gap below that rule so they read as tick labels
-        # rather than text sitting inside the bars.
-        gap = 0.045 * (ymax - ymin)
-        axis_y = ymin - 0.35 * gap
-        label_y = ymin - gap
-        if data.categorical and data.labels:  # category text under the x axis
-            # The labels hang from just under the rule, so a bigger font grows
-            # downwards, away from the bars. (VisPy's "bottom" anchor is the
-            # text's top edge in a y-up view.)
-            hang_y = ymin - 0.45 * gap
-            for i, label in enumerate(data.labels):
-                t = scene.visuals.Text(
-                    label, pos=(float(data.centers[i]), hang_y), color=_AXIS_TEXT,
-                    anchor_x="center", anchor_y="bottom", font_size=9,
-                    parent=self._view.scene)
-                self._bar_labels.append(t)
 
         clo, chi = float(data.crange[0]), float(data.crange[1])
         if chi <= clo:  # flat values → a readable colourbar still needs a span
@@ -652,25 +664,13 @@ class PlotTab(QWidget):
         self._set_colorbar(clo, chi, data.value_name)
         xlo = float(data.centers.min()) - w / 2
         xhi = float(data.centers.max()) + w / 2
-        # A visible rule is the category x-axis; the region labels (at y=label_y)
-        # then sit just below this line. Histograms keep the numeric x axis
-        # (the AxisWidget), so the rule is category-bar only.
+        # Category bars get the text-label axis; histograms keep the numeric
+        # x axis (the AxisWidget), so no rule or labels.
         if data.categorical:
-            axis_pos = np.array([[xlo, axis_y], [xhi, axis_y]], "float32")
-            if self._bar_axis is None:
-                self._bar_axis = scene.visuals.Line(
-                    pos=axis_pos, color=_AXIS_TICK, width=1.0,
-                    parent=self._view.scene)
-            else:
-                self._bar_axis.set_data(pos=axis_pos)
-                if self._bar_axis.parent is None:
-                    self._bar_axis.parent = self._view.scene
-            self._bar_axis.visible = self._show_axes
-            y_lo = label_y  # frame the labels in (reset_view adds glyph room)
-        elif self._bar_axis is not None:  # histogram → no baseline rule
-            self._bar_axis.parent = None
-            y_lo = ymin
+            y_lo = self._draw_category_axis(
+                data.centers, data.labels or [], ymin, ymax, xlo, xhi)
         else:
+            self._clear_category_axis()
             y_lo = ymin
         self._data_bounds = (np.array([xlo, y_lo], "float32"),
                              np.array([xhi, ymax], "float32"))
@@ -680,6 +680,407 @@ class PlotTab(QWidget):
         self._rendered_once = True
         if self._view is not None and first:
             QTimer.singleShot(0, self.reset_view)
+
+    def _draw_category_axis(self, centers, labels, ymin, ymax, xlo, xhi) -> float:
+        """A category x axis: a rule just below ``ymin`` and the category
+        labels hanging under it (so they read as tick labels, not as text in
+        the plot). Returns the lowest y the view should frame."""
+        from vispy import scene
+
+        for t in self._bar_labels:
+            t.parent = None
+        self._bar_labels = []
+        gap = 0.045 * (ymax - ymin)
+        axis_y = ymin - 0.35 * gap
+        label_y = ymin - gap
+        # The labels hang from just under the rule, so a bigger font grows
+        # downwards, away from the data. (VisPy's "bottom" anchor is the
+        # text's top edge in a y-up view.)
+        hang_y = ymin - 0.45 * gap
+        for i, label in enumerate(labels):
+            t = scene.visuals.Text(
+                label, pos=(float(centers[i]), hang_y), color=_AXIS_TEXT,
+                anchor_x="center", anchor_y="bottom", font_size=9,
+                parent=self._view.scene)
+            self._bar_labels.append(t)
+        axis_pos = np.array([[xlo, axis_y], [xhi, axis_y]], "float32")
+        if self._bar_axis is None:
+            self._bar_axis = scene.visuals.Line(
+                pos=axis_pos, color=_AXIS_TICK, width=1.0,
+                parent=self._view.scene)
+        else:
+            self._bar_axis.set_data(pos=axis_pos)
+            if self._bar_axis.parent is None:
+                self._bar_axis.parent = self._view.scene
+        self._bar_axis.visible = self._show_axes
+        return label_y  # frame the labels in (reset_view adds glyph room)
+
+    def _clear_category_axis(self) -> None:
+        for t in self._bar_labels:
+            t.parent = None
+        self._bar_labels = []
+        if self._bar_axis is not None:
+            self._bar_axis.parent = None
+
+    # -- distribution plots: KDE, k-distance, violins ------------------
+    def _chart_view(self) -> None:
+        """Make the view a plain chart: the (data-less) scatter out of the
+        scene (set_range walks every visual's bounds, and an un-fed Markers
+        crashes on None data) and the aspect free (not spatial)."""
+        if self._scatter is not None and self._scatter.parent is not None:
+            self._scatter.parent = None
+            self._scatter.visible = False
+        try:
+            self._view.camera.aspect = None
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _dist_cached(self, builder):
+        """``builder``'s result for the current data and settings. Densities
+        and nearest-neighbour distances are the expensive part, so they are
+        built once and reused while only the colours change."""
+        s = self.spec
+        key = (builder.__name__, s.x, s.y, s.z, s.group_by, s.bandwidth,
+               s.k, s.eps_xy, s.eps_z)
+        if (self._dist_data is not None and self._dist_df is self._df
+                and self._dist_key == key):
+            return self._dist_data
+        data = builder(self._df, s)
+        self._dist_df, self._dist_key, self._dist_data = self._df, key, data
+        return data
+
+    def _render_curves(self) -> None:
+        """KDE (one density per group, filled) or the k-distance curve."""
+        from vispy import scene
+
+        builder = plotdata.build_kde if self.spec.is_kde else plotdata.build_kdist
+        try:
+            data = self._dist_cached(builder)
+        except KeyError as exc:
+            self._show_overlay(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._show_overlay(f"Could not plot: {exc}")
+            return
+        self._clear_overlay()
+        self._chart_view()
+        if self.spec.is_kde:
+            data.colors = plotdata._sample_colors(data.n, self.cmap)
+        else:
+            data.colors = np.array([_CURVE_BLUE], "float32")
+        self._curve_data = data
+
+        # Filled areas under the KDE curves (one translucent mesh), then lines.
+        for line in self._curve_lines:
+            line.parent = None
+        self._curve_lines = []
+        x = np.asarray(data.x, dtype="float32")
+        if self.spec.is_kde:
+            m = x.size
+            verts, faces, cols = [], [], []
+            for c, ys in enumerate(data.ys):
+                base = c * 2 * m
+                v = np.empty((2 * m, 3), "float32")
+                v[0::2, 0] = x
+                v[0::2, 1] = 0.0
+                v[1::2, 0] = x
+                v[1::2, 1] = ys
+                v[:, 2] = 0.0
+                verts.append(v)
+                j = np.arange(m - 1, dtype="uint32") * 2 + base
+                faces.append(np.column_stack([j, j + 1, j + 3]))
+                faces.append(np.column_stack([j, j + 3, j + 2]))
+                fill = np.array(data.colors[c], "float32")
+                fill[3] = min(_KDE_FILL_ALPHA, max(0.03, 0.5 / data.n))
+                cols.append(np.tile(fill, (2 * m, 1)))
+            V, F, C = np.vstack(verts), np.vstack(faces), np.vstack(cols)
+            if self._curve_fill is None:
+                self._curve_fill = scene.visuals.Mesh(
+                    vertices=V, faces=F, vertex_colors=C, parent=self._view.scene)
+                self._curve_fill.set_gl_state("translucent", depth_test=False)
+            else:
+                self._curve_fill.set_data(vertices=V, faces=F, vertex_colors=C)
+                if self._curve_fill.parent is None:
+                    self._curve_fill.parent = self._view.scene
+            self._curve_fill.order = 0
+        elif self._curve_fill is not None:
+            self._curve_fill.parent = None
+        for c, ys in enumerate(data.ys):
+            line = scene.visuals.Line(
+                pos=np.column_stack([x, np.asarray(ys, "float32")]),
+                color=tuple(float(v) for v in data.colors[c]), width=2.0,
+                method="agg", parent=self._view.scene)
+            line.order = 1
+            self._curve_lines.append(line)
+
+        ymax = max(float(np.max(ys)) for ys in data.ys) if data.ys else 1.0
+        xlo, xhi = float(x[0]), float(x[-1])
+        if data.reference is not None:  # headroom for the guide and its label
+            ymax = max(ymax, 1.08 * float(data.reference))
+        if ymax <= 0:
+            ymax = 1.0
+        self._set_reference(data, xlo, xhi, lift=0.012 * ymax)
+
+        # KDE: a legend of the groups in the colour-bar column. One curve (or
+        # the k-distance curve) needs none.
+        if self.spec.is_kde and data.group_name and data.n > 1:
+            self._set_colorbar(0.0, 1.0, data.group_name,
+                               categories=(data.names, data.colors))
+        elif self._cbar is not None:
+            self._cbar.visible = False
+            if self._cbar_label is not None:
+                self._cbar_label.visible = False
+            self._set_cbar_ticks(None, 0.0, 1.0)
+        self._full_range = None
+        self._data_bounds = (np.array([xlo, 0.0], "float32"),
+                             np.array([xhi, ymax], "float32"))
+        self._apply_elements()
+        self._apply_visibility()
+        first = not self._rendered_once
+        self._rendered_once = True
+        if self._view is not None and first:
+            QTimer.singleShot(0, self.reset_view)
+
+    def _set_reference(self, data, xlo, xhi, lift: float = 0.0) -> None:
+        """The k-distance curve's dashed guide at the XY radius (eps)."""
+        from vispy import scene
+
+        if data.reference is None:
+            for item in (self._ref_line, self._ref_label):
+                if item is not None:
+                    item.parent = None
+            return
+        y = float(data.reference)
+        n = 60  # dashes: consecutive point pairs are drawn, gaps between
+        pos = np.empty((2 * n, 2), "float32")
+        pos[:, 0] = np.linspace(xlo, xhi, 2 * n + 1)[:2 * n]
+        pos[:, 1] = y
+        if self._ref_line is None:
+            self._ref_line = scene.visuals.Line(
+                pos=pos, color=_REF_RED, width=1.0, connect="segments",
+                parent=self._view.scene)
+        else:
+            self._ref_line.set_data(pos=pos)
+            if self._ref_line.parent is None:
+                self._ref_line.parent = self._view.scene
+        self._ref_line.order = 2
+        # Label at the right end, just above the line.
+        text = f"eps = {_fmt(y)} mm"
+        if self._ref_label is None:
+            self._ref_label = scene.visuals.Text(
+                text, pos=(xhi, y + lift), color=_REF_RED, anchor_x="right",
+                anchor_y="top", font_size=9, parent=self._view.scene)
+        else:
+            self._ref_label.text = text
+            self._ref_label.pos = (xhi, y + lift)
+            if self._ref_label.parent is None:
+                self._ref_label.parent = self._view.scene
+
+    def _render_violins(self) -> None:
+        """One violin per category, coloured by its median, with an optional
+        quartile box, whisker and median mark inside."""
+        from vispy import scene
+
+        try:
+            data = self._dist_cached(plotdata.build_violins)
+        except KeyError as exc:
+            self._show_overlay(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._show_overlay(f"Could not plot: {exc}")
+            return
+        if data.n == 0:
+            self._show_overlay("Nothing to plot for this selection.")
+            return
+        self._clear_overlay()
+        self._chart_view()
+        medians = np.array([st["median"] for st in data.stats], "float32")
+        colors, clo, chi = plotdata._bar_colors(medians, self.cmap, self.crange)
+        if self.crange is None:
+            self.crange = (clo, chi)
+        self._full_range = data.full_range
+        data.colors = colors
+        self._violin_data = data
+
+        # The shapes: a strip of quads between the left and right outline.
+        verts, faces, cols, edges, links = [], [], [], [], []
+        base = 0
+        for i, (ys, half) in enumerate(data.outlines):
+            c = float(data.centers[i])
+            m = ys.size
+            v = np.zeros((2 * m, 3), "float32")
+            v[0::2, 0] = c - half
+            v[1::2, 0] = c + half
+            v[0::2, 1] = ys
+            v[1::2, 1] = ys
+            verts.append(v)
+            j = np.arange(m - 1, dtype="uint32") * 2 + base
+            faces.append(np.column_stack([j, j + 1, j + 3]))
+            faces.append(np.column_stack([j, j + 3, j + 2]))
+            fill = np.array(colors[i], "float32")
+            fill[3] = _VIOLIN_ALPHA
+            cols.append(np.tile(fill, (2 * m, 1)))
+            # outline: up the right side, down the left, closed
+            ring = np.vstack([np.column_stack([c + half, ys]),
+                              np.column_stack([c - half, ys])[::-1]])
+            start = sum(len(e) for e in edges)
+            idx = np.arange(start, start + len(ring))
+            links.append(np.column_stack([idx, np.roll(idx, -1)]))
+            edges.append(ring.astype("float32"))
+            base += 2 * m
+        V, F, C = np.vstack(verts), np.vstack(faces), np.vstack(cols)
+        if self._violin_mesh is None:
+            self._violin_mesh = scene.visuals.Mesh(
+                vertices=V, faces=F, vertex_colors=C, parent=self._view.scene)
+            self._violin_mesh.set_gl_state("translucent", depth_test=False)
+        else:
+            self._violin_mesh.set_data(vertices=V, faces=F, vertex_colors=C)
+            if self._violin_mesh.parent is None:
+                self._violin_mesh.parent = self._view.scene
+        self._violin_mesh.order = 0
+        E, L = np.vstack(edges), np.vstack(links).astype("uint32")
+        if self._violin_edges is None:
+            self._violin_edges = scene.visuals.Line(
+                pos=E, connect=L, color=_VIOLIN_EDGE, width=1.0,
+                parent=self._view.scene)
+        else:
+            self._violin_edges.set_data(pos=E, connect=L)
+            if self._violin_edges.parent is None:
+                self._violin_edges.parent = self._view.scene
+        self._violin_edges.order = 1
+
+        # Inside: whisker (min to max), quartile box, median mark: thin quads.
+        y_all = [st[k] for st in data.stats for k in ("min", "max")]
+        ymin, ymax = float(min(y_all)), float(max(y_all))
+        if ymax <= ymin:
+            ymax = ymin + 1.0
+        if self.spec.show_box:
+            qv, qf, qc = [], [], []
+
+            def quad(x0, x1, y0, y1, rgba):
+                b = sum(len(q) for q in qv)
+                qv.append(np.array([[x0, y0, 0], [x1, y0, 0], [x1, y1, 0],
+                                    [x0, y1, 0]], "float32"))
+                qf.append(np.array([[b, b + 1, b + 2], [b, b + 2, b + 3]],
+                                   "uint32"))
+                qc.append(np.tile(np.array(rgba, "float32"), (4, 1)))
+
+            tick = 0.004 * (ymax - ymin)  # the median mark's half height
+            for i, st in enumerate(data.stats):
+                c = float(data.centers[i])
+                quad(c - 0.006, c + 0.006, st["min"], st["max"], _VIOLIN_INNER)
+                quad(c - 0.045, c + 0.045, st["q1"], st["q3"], _VIOLIN_INNER)
+                quad(c - 0.045, c + 0.045, st["median"] - tick,
+                     st["median"] + tick, (1.0, 1.0, 1.0, 1.0))
+            QV, QF, QC = np.vstack(qv), np.vstack(qf), np.vstack(qc)
+            if self._violin_marks is None:
+                self._violin_marks = scene.visuals.Mesh(
+                    vertices=QV, faces=QF, vertex_colors=QC,
+                    parent=self._view.scene)
+                # Same depth for every quad: draw in order (the median mark
+                # goes over its box) instead of depth-testing it away.
+                self._violin_marks.set_gl_state("translucent", depth_test=False)
+            else:
+                self._violin_marks.set_data(vertices=QV, faces=QF,
+                                            vertex_colors=QC)
+                if self._violin_marks.parent is None:
+                    self._violin_marks.parent = self._view.scene
+            self._violin_marks.order = 2
+        elif self._violin_marks is not None:
+            self._violin_marks.parent = None
+
+        self._set_colorbar(clo, chi if chi > clo else clo + 1.0,
+                           f"{data.value_name} (median)")
+        xlo, xhi = float(data.centers.min()) - 0.5, float(data.centers.max()) + 0.5
+        y_lo = self._draw_category_axis(data.centers, data.labels, ymin, ymax,
+                                        xlo, xhi)
+        self._data_bounds = (np.array([xlo, y_lo], "float32"),
+                             np.array([xhi, ymax], "float32"))
+        self._apply_elements()
+        self._apply_visibility()
+        first = not self._rendered_once
+        self._rendered_once = True
+        if self._view is not None and first:
+            QTimer.singleShot(0, self.reset_view)
+
+    def _curve_hover(self, event) -> None:
+        """The curve nearest the pointer (KDE: its group) at the pointer's x."""
+        data = self._curve_data
+        if (data is None or not self._curve_lines
+                or getattr(event, "pos", None) is None):
+            return
+        if getattr(event, "buttons", None):
+            self._hide_tooltip()
+            return
+        try:
+            line = self._curve_lines[0]
+            dx = float(line.get_transform("canvas", "visual").map(event.pos)[0])
+            x = data.x
+            if not (x[0] <= dx <= x[-1]):
+                self._hide_tooltip()
+                return
+            j = int(np.clip(np.searchsorted(x, dx), 0, x.size - 1))
+            pts = np.column_stack([np.full(len(data.ys), x[j]),
+                                   [float(ys[j]) for ys in data.ys]])
+            canvas = np.atleast_2d(
+                line.get_transform("visual", "canvas").map(pts))
+            dist = np.abs(canvas[:, 1] - float(event.pos[1]))
+            c = int(np.argmin(dist))
+            if dist[c] > 40:
+                self._hide_tooltip()
+                return
+            y = float(data.ys[c][j])
+            if self.spec.is_kdist:
+                lines = [f"rank: {int(x[j]):,} of {x.size:,}",
+                         f"{data.y_name}: {_fmt(y)}"]
+            else:
+                lines = ([f"{data.group_name}: {data.names[c]}"]
+                         if data.group_name else [])
+                lines += [f"{data.x_name}: {_fmt(float(x[j]))}",
+                          f"density: {_fmt(y)}",
+                          f"n = {data.counts[c]:,}"]
+            if self._tooltip is None:
+                self._tooltip = PlotTooltip(self._canvas.native)
+            native = self._canvas.native
+            self._tooltip.show_at((float(canvas[c, 0]), float(canvas[c, 1])),
+                                  lines, data.colors[c],
+                                  (native.width(), native.height()))
+        except Exception:  # noqa: BLE001
+            self._hide_tooltip()
+
+    def _violin_hover(self, event) -> None:
+        """A violin's quartiles and range under the pointer."""
+        data = self._violin_data
+        if (data is None or self._violin_mesh is None
+                or getattr(event, "pos", None) is None):
+            return
+        if getattr(event, "buttons", None):
+            self._hide_tooltip()
+            return
+        try:
+            mesh = self._violin_mesh
+            dx, dy = mesh.get_transform("canvas", "visual").map(event.pos)[:2]
+            i = int(np.argmin(np.abs(data.centers - dx)))
+            st = data.stats[i]
+            room = 0.02 * ((max(s["max"] for s in data.stats)
+                            - min(s["min"] for s in data.stats)) or 1.0)
+            if (abs(dx - float(data.centers[i])) > 0.45
+                    or not (st["min"] - room <= dy <= st["max"] + room)):
+                self._hide_tooltip()
+                return
+            px, py = mesh.get_transform("visual", "canvas").map(
+                [float(data.centers[i]), st["median"]])[:2]
+            lines = [f"{data.x_name}: {st['key']}", f"n = {st['n']:,}",
+                     f"max: {_fmt(st['max'])}", f"Q3: {_fmt(st['q3'])}",
+                     f"median: {_fmt(st['median'])}", f"Q1: {_fmt(st['q1'])}",
+                     f"min: {_fmt(st['min'])}"]
+            if self._tooltip is None:
+                self._tooltip = PlotTooltip(self._canvas.native)
+            native = self._canvas.native
+            self._tooltip.show_at((px, py), lines, data.colors[i],
+                                  (native.width(), native.height()))
+        except Exception:  # noqa: BLE001
+            self._hide_tooltip()
 
     # -- contour rendering ---------------------------------------------
     def _render_contour(self) -> None:
@@ -901,14 +1302,25 @@ class PlotTab(QWidget):
             if self._cbar_label is not None:
                 self._cbar_label.visible = False
 
-    def _set_colorbar(self, lo, hi, name, levels=None) -> None:
+    def _set_colorbar(self, lo, hi, name, levels=None, categories=None) -> None:
         """Show the colour bar for [lo, hi]. With ``levels`` (a contour plot's
         band edges) the bar is drawn in the same discrete bands and labelled
-        at round levels along its length, not only at its ends."""
+        at round levels along its length, not only at its ends. With
+        ``categories`` (names, colours) it is a legend instead: one swatch
+        per group, first at the top, each labelled with its name."""
         from vispy import scene
         from vispy.color import Colormap
 
-        if levels is not None and len(levels) > 2:
+        self._cbar_is_legend = categories is not None
+        if categories is not None:
+            levels = None
+            swatches = np.asarray(categories[1], "float32")[::-1]
+            if len(swatches) == 1:
+                swatches = np.vstack([swatches, swatches])
+            cm = Colormap(swatches,
+                          controls=np.linspace(0.0, 1.0, len(swatches) + 1),
+                          interpolation="zero")
+        elif levels is not None and len(levels) > 2:
             colors = plotdata.band_colors(np.asarray(levels), self.cmap)
             cm = Colormap(colors, controls=np.linspace(0.0, 1.0, len(colors) + 1),
                           interpolation="zero")
@@ -935,11 +1347,15 @@ class PlotTab(QWidget):
             # other levels (the top one only when it falls on the stride).
             marks = dict(plotdata.level_labels(np.asarray(levels)))
             self._cbar.clim = (marks.get(0, ""), marks.get(len(levels) - 1, ""))
+        elif categories is not None:
+            self._cbar.clim = ("", "")  # names go beside the swatches instead
         self._cbar_auto = str(name)
         if self._cbar_label is not None:
             self._cbar_label.visible = self._show_legend
         self._cbar.visible = self._show_legend
         self._set_cbar_ticks(levels, lo, hi)
+        if categories is not None:
+            self._set_cbar_names(list(categories[0]))
         self._apply_element("cbar")  # label text + fonts (a new bar included)
 
     def _set_cbar_ticks(self, levels, lo, hi) -> None:
@@ -961,6 +1377,22 @@ class PlotTab(QWidget):
             self._cbar_extra.append(label)
             self._cbar_extra_at.append(
                 (float(levels[index]) - lo) / (hi - lo))
+        self._place_cbar_ticks()
+
+    def _set_cbar_names(self, names: list) -> None:
+        """A legend's labels: each group's name beside its swatch (every 2nd,
+        3rd... when there are too many to read)."""
+        from vispy import scene
+
+        n = len(names)
+        every = max(1, int(np.ceil(n / _LEGEND_MAX)))
+        for i, name in enumerate(names):
+            if i % every:
+                continue
+            label = scene.visuals.Text(
+                str(name), parent=self._cbar, color="black", font_size=12)
+            self._cbar_extra.append(label)
+            self._cbar_extra_at.append((n - 1 - i + 0.5) / n)
         self._place_cbar_ticks()
 
     def _place_cbar_ticks(self) -> None:
@@ -988,8 +1420,8 @@ class PlotTab(QWidget):
         if self._xaxis is not None:
             # Category bars use text labels, not the numeric x axis; histograms
             # keep the numeric x axis.
-            self._xaxis.visible = (
-                self._show_axes and not (self.spec.is_bar or self.spec.is_cov))
+            self._xaxis.visible = self._show_axes and not (
+                self.spec.is_bar or self.spec.is_cov or self.spec.is_violin)
         if self._gridlines is not None:
             self._gridlines.visible = self._show_grid
         if self._floor is not None:
@@ -1058,10 +1490,14 @@ class PlotTab(QWidget):
     def _auto_text(self, key: str) -> str:
         """An element's automatic text — what it shows with no override."""
         if key in ("xaxis", "xaxis3d"):
+            if key == "xaxis" and self._curve_data is not None:
+                return str(self._curve_data.x_name)
             return str(self.spec.x or "")
         if key == "yaxis":
             if self._bar_data is not None:  # bars measure count / CoV / value
                 return str(self._bar_data.value_name)
+            if self._curve_data is not None:  # density / k-distance
+                return str(self._curve_data.y_name)
             return str(self.spec.y or "")
         if key == "yaxis3d":
             return str(self.spec.y or "")
@@ -1200,7 +1636,8 @@ class PlotTab(QWidget):
         except Exception:  # noqa: BLE001
             bar = 22.0
         bar = min(max(bar, 12.0), 40.0)
-        return max(usual, 2.0 * (widest + 12.0) + bar)
+        gap = 18.0 if self._cbar_is_legend else 12.0  # names: more air
+        return max(usual, 2.0 * (widest + gap) + bar)
 
     def _relayout(self) -> None:
         """Have the canvas grid pick up changed strip sizes (it only re-reads
@@ -1491,6 +1928,8 @@ class PlotTab(QWidget):
             margin = 0.12
             if self.spec.is_contour:
                 margin = 0.03 if self.spec.show_points else 0.0
+            elif self.spec.is_curve:
+                margin = 0.04  # a curve plot runs close to its axes
             self._view.camera.set_range(
                 x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]), margin=margin)
             # Record the fit width as the zoom-adaptive reference, then size.
@@ -1610,6 +2049,8 @@ class PlotTab(QWidget):
             "cmap": self.cmap,
             "scale": "Log" if self.scale == "log" else "Linear",
             "has_color": has_color,
+            # KDE: the map colours the curves; scale and range don't apply.
+            "map_only": bool(self.spec.is_kde),
             "cmin": cmin if cmin is not None else 0,
             "cmax": cmax if cmax is not None else 100,
         }
@@ -1704,6 +2145,12 @@ class PlotTab(QWidget):
         self._hover_cursor(event)
         if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._bar_hover(event)
+            return
+        if self.spec.is_curve:
+            self._curve_hover(event)
+            return
+        if self.spec.is_violin:
+            self._violin_hover(event)
             return
         if self.spec.is_3d:
             self._hover3d(event)
@@ -1833,6 +2280,12 @@ class PlotTab(QWidget):
         self._bar_axis = None
         self._bar_labels = []
         self._bar_data = None
+        self._curve_data = None
+        self._curve_lines = []
+        self._curve_fill = self._ref_line = self._ref_label = None
+        self._violin_data = None
+        self._violin_mesh = self._violin_edges = self._violin_marks = None
+        self._dist_df = self._dist_key = self._dist_data = None
         self._contour_img = None
         self._contour_pts = None
         self._contour_lines = None

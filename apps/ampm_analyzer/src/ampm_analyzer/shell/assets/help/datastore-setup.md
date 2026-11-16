@@ -51,7 +51,8 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
     part. It is computationally expensive and takes a while on a full build.
     It runs in the background after the build opens: you can work meanwhile,
     and the part column appears when it finishes. The result is saved, so
-    reopening the build is instant.
+    reopening the build is instant. To check or tune its radius, plot a
+    [K-distance curve](help:plot-kdistance).
 - **Apply correction**: removes the position-dependent bias of the MeltVIEW
   melt-pool signal. It is calibrated for the **MAIN** machine and the
   *MeltVIEW melt pool (mean)* column only. Write the result to a **New column**

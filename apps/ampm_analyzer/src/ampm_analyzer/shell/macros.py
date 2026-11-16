@@ -200,6 +200,15 @@ def describe(op: str, p: dict) -> str:
         kind = s.get("kind", "plot")
         if kind == "Histogram":
             what = f"of '{s.get('x')}'"
+        elif kind == "KDE":
+            what = f"of '{s.get('x')}'"
+            if s.get("group_by"):
+                what += f", one curve per '{s.get('group_by')}'"
+        elif kind == "Violin":
+            what = f"of '{s.get('y')}' per '{s.get('x')}'"
+        elif kind == "K-Distance Curve":
+            dims = "', '".join(c for c in (s.get("x"), s.get("y"), s.get("z")) if c)
+            what = f"(k = {s.get('k', 10)}) over '{dims}'"
         elif kind == "Contour":
             what = f"of '{s.get('z')}' over '{s.get('x')}' × '{s.get('y')}'"
         elif s.get("z"):

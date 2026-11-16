@@ -22,6 +22,9 @@ short dialog asks which columns to use, and the plot opens in its own tab.
 | **Histogram** | The distribution of one column | [Bar charts and histograms](help:plot-bars) |
 | **CoV Summary** | The stability of a signal for each part or group | [CoV summary](help:plot-cov) |
 | **Contour** | A value over a grid of two parameters | [Contour plots](help:plot-contour) |
+| **Violin** | The full distribution of a value for each part or category | [KDE and violin plots](help:plot-distributions) |
+| **KDE** | Smooth density curves of a value, one per part or group | [KDE and violin plots](help:plot-distributions) |
+| **K-Distance Curve** | How far apart points are, to choose DBSCAN's radius | [K-distance curve](help:plot-kdistance) |
 
 ## Choosing columns
 
@@ -32,7 +35,8 @@ for a single colour.
 
 ## Choosing layers
 
-Scatter, bar and histogram plots ask which layers to draw:
+Scatter, bar, histogram, violin, KDE and k-distance plots ask which layers
+to draw:
 
 - **All layers**: the whole build.
 - **Single**: one layer.

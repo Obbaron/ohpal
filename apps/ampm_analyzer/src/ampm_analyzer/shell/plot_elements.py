@@ -208,6 +208,7 @@ def _clean(key: str, style: dict) -> dict:
 # is labelled along its whole length, so its numbers start smaller.
 KIND_DEFAULTS: dict[str, dict[str, dict]] = {
     "Contour": {"cbar": {"num_size": 9}},
+    "KDE": {"cbar": {"num_size": 9}},   # a legend of group names
 }
 
 

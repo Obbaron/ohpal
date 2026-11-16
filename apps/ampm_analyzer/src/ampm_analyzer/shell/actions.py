@@ -569,7 +569,8 @@ class Actions(QObject):
         if ps.kind not in PLOT_KINDS:
             out.append(f"Unknown plot type {ps.kind!r}.")
         cols = set(sim.current())
-        used = [ps.x] + ([] if ps.is_hist else [ps.y]) + [ps.z, ps.color, ps.group_by]
+        used = ([ps.x] + ([ps.y] if ps.uses_y else [])
+                + [ps.z, ps.color, ps.group_by])
         for name in dict.fromkeys(n for n in used if n):
             if name not in cols:
                 out.append(f"Unknown column: {name!r}")

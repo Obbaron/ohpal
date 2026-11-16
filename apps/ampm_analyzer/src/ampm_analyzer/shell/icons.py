@@ -7,8 +7,8 @@ how icons follow the light/dark palette (the window re-tints on theme switch).
 
 Three groups:
 - ``UI``        — semantic name -> Carbon stem for toolbar/chrome actions.
-- ``PLOT_TYPE`` — view NAME -> stem for the nine built-in plot types.
-- the full Carbon **chart family** is bundled too (not just the nine), so
+- ``PLOT_TYPE`` — view NAME -> stem for the built-in plot types.
+- the full Carbon **chart family** is bundled too (not just the built-in ones), so
   user-defined custom charts can be given an icon — pick one explicitly, or let
   ``auto_match(name)`` guess from the chart's name. Fallback is ``chart--custom``.
 
@@ -66,12 +66,13 @@ UI = {
     "scale": "chart--logistic-regression", "opacity": "opacity",
 }
 
-# -- the nine built-in plot types (view NAME -> stem) ------------------
+# -- the built-in plot types (view NAME -> stem) -----------------------
 PLOT_TYPE = {
     "3D Scatter": "chart--3D",
     "2D Scatter": "chart--scatter",
     "Bar": "chart--bar",
     "Histogram": "chart--histogram",
+    "Violin": "chart--violin-plot",
     "K-Distance Curve": "chart--line",
     "KDE": "chart--area",
     "Contour": "contour-finding",

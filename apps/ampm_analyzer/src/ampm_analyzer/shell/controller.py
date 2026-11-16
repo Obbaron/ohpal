@@ -143,6 +143,13 @@ class AppController(QObject):
         self._side_worker = None
 
     # -- Create Excel from AMPM ----------------------------------------
+    def dbscan_params(self) -> tuple[float, float, int]:
+        """The build's DBSCAN settings (eps_xy, eps_z, min_samples), as the
+        DataStore's DBSCAN part assignment would use them."""
+        c = self._config or {}
+        return (float(c.get("EPS_XY", 0.3)), float(c.get("EPS_Z", 0.06)),
+                int(c.get("MIN_SAMPLES", 10)))
+
     def create_excel(self) -> None:
         """Pick a build folder and write that one build's samples-template
         workbook to ``<build>/exports/<build>.xlsx``. Works on any build folder

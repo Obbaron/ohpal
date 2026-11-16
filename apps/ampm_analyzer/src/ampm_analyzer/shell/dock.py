@@ -159,7 +159,11 @@ class SidePanel(QWidget):
         set_slider(self.min_slider, state.get("cmin", 0))
         set_slider(self.max_slider, state.get("cmax", 100))
         # Colour controls are meaningful only with a numeric colour column.
-        self.colour_box.setEnabled(bool(state.get("has_color", False)))
+        # A KDE uses the map for its curves, but has no scale or range.
+        map_only = bool(state.get("map_only", False))
+        self.colour_box.setEnabled(bool(state.get("has_color", False)) or map_only)
+        for w in (self.scale_combo, self.min_slider, self.max_slider):
+            w.setEnabled(not map_only)
 
     def show_for(self, kind: str) -> None:
         page = self._pages.get(kind)

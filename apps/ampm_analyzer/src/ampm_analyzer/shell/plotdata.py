@@ -229,6 +229,229 @@ def build_cov(df, spec, *, cmap=None, scale="linear", crange=None) -> BarData:
                    value_name, grp, labels, True, 0.8, (lo, hi), (lo, hi), n)
 
 
+# -- distributions: KDE curves, violins; the k-distance curve -------------
+KDE_POINTS = 512          # evaluation points per KDE curve
+KDIST_SAMPLE = 50_000     # points the k-distance curve is computed on
+MAX_VIOLINS = 60          # more categories than this is unreadable
+
+
+def kde_bandwidth(values: np.ndarray, method: str | None = "scott") -> float:
+    """The Gaussian kernel's standard deviation, by Scott's or Silverman's
+    rule: the same choices (and values) as ``scipy.stats.gaussian_kde``."""
+    n = values.size
+    sd = float(np.std(values, ddof=1)) if n > 1 else 0.0
+    factor = (n * 0.75) ** -0.2 if method == "silverman" else n ** -0.2
+    return sd * factor
+
+
+def kde_density(values: np.ndarray, grid: np.ndarray, bw: float) -> np.ndarray:
+    """Gaussian KDE of ``values`` on the evenly spaced ``grid``.
+
+    Linear binning onto the grid, then one FFT convolution with the kernel:
+    every point is used (no sampling) and it stays fast on millions of rows.
+    The result matches a direct ``gaussian_kde`` evaluation to well within
+    what is visible on a plot."""
+    from scipy.signal import fftconvolve
+
+    m = grid.size
+    if values.size == 0 or m < 2 or not np.isfinite(bw) or bw <= 0:
+        return np.zeros(m, "float64")
+    dx = float(grid[1] - grid[0])
+    pos = np.clip((values - grid[0]) / dx, 0.0, m - 1.0)
+    i = np.minimum(np.floor(pos).astype(np.int64), m - 2)
+    frac = pos - i
+    counts = (np.bincount(i, weights=1.0 - frac, minlength=m)
+              + np.bincount(i + 1, weights=frac, minlength=m))[:m]
+    half = int(np.ceil(4.0 * bw / dx))
+    offsets = np.arange(-half, half + 1) * dx
+    kernel = np.exp(-0.5 * (offsets / bw) ** 2)
+    kernel /= kernel.sum()
+    density = fftconvolve(counts, kernel, mode="same") / (values.size * dx)
+    return np.clip(density, 0.0, None)
+
+
+def _finite(series) -> np.ndarray:
+    v = series.to_numpy().astype("float64", copy=False)
+    return v[np.isfinite(v)]
+
+
+def _require(df, *names) -> None:
+    for c in names:
+        if c and c not in df.columns:
+            raise KeyError(f"Column {c!r} is not in the data.")
+
+
+def _sample_colors(n: int, cmap: str | None) -> np.ndarray:
+    """``n`` distinct colours spread along a colormap (one per group)."""
+    t = (np.array([0.5], "float32") if n <= 1
+         else np.linspace(0.0, 1.0, n, dtype="float32"))
+    return _apply_cmap(t, cmap or DEFAULT_COLORMAP).astype("float32")
+
+
+@dataclass
+class CurveData:
+    """One or more curves over a shared x: KDE densities, the k-distance curve."""
+
+    x: np.ndarray                 # (M,) shared x of every curve
+    ys: list                      # one (M,) array per curve
+    names: list                   # one label per curve
+    counts: list                  # rows behind each curve
+    colors: np.ndarray            # (n, 4) one colour per curve
+    x_name: str
+    y_name: str
+    group_name: str | None = None   # the column the curves are split by
+    reference: float | None = None  # a horizontal guide (k-distance: eps)
+    skipped: int = 0                # groups with too few values to draw
+    n: int = 0
+
+
+def build_kde(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
+    """Overlaid kernel-density curves of ``spec.x``, one per value of
+    ``spec.group_by`` (or a single curve). Mirrors ``ohpal.ampm.plotting.kde``:
+    Scott's (or Silverman's) bandwidth, a shared x grid over the data range
+    padded 5%, "noise" and empty groups dropped."""
+    import polars as pl
+
+    col, grp = spec.x, spec.group_by
+    _require(df, col, grp)
+    work = df.select([c for c in (col, grp) if c])
+    if grp:
+        work = work.filter(pl.col(grp).is_not_null()
+                           & (pl.col(grp).cast(pl.Utf8) != "noise"))
+    allv = _finite(work[col])
+    if allv.size < 2:
+        raise ValueError(f"Not enough values in {col!r} to estimate a density.")
+    lo, hi = float(allv.min()), float(allv.max())
+    if hi <= lo:
+        raise ValueError(f"Every value of {col!r} is the same ({_short(lo)}), "
+                         "so there is no distribution to draw.")
+    pad = 0.05 * (hi - lo)
+    grid = np.linspace(lo - pad, hi + pad, KDE_POINTS)
+
+    if grp:
+        parts = (work.group_by(grp, maintain_order=True)
+                 .agg(pl.col(col)).sort(grp))
+        groups = [(str(k), np.asarray(v, dtype="float64"))
+                  for k, v in zip(parts[grp].to_list(), parts[col].to_list())]
+    else:
+        groups = [(col, allv)]
+
+    names, ys, counts, skipped = [], [], [], 0
+    for name, vals in groups:
+        vals = vals[np.isfinite(vals)]
+        bw = kde_bandwidth(vals, spec.bandwidth) if vals.size > 1 else 0.0
+        if vals.size < 2 or bw <= 0:
+            skipped += 1
+            continue
+        names.append(name)
+        ys.append(kde_density(vals, grid, bw))
+        counts.append(int(vals.size))
+    if not ys:
+        raise ValueError("No group has enough distinct values for a density curve.")
+    return CurveData(grid, ys, names, counts, _sample_colors(len(ys), cmap),
+                     col, "Density", grp, None, skipped, len(ys))
+
+
+def build_kdist(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
+    """The sorted k-distance curve that DBSCAN's eps is read from: for each
+    point, the distance to its k-th nearest neighbour (Z scaled by
+    eps_xy / eps_z in 3D, as DBSCAN measures it), sorted. The eps_xy in use is
+    drawn as a guide line.
+
+    Unlike ``ohpal.ampm.clustering.k_distance_curve``, which samples 50,000
+    points and searches only among them, the neighbours here are searched
+    among *every* point; only the points reported are sampled. The app's
+    DBSCAN (``cluster_dbscan_chunked``) clusters at full density, and a
+    sparser sample would overstate its neighbour distances several-fold."""
+    from scipy.spatial import cKDTree
+
+    cols = [c for c in (spec.x, spec.y, spec.z) if c]
+    _require(df, *cols)
+    k = max(1, int(spec.k or 10))
+    coords = df.select(cols).drop_nulls().to_numpy().astype("float64")
+    coords = coords[np.isfinite(coords).all(axis=1)]
+    if coords.shape[0] <= k:
+        raise ValueError(f"Need more than {k} points for a {k}-distance curve.")
+    eps_xy = float(spec.eps_xy or 1.0)
+    if spec.z:
+        eps_z = float(spec.eps_z or 1.0)
+        if eps_z <= 0:
+            raise ValueError("The Z radius must be greater than zero.")
+        coords[:, 2] *= eps_xy / eps_z
+    tree = cKDTree(coords)
+    probe = coords
+    if coords.shape[0] > KDIST_SAMPLE:
+        pick = np.random.default_rng(0).choice(
+            coords.shape[0], KDIST_SAMPLE, replace=False)
+        probe = coords[pick]
+    dist, _ = tree.query(probe, k=k + 1, workers=-1)
+    kth = np.sort(dist[:, k])
+    rank = np.arange(kth.size, dtype="float64")
+    return CurveData(rank, [kth], [f"{k}-distance"], [int(kth.size)],
+                     _sample_colors(1, "turbo"), "Rank (points, sorted)",
+                     f"{k}-distance (mm)", None, eps_xy, 0, 1)
+
+
+@dataclass
+class ViolinData:
+    centers: np.ndarray           # (n,) x of each violin
+    labels: list                  # category label under each
+    outlines: list                # per violin: (y values, half widths)
+    stats: list                   # per violin: dict n, min, q1, median, q3, max
+    colors: np.ndarray            # (n, 4) coloured by median
+    x_name: str
+    value_name: str
+    crange: tuple | None = None
+    full_range: tuple | None = None
+    n: int = 0
+
+
+def build_violins(df, spec, *, cmap=None, scale="linear", crange=None) -> ViolinData:
+    """One violin of ``spec.y`` per category of ``spec.x``: its KDE mirrored,
+    over the category's own range, every violin the same maximum width.
+    Coloured by the median, like bars are by their height."""
+    import polars as pl
+
+    cat, val = spec.x, spec.y
+    _require(df, cat, val)
+    work = (df.select([cat, val])
+            .filter(pl.col(cat).is_not_null() & pl.col(val).is_not_null()))
+    parts = work.group_by(cat, maintain_order=True).agg(pl.col(val)).sort(cat)
+    if parts.height > MAX_VIOLINS:
+        raise ValueError(
+            f"{cat!r} has {parts.height} different values; a violin plot needs "
+            f"{MAX_VIOLINS} or fewer. Choose a grouping column such as part_id.")
+    labels, outlines, stats = [], [], []
+    for key, vals in zip(parts[cat].to_list(), parts[val].to_list()):
+        v = np.asarray(vals, dtype="float64")
+        v = v[np.isfinite(v)]
+        if v.size == 0:
+            continue
+        q1, med, q3 = (float(q) for q in np.percentile(v, [25, 50, 75]))
+        lo, hi = float(v.min()), float(v.max())
+        if hi > lo and v.size > 1:
+            grid = np.linspace(lo, hi, 200)
+            dens = kde_density(v, grid, kde_bandwidth(v, spec.bandwidth))
+            peak = float(dens.max()) or 1.0
+            half = 0.4 * dens / peak
+        else:  # one value: a flat line, not a shape
+            grid, half = np.array([lo, hi]), np.array([0.4, 0.4])
+        labels.append(_short_part(str(key)))
+        outlines.append((grid.astype("float32"), half.astype("float32")))
+        stats.append({"n": int(v.size), "min": lo, "q1": q1, "median": med,
+                      "q3": q3, "max": hi, "key": str(key)})
+    n = len(labels)
+    medians = np.array([st["median"] for st in stats], dtype="float64")
+    colors, clo, chi = _bar_colors(medians, cmap or DEFAULT_COLORMAP, crange)
+    full = (float(medians.min()), float(medians.max())) if n else None
+    return ViolinData(np.arange(n, dtype="float32"), labels, outlines, stats,
+                      colors, cat, val, (clo, chi), full, n)
+
+
+def _short(v: float) -> str:
+    return f"{v:.6g}"
+
+
 @dataclass
 class ContourData:
     z: np.ndarray          # (ny, nx) float32, NaN for empty grid cells
