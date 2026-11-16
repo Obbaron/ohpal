@@ -26,7 +26,7 @@ dependencies = [
 dev = ["pyinstaller>=6.21,<7"]
 
 [project.gui-scripts]
-ampm-analyzer = "ampm_analyzer.__main__:main"
+ampm-analyzer = "ampm_analyzer:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "ampm_analyzer.__version__"}
