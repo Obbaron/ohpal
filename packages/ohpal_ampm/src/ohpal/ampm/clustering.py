@@ -39,7 +39,7 @@ Usage
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 import polars as pl
@@ -398,6 +398,7 @@ def cluster_dbscan_chunked(
     layer_col: str = "layer",
     stable_labels: bool = True,
     verbose: bool = True,
+    progress: Callable[[int, int], None] | None = None,
 ) -> pl.DataFrame:
     """
     DBSCAN over the FULL data using layer-wise chunking with overlap merging.
@@ -442,6 +443,9 @@ def cluster_dbscan_chunked(
         Relabel by centroid order so labels are deterministic. Default True.
     verbose
         Print per-chunk progress. Default True.
+    progress
+        Optional ``progress(chunk, n_chunks)`` called before each chunk is
+        clustered (``chunk`` counts from 1), e.g. to drive a progress bar.
 
     Returns
     -------
@@ -508,6 +512,8 @@ def cluster_dbscan_chunked(
         chunk_indices = np.flatnonzero(in_chunk)
         if chunk_indices.size == 0:
             continue
+        if progress is not None:
+            progress(chunk_id + 1, len(chunks))
         chunk_df = df[chunk_indices]
         coords = _to_scaled_array(chunk_df, x_col, y_col, z_col, eps_xy, eps_z)
 

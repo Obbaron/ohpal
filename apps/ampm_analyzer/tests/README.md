@@ -25,7 +25,7 @@ still run and the rest are skipped with a hint.
 Once per run, the build is copied and its DataStore built fresh (what a user
 has after opening the build and building it with default settings); each
 scenario then gets its own copy of that. A full run takes a while:
-`build_lifecycle` runs DBSCAN on the whole build.
+`build_lifecycle` and `cancel_long_jobs` run DBSCAN on the whole build.
 
 A scenario that leaves a dialog waiting for a click fails after two minutes,
 naming the dialog and its text, rather than hanging.

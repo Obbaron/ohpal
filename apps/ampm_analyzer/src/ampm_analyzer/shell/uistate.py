@@ -29,7 +29,7 @@ def _empty() -> dict:
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
         "part_method": "", "apply_mask": False, "correction": {}, "renames": {},
-        "load_columns": [],
+        "load_columns": [], "dbscan": {},
     }
 
 
@@ -67,6 +67,9 @@ def load_state(cache_dir: Path) -> dict:
             "load_columns": data.get("load_columns") or [],
             # Column renames: original datastore name -> current display name.
             "renames": data.get("renames") or {},
+            # DBSCAN settings chosen on the setup page (eps_xy, eps_z,
+            # min_samples); {} = the build's config.toml values.
+            "dbscan": data.get("dbscan") or {},
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -95,10 +98,15 @@ def save_state(
     correction: dict | None = None,
     load_columns: list | None = None,
     renames: dict | None = None,
+    dbscan: dict | None = None,
 ) -> None:
-    """Write the full UI state. Best-effort — never blocks on failure."""
+    """Write the full UI state. Best-effort: never blocks on failure.
+    ``dbscan=None`` keeps the saved DBSCAN settings (they change only at
+    build time, through ``set_dbscan``)."""
     try:
         cache_dir = Path(cache_dir)
+        if dbscan is None:
+            dbscan = load_state(cache_dir).get("dbscan") or {}
         cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": _VERSION,
@@ -118,6 +126,7 @@ def save_state(
             "correction": dict(correction or {}),
             "load_columns": list(load_columns or []),
             "renames": dict(renames or {}),
+            "dbscan": dict(dbscan or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
@@ -147,6 +156,7 @@ def _save_merged(cache_dir: Path, **overrides) -> None:
         correction=st["correction"],
         load_columns=st["load_columns"],
         renames=st["renames"],
+        dbscan=st["dbscan"],
     )
 
 
@@ -173,3 +183,8 @@ def set_load_columns(cache_dir: Path, columns: list | None) -> None:
 def set_correction(cache_dir: Path, correction: dict) -> None:
     """Persist just the correction recipe, preserving the rest."""
     _save_merged(cache_dir, correction=dict(correction or {}))
+
+
+def set_dbscan(cache_dir: Path, settings: dict) -> None:
+    """Persist just the DBSCAN settings (eps_xy, eps_z, min_samples)."""
+    _save_merged(cache_dir, dbscan=dict(settings or {}))

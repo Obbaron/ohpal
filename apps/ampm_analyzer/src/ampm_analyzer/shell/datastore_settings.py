@@ -38,6 +38,8 @@ from PyQt6.QtWidgets import (
 from .widgets import fix_combo
 
 _DEFAULT_THICKNESS = 0.03  # mm — fallback when a build has nothing to detect from
+# DBSCAN defaults when config.toml has none (ohpal's [clustering] defaults).
+_DBSCAN_DEFAULTS = {"eps_xy": 0.3, "eps_z": 0.06, "min_samples": 10}
 
 _MISSING = "— not found —"
 
@@ -233,6 +235,44 @@ class DataStoreSettings(QWidget):
         self.lbl_dbscan_warn.setStyleSheet("color: #c77700;")
         self.lbl_dbscan_warn.setVisible(False)
         f.addRow("", self.lbl_dbscan_warn)
+
+        # DBSCAN's settings, revealed with it. They start from config.toml and
+        # are kept with the build.
+        self.dbscan_detail = QWidget()
+        dd = QFormLayout(self.dbscan_detail)
+        dd.setContentsMargins(16, 2, 0, 0)
+
+        def radius(tip: str) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox()
+            spin.setDecimals(3)
+            spin.setRange(0.001, 50.0)
+            spin.setSingleStep(0.01)
+            spin.setSuffix(" mm")
+            spin.setFixedWidth(110)
+            spin.setToolTip(tip)
+            return spin
+
+        self.spin_eps_xy = radius(
+            "How close points must be in the plane to count as neighbours "
+            "(DBSCAN's eps).")
+        dd.addRow("XY radius (eps)", self.spin_eps_xy)
+        self.spin_eps_z = radius(
+            "How close points must be between layers to count as neighbours.")
+        dd.addRow("Z radius", self.spin_eps_z)
+        self.spin_min_samples = QSpinBox()
+        self.spin_min_samples.setRange(1, 10000)
+        self.spin_min_samples.setFixedWidth(110)
+        self.spin_min_samples.setToolTip(
+            "How many neighbours a point needs within the radius to start or "
+            "grow a cluster (DBSCAN's min_samples).")
+        dd.addRow("Min samples", self.spin_min_samples)
+        hint = QLabel("A K-distance curve plot helps choose these.")
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        dd.addRow("", hint)
+        self.dbscan_detail.setVisible(False)
+        f.addRow("", self.dbscan_detail)
+        self.set_dbscan_values(_DBSCAN_DEFAULTS)
+
         self.chk_parts.toggled.connect(self._sync_parts_enabled)
         self.cmb_parts.currentIndexChanged.connect(self._sync_parts_enabled)
 
@@ -293,8 +333,22 @@ class DataStoreSettings(QWidget):
         """The method dropdown is live only while part assignment is toggled on."""
         on = self.chk_parts.isChecked() and self.chk_parts.isEnabled()
         self.cmb_parts.setEnabled(on)
-        self.lbl_dbscan_warn.setVisible(
-            on and self.cmb_parts.currentText() == "DBSCAN")
+        dbscan = on and self.cmb_parts.currentText() == "DBSCAN"
+        self.lbl_dbscan_warn.setVisible(dbscan)
+        self.dbscan_detail.setVisible(dbscan)
+
+    def set_dbscan_values(self, values: dict) -> None:
+        """Show DBSCAN settings (eps_xy, eps_z, min_samples)."""
+        v = {**_DBSCAN_DEFAULTS, **{k: x for k, x in values.items()
+                                    if x is not None}}
+        self.spin_eps_xy.setValue(float(v["eps_xy"]))
+        self.spin_eps_z.setValue(float(v["eps_z"]))
+        self.spin_min_samples.setValue(int(v["min_samples"]))
+
+    def dbscan_values(self) -> dict:
+        return {"eps_xy": round(self.spin_eps_xy.value(), 6),
+                "eps_z": round(self.spin_eps_z.value(), 6),
+                "min_samples": int(self.spin_min_samples.value())}
 
     def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
         """Enable/disable one Part-assignment dropdown item (greys it out)."""
@@ -425,6 +479,9 @@ class DataStoreSettings(QWidget):
             self.cmb_parts.setToolTip("")
         else:
             self.cmb_parts.setToolTip("No parts CSV or DHXML found")
+        self.set_dbscan_values({"eps_xy": config.get("EPS_XY"),
+                                "eps_z": config.get("EPS_Z"),
+                                "min_samples": config.get("MIN_SAMPLES")})
         self._sync_parts_enabled()
 
         # Correction needs both the melt-pool and LaserVIEW signals loaded.
@@ -478,7 +535,11 @@ class DataStoreSettings(QWidget):
 
     def recipe(self) -> dict:
         """Selected processing recipe (used when the store applies it later)."""
+        method = (self.cmb_parts.currentText().lower()
+                  if self.chk_parts.isChecked() and self.chk_parts.isEnabled()
+                  else "none")
         return {
+            "dbscan": self.dbscan_values() if method == "dbscan" else None,
             "columns": self.columns(),
             "renames": self.renames_map(),
             "apply_mask": self.chk_mask.isEnabled() and self.chk_mask.isChecked(),

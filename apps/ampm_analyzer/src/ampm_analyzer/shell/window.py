@@ -808,12 +808,19 @@ class MainWindow(QMainWindow):
         self._progress.setFixedWidth(170)
         self._progress.setVisible(False)
         sb.addWidget(self._progress)
+        # Stops a DataStore build (shown only while one runs).
+        self._build_cancel_btn = self._cancel_button("Stop the DataStore build")
+        sb.addWidget(self._build_cancel_btn)
+        self._build_cancel = None
 
         # Shown while a long background job (DBSCAN part assignment) runs.
         self._job_label = QLabel("")
         self._job_label.setStyleSheet("color: palette(highlight); font-weight: 600;")
         self._job_label.setVisible(False)
         sb.addPermanentWidget(self._job_label)
+        self._job_cancel_btn = self._cancel_button("Stop this job")
+        sb.addPermanentWidget(self._job_cancel_btn)
+        self._job_cancel = None
 
         # Shown only while a macro is being recorded.
         self._rec_label = QLabel("")
@@ -1411,12 +1418,53 @@ class MainWindow(QMainWindow):
             btn.setEnabled(can)
             btn.setToolTip(f"{word}: {label} ({keys})" if can else f"{word} ({keys})")
 
-    def set_background_job(self, text: str | None) -> None:
+    def _cancel_button(self, tip: str) -> QToolButton:
+        btn = QToolButton()
+        btn.setText("Cancel")
+        btn.setToolTip(tip)
+        btn.setAutoRaise(True)
+        btn.setVisible(False)
+        return btn
+
+    def _set_cancel(self, btn: QToolButton, attr: str, handler) -> None:
+        """Show ``btn`` wired to ``handler``, or hide it (handler None)."""
+        old = getattr(self, attr)
+        if old is not None:
+            try:
+                btn.clicked.disconnect(old)
+            except TypeError:
+                pass
+        setattr(self, attr, handler)
+        if handler is not None:
+            btn.clicked.connect(handler)
+        btn.setVisible(handler is not None)
+
+    def set_background_job(self, text: str | None, on_cancel=None) -> None:
         """Show (or clear, with None) a standing note in the status bar for a
         long job that runs behind the app — ordinary status messages come and
-        go without hiding it."""
+        go without hiding it. ``on_cancel`` adds a Cancel button beside it."""
         self._job_label.setText(text or "")
         self._job_label.setVisible(bool(text))
+        self._set_cancel(self._job_cancel_btn, "_job_cancel",
+                         on_cancel if text else None)
+
+    def set_build_cancel(self, handler) -> None:
+        """A Cancel button beside the progress bar while a DataStore build
+        runs (None hides it)."""
+        self._set_cancel(self._build_cancel_btn, "_build_cancel", handler)
+
+    def build_cancelled(self, built: int, total: int, resumable: bool) -> None:
+        """A DataStore build was cancelled: back to its setup page, the
+        choices on it as they were. ``resumable``: a build (not an
+        overwrite), so building again skips the layers already done."""
+        self.backstage.set_loading(False)
+        self.show_progress(False)
+        self.backstage.show_datastore_page()
+        self.tabbar.setCurrentIndex(0)  # File tab
+        more = (" Building again carries on from there." if built and resumable
+                else "")
+        self.set_status(f"DataStore build cancelled after {built} of {total} "
+                        f"layers.{more}")
 
     def _reset_history(self) -> None:
         """A build was loaded / set up / rebuilt: the undo history starts over,

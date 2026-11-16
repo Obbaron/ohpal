@@ -68,7 +68,7 @@ f = w.backstage.ds_form; f.chk_mask.setChecked(False)
 f.cmb_parts.setCurrentText("DBSCAN"); assert f.recipe()["part_method"] == "dbscan"
 seen = []
 orig_job = w.set_background_job
-w.set_background_job = lambda text: (seen.append(text), orig_job(text))[1]
+w.set_background_job = lambda text, on_cancel=None: (seen.append(text), orig_job(text, on_cancel))[1]
 wait_ready(w._on_build_requested)
 assert not w._plot_tabs, "old plots should close on a rebuild"
 drain()
@@ -88,12 +88,13 @@ assert "part_id" in s.result.df.columns and "saved result" in w._log._full, w._l
 print(f"reopen: part ids back from the saved result ({took:.1f}s incl. load)")
 
 # clustering that finds nothing → clear popup, no part column, app carries on
-c._config["MIN_SAMPLES"] = 10**9
 f = w.backstage.ds_form; f.chk_mask.setChecked(False); f.cmb_parts.setCurrentText("DBSCAN")
+f.spin_min_samples.setValue(10000)        # the setup page's settings drive DBSCAN
 told.clear(); wait_ready(w._on_build_requested); drain()
-assert told and told[-1][0] == "DBSCAN part assignment failed" and "tuning" in told[-1][1], told
+assert told and told[-1][0] == "DBSCAN part assignment failed" and "Try other settings" in told[-1][1], told
 assert "part_id" not in s.result.df.columns and not c.has_part_assignment()
 print("DBSCAN failure:", told[-1][1][:70], "…")
+assert c.dbscan_params()[2] == 10000 and uistate.load_state(cache)["dbscan"]["min_samples"] == 10000
 f = w.backstage.ds_form; f.chk_mask.setChecked(False); f.cmb_parts.setCurrentText("Direct")
 wait_ready(w._on_build_requested); drain(); assert c.has_part_assignment()
 

@@ -181,7 +181,8 @@ class TemplateWorker(QObject):
 
 
 class DbscanWorker(QObject):
-    """DBSCAN part assignment, off the UI thread — the expensive option.
+    """DBSCAN part assignment: the expensive option, off the UI thread, with
+    the clustering itself in a separate process so it can be cancelled.
 
     Clusters every point of the built layers in 3D (chunked DBSCAN), matches
     each cluster to the nearest part of the QuantAM parts CSV, and emits one
@@ -189,16 +190,24 @@ class DbscanWorker(QObject):
     DataStore joins onto queries (``set_part_assignment(..., method="labels")``).
     Points DBSCAN calls noise, or whose cluster matches no part, get no label.
 
+    This thread reads the points (and applies the STL mask when the build has
+    one: off-part points muddy the clusters), then hands them to
+    ``ampm_analyzer.dbscan_job``, run as a separate process. A running scikit-learn
+    DBSCAN can't be interrupted from Python, but a process can be stopped at
+    once, so ``cancel`` ends it immediately and frees its memory.
+
     The labels are cached beside the DataStore with the settings that produced
     them, so reopening a build reads them back instead of clustering again;
-    ``force`` (a rebuild) always re-clusters. The STL mask is applied first when
-    the build has an STL, as off-part points otherwise muddy the clusters.
-    Emits ``(labels, info)``; ``info`` has n_parts / n_points / n_labelled /
-    from_cache.
+    ``force`` (a rebuild) always re-clusters. Emits ``progress(text)`` as it
+    goes and ``finished((labels, info))``, or ``finished(None)`` when
+    cancelled; ``info`` has n_parts / n_points / n_labelled / from_cache.
     """
 
+    progress = pyqtSignal(str)
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
+
+    _POLL_S = 0.2   # how often the child's messages and Cancel are checked
 
     def __init__(self, store, config: dict, layers, *, thickness: float,
                  force: bool) -> None:
@@ -208,6 +217,16 @@ class DbscanWorker(QObject):
         self._layers = sorted(int(L) for L in layers)
         self._thickness = thickness
         self._force = force
+        self._cancelled = False
+        self._process = None
+
+    def cancel(self) -> None:
+        """Stop now (any thread): the clustering process is ended at once;
+        reading the points stops at the next step."""
+        self._cancelled = True
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            proc.kill()
 
     def _params(self) -> dict:
         c = self._config
@@ -228,10 +247,12 @@ class DbscanWorker(QObject):
     def run(self) -> None:
         import json
 
+        cache = Path(self._store.cache_dir)
+        input_path = cache / "dbscan_input.parquet"
+        output_path = cache / "dbscan_part_labels.partial.parquet"
         try:
             import polars as pl
 
-            cache = Path(self._store.cache_dir)
             labels_path = cache / "dbscan_part_labels.parquet"
             meta_path = cache / "dbscan_part_labels.json"
             params = self._params()
@@ -252,56 +273,37 @@ class DbscanWorker(QObject):
             if not parts_csv:
                 self.error.emit("DBSCAN part assignment needs a parts CSV.")
                 return
-            from ohpal.ampm.clustering import cluster_dbscan_chunked
-            from ohpal.ampm.parts import (
-                QuantAMParts, apply_part_id_map, compute_part_id_map)
 
             # Only what clustering needs (layer + Z ride along), and only the
-            # layers already in the DataStore — never trigger a conversion here.
+            # layers already in the DataStore: never trigger a conversion here.
+            self.progress.emit("reading points")
             df = self._store.query(
                 layers=list(self._layers),
                 columns=["Demand X", "Demand Y", "Start time"])
             n_points = df.height
             stl = self._config.get("STL")
-            if stl:
+            if stl and not self._cancelled:
                 from ohpal.ampm.masking import apply_mask, build_mask
 
+                self.progress.emit("masking")
                 mask = build_mask(
                     stl, self._layers, layer_thickness=self._thickness,
                     cache_path=cache / "dbscan_mask.pkl")
                 masked = apply_mask(df, mask)
                 if masked.height:  # an STL that misses these layers masks
-                    df = masked    # everything away — then cluster unmasked
-            clustered = cluster_dbscan_chunked(
-                df,
-                eps_xy=params["eps_xy"], eps_z=params["eps_z"],
-                min_samples=params["min_samples"], mode="3d",
-                layers_per_chunk=params["layers_per_chunk"],
-                overlap_layers=params["overlap_layers"],
-                layer_thickness=self._thickness, verbose=False,
-            )
-            parts = QuantAMParts.from_path(parts_csv).parent_parts()
-            mapping = compute_part_id_map(clustered, parts, verbose=False)
-            labels = (
-                apply_part_id_map(clustered, mapping)
-                .filter(pl.col("part_id").is_not_null())
-                .select(["layer", "Start time", "part_id"])
-                .unique(subset=["layer", "Start time"], keep="first",
-                        maintain_order=True)
-            )
-            if labels.is_empty():
-                self.error.emit(
-                    "DBSCAN found no cluster that matches a part of the parts "
-                    "CSV. The clustering settings may need tuning for this "
-                    "build (config.toml, [clustering] eps_xy / eps_z / "
-                    "min_samples).")
+                    df = masked    # everything away; then cluster unmasked
+            if self._cancelled:
+                self.finished.emit(None)
                 return
-            info = {
-                "n_parts": labels["part_id"].n_unique(),
-                "n_points": n_points,
-                "n_labelled": labels.height,
-                "from_cache": False,
-            }
+            df.write_parquet(input_path)
+            del df
+
+            info = self._cluster(str(input_path), str(output_path), params,
+                                 str(parts_csv))
+            if info is None:  # cancelled, or an error already reported
+                return
+            labels = pl.read_parquet(output_path, glob=False)
+            info.update(n_points=n_points, from_cache=False)
             labels.write_parquet(labels_path)
             meta_path.write_text(
                 json.dumps({"params": params, "info": info}), encoding="utf-8")
@@ -309,12 +311,98 @@ class DbscanWorker(QObject):
             self.error.emit(f"Aborted: {exc}")
         except MemoryError:
             self.error.emit(
-                "Ran out of memory while clustering. Try fewer layers per chunk "
-                "(config.toml, [clustering] layers_per_chunk) or a smaller scope.")
-        except Exception as exc:  # noqa: BLE001 — a clear one-line reason
+                "Ran out of memory while reading the points. Try a smaller "
+                "layer range.")
+        except Exception as exc:  # noqa: BLE001 - a clear one-line reason
             self.error.emit(f"{type(exc).__name__}: {exc}")
         else:
             self.finished.emit((labels, info))
+        finally:
+            for tmp in (input_path, output_path):
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _cluster(self, input_path: str, output_path: str, params: dict,
+                 parts_csv: str) -> dict | None:
+        """Run the clustering process to the end, relaying its progress.
+        Returns its info; None when cancelled (``finished(None)`` emitted) or
+        failed (``error`` emitted)."""
+        import json
+        import subprocess
+        import time
+
+        from ampm_analyzer import dbscan_job
+
+        cache = Path(input_path).parent
+        job_path = cache / "dbscan_job.json"
+        progress_path = cache / "dbscan_job.progress"
+        log_path = cache / "dbscan_job.log"
+        progress_path.write_text("", encoding="utf-8")
+        job_path.write_text(json.dumps({
+            "input": input_path, "output": output_path,
+            "progress": str(progress_path), "parts_csv": parts_csv,
+            "params": params}), encoding="utf-8")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console
+        self.progress.emit("starting")
+        with open(log_path, "w", encoding="utf-8") as log:
+            proc = subprocess.Popen(
+                dbscan_job.command(str(job_path)), stdin=subprocess.DEVNULL,
+                stdout=log, stderr=log, creationflags=flags)
+        self._process = proc
+        read = 0
+        try:
+            while True:
+                if self._cancelled:
+                    proc.kill()
+                    proc.wait(10)
+                    self.finished.emit(None)
+                    return None
+                ended = proc.poll() is not None
+                text = progress_path.read_text(encoding="utf-8")
+                lines, read = text[read:].splitlines(), len(text)
+                if lines and not text.endswith("\n"):  # a line half-written
+                    read -= len(lines.pop())
+                for line in lines:
+                    msg = json.loads(line)
+                    if msg[0] == "stage":
+                        self.progress.emit(msg[1])
+                    elif msg[0] == "chunk":
+                        self.progress.emit(
+                            f"clustering chunk {msg[1]} of {msg[2]}")
+                    elif msg[0] == "error":
+                        self.error.emit(msg[1])
+                        return None
+                    elif msg[0] == "done":
+                        proc.wait(30)
+                        return dict(msg[1])
+                if ended:
+                    if self._cancelled:
+                        continue
+                    tail = ""
+                    try:
+                        tail = log_path.read_text(
+                            encoding="utf-8").strip().splitlines()[-1]
+                    except (OSError, IndexError):
+                        pass
+                    self.error.emit(
+                        "The clustering process stopped unexpectedly (exit "
+                        f"code {proc.returncode}). It may have run out of "
+                        "memory: try fewer layers per chunk (config.toml, "
+                        "[clustering] layers_per_chunk) or a smaller layer "
+                        "range." + (f"\n\n{tail}" if tail else ""))
+                    return None
+                time.sleep(self._POLL_S)
+        finally:
+            self._process = None
+            if proc.poll() is None:
+                proc.kill()
+            for tmp in (job_path, progress_path):
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 class QueryWorker(QObject):
