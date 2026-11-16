@@ -1,8 +1,5 @@
-# Lets `python -m ampm_analyzer` and console script share entry point.
-# Overhaul in progress: the new PyQt6 shell replaces the legacy GUI. The old
-# window still lives in main.py (its main() is importable as
-# `ampm_analyzer.main:main`) and is the analysis logic the shell is wired to
-# in a later pass.
+# Lets `python -m ampm_analyzer`, the `ampm-analyzer` script and the packaged
+# app share one entry point.
 # Absolute (not relative) import: PyInstaller runs this file as the top-level
 # ``__main__`` script, which has no parent package, so ``from .shell …`` would
 # fail with "attempted relative import with no known parent package". The

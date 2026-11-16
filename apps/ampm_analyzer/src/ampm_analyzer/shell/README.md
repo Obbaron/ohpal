@@ -1,43 +1,60 @@
-# AMPM Analyzer — GUI shell
+# AMPM Analyzer: the application
 
-The overhauled in-app GUI (PyQt6 + VisPy), built shell-first: every control is
-present but **not wired up**, so the layout can be tweaked freely before the
-actions are connected to the analysis logic in `../main.py` and `../views/`.
-
-See the layout design for the full rationale and the locked decisions.
+The app itself (PyQt6 + VisPy). `ampm_analyzer.__main__` and the packaged
+executable both start it through `app.main()`.
 
 ## Run
 
 ```
-python -m ampm_analyzer.shell      # the shell directly
-python -m ampm_analyzer            # same shell (the app entry now points here)
+python -m ampm_analyzer            # or: uv run ampm-analyzer / just run
+python -m ampm_analyzer.shell      # the same app
 ```
 
-## What's live vs inert
+## How it fits together
 
-- **Live (structural navigation only):** File → Data navigation, spawning Plot
-  tabs (`+` or "New plot"), closing Plot tabs, the toolbar/dock swapping per
-  active tab, and the status-bar helpers.
-- **Inert (stubs):** every data action (Add column, filters, layer selector,
-  export…), every plot action (colour, camera, selection, decimation…), and
-  all dock sliders. No signals connected yet.
+- **`controller.py`** is the bridge between the widgets and `ohpal`: it opens
+  builds, runs every query and long job on a worker thread (`workers.py`), and
+  owns the per-build state (`state.py`, `uistate.py`).
+- **`actions.py`** is the single entry point for anything that changes the
+  data's shape or view; it feeds undo / redo (`history.py`) and macro recording
+  (`macros.py`).
+- **Plots** are described by a `PlotSpec` (`plotspec.py`), turned into arrays
+  by `plotdata.py` (pure, no Qt), drawn by `plot_tab.py` (VisPy), and offer the
+  toolbar controls declared in `plotcontrols.py`.
+- **Unexpected errors** go to `crash.py`: a report file plus a dialog, and the
+  app keeps running.
 
-## Layout map (files)
+## Files
 
-| File | Surface |
+| File | What it is |
 | --- | --- |
-| `window.py` | Main window: tab strip, context toolbar, dock, status bar |
-| `backstage.py` | File tab (backstage): sidebar + tiles + Recent/Favourites/Search |
-| `data_tab.py` | Data tab: the grid (columnar selection, placeholder rows) |
-| `plot_tab.py` | Plot tab: VisPy canvas (guarded; placeholder if VisPy absent) |
-| `toolbars.py` | Context-swapping toolbar contents + pinned undo/redo/help glyphs |
-| `dock.py` | Side panel pages (sliders + info), swapped per view |
-| `theme.py` | Stylesheet (incl. the subtle File-tab tint) |
-| `app.py` | Entry point (`main()`) |
+| `app.py` | Entry point: QApplication, theme, log capture, crash handler, main window |
+| `window.py` | Main window: tab row (doubles as the title bar), context toolbar, side panel, status bar |
+| `titlebar.py` | The frameless window's title bar, window buttons and resize grips |
+| `backstage.py` | File tab: open / new build, recent builds, Create Excel |
+| `datastore_settings.py` | DataStore setup page (mask, part assignment, correction, columns) |
+| `data_tab.py`, `grid_model.py` | Data tab: the virtualised grid over a Polars frame |
+| `toolbars.py` | The Data and Plot toolbars (the Plot one is built from a plot's controls) |
+| `dock.py` | Side panel: column info, plot appearance, plot-element editor |
+| `controller.py`, `workers.py` | Build loading, queries and long jobs, off the UI thread |
+| `state.py`, `uistate.py`, `recents.py` | Session state, per-build UI state, recent builds |
+| `actions.py`, `history.py`, `macros.py`, `macro_dialog.py` | Actions, undo / redo, macros |
+| `derive.py`, `colref.py` | The column formula language and rename-aware column references |
+| `derive_dialog.py`, `derive_editor.py`, `label_dialog.py`, `filter_dialog.py` | Calculated column, label, and filter dialogs (with the formula editor) |
+| `part_calc_dialog.py`, `import_parts_dialog.py` | Parts: per-part calculation, parts CSV import |
+| `excel_dialog.py`, `export.py`, `export_dialog.py` | Add a column from Excel; export to Excel |
+| `plot_dialog.py` | New-plot dialog |
+| `plotspec.py`, `plotdata.py`, `plotcontrols.py` | What a plot is, its data, its toolbar controls |
+| `plot_tab.py`, `plot_window.py`, `plot_elements.py` | Drawing a plot, a popped-out plot, editable plot text |
+| `help.py`, `help_window.py` | The in-app guide (articles in `assets/help`) |
+| `crash.py` | Unexpected errors: report file + dialog |
+| `logconsole.py` | Captured console output and the log window |
+| `message_dialog.py`, `card.py`, `widgets.py` | Shared dialog and widget helpers |
+| `icons.py`, `theme.py` | Carbon icons (tinted per theme) and light / dark theming |
 
-## Dependencies
+## Assets
 
-- **PyQt6** — already in the workspace (`ampm-analyzer` depends on `PyQt6`).
-- **VisPy + NumPy** — needed for the real 3D canvas. Not yet added to
-  `pyproject.toml`; the Plot tab falls back to a labelled placeholder until
-  they're installed. Add them when wiring the plot path.
+- `assets/icons/carbon`: IBM Carbon icons (Apache 2.0, licence alongside).
+- `assets/fonts`: Liberation Sans / Serif / Mono for plot text (SIL OFL 1.1,
+  licence alongside).
+- `assets/help`: the help articles (Markdown with a small front-matter block).

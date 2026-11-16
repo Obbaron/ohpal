@@ -65,7 +65,7 @@ exe = EXE(
     upx=False,
     console=False,  # GUI app — no console window. Flip to True to see tracebacks.
     disable_windowed_traceback=False,
-    icon=None,      # set to "assets/app.ico" once you have one
+    icon="src/ampm_analyzer/assets/ampm.ico",  # the .exe's own icon
 )
 coll = COLLECT(
     exe,

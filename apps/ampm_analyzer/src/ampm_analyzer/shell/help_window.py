@@ -196,6 +196,13 @@ class HelpWindow(QWidget):
         self.count = QLabel("")
         self.count.setStyleSheet(_MUTED_QSS)
         sl.addWidget(self.count)
+        from . import crash
+
+        self.version = QLabel(f"AMPM Analyzer {crash.version()}")
+        self.version.setStyleSheet(_MUTED_QSS)
+        self.version.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        sl.addWidget(self.version)
 
         # -- right: back / forward, the article's title, the article --------
         main = QWidget()

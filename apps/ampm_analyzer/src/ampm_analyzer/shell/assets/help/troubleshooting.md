@@ -2,7 +2,7 @@
 title: When something goes wrong
 section: Reference
 order: 30
-keywords: error, problem, missing, greyed, disabled, fail, slow, empty, blank, issues, troubleshooting, no data, not found, memory
+keywords: error, problem, missing, greyed, disabled, fail, slow, empty, blank, issues, troubleshooting, no data, not found, memory, crash, unexpected error, report, version, quit
 ---
 # When something goes wrong
 
@@ -76,7 +76,22 @@ undo the removal, and the plot redraws.
 - DBSCAN is slow by nature; see
   [Setting up the DataStore](help:datastore-setup).
 
+## "Something went wrong"
+
+The app hit an error it did not expect. It keeps running: choose **Keep
+working** to carry on, or **Quit**. What you were doing may not have
+finished, so check the result, save or export anything important, and
+restart the app if something looks wrong.
+
+Each error is written to a report file: the version, the error and the
+recent log. **Open folder** on the message shows where they are; on Windows
+it is `%LOCALAPPDATA%\AMPM\AMPM Analyzer\crash-reports`. The newest 30
+are kept. If the app closes without any message (a graphics driver fault,
+for example), `fatal.log` in the same folder records it.
+
 ## Still stuck
 
 Open the [log](help:settings-log), export it, and send it along with a
-description of what you were doing.
+description of what you were doing. After an unexpected error, send its
+report file instead: it holds the same log and the details. The version is
+shown at the bottom of the help list.

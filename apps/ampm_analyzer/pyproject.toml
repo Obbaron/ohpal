@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ampm-analyzer"
-version = "1.3.2"
+# The version lives in src/ampm_analyzer/__init__.py (__version__), the one
+# place to change it; the app shows it in Help and in crash reports.
+dynamic = ["version"]
 description = "AMPM plotting application within the OHPAL ecosystem"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +27,9 @@ dev = ["pyinstaller>=6.21,<7"]
 
 [project.gui-scripts]
 ampm-analyzer = "ampm_analyzer.__main__:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "ampm_analyzer.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

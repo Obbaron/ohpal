@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Planned as **2.0.0**: a new application. The 1.x window (Config and Analysis tabs,
+Plotly plot views loaded from disk) is replaced by a new PyQt6 interface with
+VisPy plots, a data table you shape before plotting, undo / redo, macros and an
+in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
+
+### Added
+
+- **New interface.** A frameless window whose tab row doubles as the title bar
+  (File, Data, one tab per plot), a toolbar that changes with the tab, a side
+  panel, light and dark themes, and frameless, draggable dialogs throughout.
+- **File tab.** Open or create a build, recent builds, and **Create Excel from
+  AMPM** for one build, written to `<build>/exports/`.
+- **DataStore setup.** Choose and rename the imported columns, and the load recipe:
+  mask (STL), part assignment (Direct, DHXML, or DBSCAN, which runs in the
+  background and is never the default) and correction. Built off the UI thread with
+  progress; a rebuild starts from a clean slate.
+- **Data tab.** A virtualised table of one layer; column info in the side panel;
+  rename, hide, remove and restore columns; calculated columns (a formula language
+  with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
+  if / elif / else rules; filters; a column from Excel; export to Excel.
+- **Parts.** When parts are assigned: per-part calculations (CoV as mean, std and
+  their ratio), laser parameters, and any section of the QuantAM parts CSV.
+- **Plots** (VisPy): 2D and 3D scatter, Layer Viewer (scrub layer by layer),
+  Single Layer, Bar, Histogram, CoV Summary, Contour (filled-contour look), KDE,
+  Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
+  side panel that show only what applies to the plot, with per-plot options (equal
+  axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
+  measured points, level lines, eps guide); a legend for text-coloured scatters;
+  screenshots; editable plot text (fonts, sizes, colours, set as default); plots
+  popped out into their own windows and docked back.
+- **Undo / redo** of data shaping, and **macros**: record actions, save them to a
+  file, check and run them on another build, recent macros one click away.
+- **Help.** A searchable in-app guide of 29 articles that opens on the article for
+  what you are doing (Help button or F1). It replaces `docs/APP.md`.
+- **Unexpected errors** are written to a report file (version, platform,
+  traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Analyzer\crash-reports` and
+  shown in a dialog; the app keeps running. Hard crashes are recorded in
+  `fatal.log` in the same folder.
+- The version is shown in Help and in crash reports.
+- Log window: captured console output, exportable.
+
+### Changed
+
+- The version is defined once, as `__version__` in `ampm_analyzer/__init__.py`;
+  `pyproject.toml` reads it from there.
+- The executable has the app icon.
+- `just verify` / `make verify` import the new application.
+
+### Removed
+
+- The 1.x interface: `ampm_analyzer/main.py` and the plot views in
+  `ampm_analyzer/views/`, along with drop-in views from `%APPDATA%\AMPM\views`,
+  `<project>/views` and `AMPM_VIEWS_PATH`.
+
+### Fixed
+
+- An error in the interface no longer closes the app without a message.
+- A freeze when a background query finished while the window was rebuilding a
+  toolbar (workers are now freed on the main thread).
+
 ## [1.3.1] - 2026-06-26
 
 Mainly a structural release: AMPM Analyzer was
