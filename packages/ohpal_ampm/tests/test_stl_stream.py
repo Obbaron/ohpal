@@ -15,7 +15,7 @@ import pytest
 import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 
-from ampm.stl_stream import (
+from ohpal.ampm.stl_stream import (
     _batch_bounds,
     _polygonize_layer,
     _read_binary_stl_header,
@@ -194,9 +194,9 @@ class TestSliceStreaming:
         assert big[50].area == pytest.approx(small[50].area)
 
     def test_matches_trimesh_path(self, box_stl):
-        import ampm.masking
+        import ohpal.ampm.masking
 
-        trimesh_mask = ampm.masking._slice_trimesh(box_stl, [50], THICKNESS)
+        trimesh_mask = ohpal.ampm.masking._slice_trimesh(box_stl, [50], THICKNESS)
         stream_mask = slice_stl_streaming(box_stl, [50], THICKNESS, verbose=False)
         assert stream_mask[50].area == pytest.approx(trimesh_mask[50].area, abs=1.0)
 
@@ -269,7 +269,7 @@ class TestPolygonizeCoverage:
         assert geom.area == pytest.approx(100.0)
 
     def test_intersect_chunk_no_intersections_returns_empty(self):
-        from ampm.stl_stream import _intersect_chunk
+        from ohpal.ampm.stl_stream import _intersect_chunk
 
         verts = np.zeros((2, 3, 3), dtype=np.float32)
         verts[:, :, 2] = -100.0  # all triangles well below every plane

@@ -32,9 +32,19 @@ verify:
 run:
     uv run --no-sync ampm-analyzer
 
-# run pipeline test suite
+# run the library tests (every package under packages/)
 test:
+    uv --directory packages/ohpal_core run --no-sync python -m pytest
+    uv --directory packages/ohpal_samples run --no-sync python -m pytest
     uv --directory {{pkg_ampm}} run --no-sync python -m pytest
+
+# usage:  just test-app "C:\builds\JR299"   (or set AMPM_TEST_BUILD and run: just test-app)
+# run the app's GUI scenarios on a build folder (written against JR299)
+test-app build=env_var_or_default("AMPM_TEST_BUILD", ""):
+    uv --directory {{app_dir}} run --no-sync python -m pytest "--build={{build}}"
+
+# library tests, then the GUI scenarios
+test-all build=env_var_or_default("AMPM_TEST_BUILD", ""): test (test-app build)
 
 # compile binary from app.spec
 build:

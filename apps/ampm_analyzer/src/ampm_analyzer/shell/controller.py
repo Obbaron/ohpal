@@ -61,7 +61,6 @@ class AppController(QObject):
         self._busy = False
         self._config: dict = {}
         self._setup_force = False  # True when the pending build should overwrite
-        self._cache_cancelled = False  # Cancel pressed during a DataStore build
         self._columns: list[str] | None = None  # selected load columns (None = all)
         self._filter: list[str] = []  # active row-filter conditions (grid-live)
         self._base_df = None  # last raw grid query output, before shaping
@@ -144,26 +143,9 @@ class AppController(QObject):
         self._side_worker = None
 
     # -- Create Excel from AMPM ----------------------------------------
-    _DBSCAN_KEYS = (("eps_xy", "EPS_XY", float), ("eps_z", "EPS_Z", float),
-                    ("min_samples", "MIN_SAMPLES", int))
-
-    def _set_dbscan_config(self, settings: dict) -> None:
-        """Put DBSCAN settings (from the setup page, or saved with the build)
-        over config.toml's, where the clustering and the K-distance plot read
-        them."""
-        if self._config is None:
-            return
-        for key, conf, kind in self._DBSCAN_KEYS:
-            if settings.get(key) is not None:
-                try:
-                    self._config[conf] = kind(settings[key])
-                except (TypeError, ValueError):
-                    pass
-
     def dbscan_params(self) -> tuple[float, float, int]:
         """The build's DBSCAN settings (eps_xy, eps_z, min_samples), as the
-        DataStore's DBSCAN part assignment would use them: the setup page's
-        choice for this build, else config.toml's."""
+        DataStore's DBSCAN part assignment would use them."""
         c = self._config or {}
         return (float(c.get("EPS_XY", 0.3)), float(c.get("EPS_Z", 0.06)),
                 int(c.get("MIN_SAMPLES", 10)))
@@ -263,8 +245,6 @@ class AppController(QObject):
         saved_method = saved_state.get("part_method")
         if saved_method:
             self._config["METHOD"] = saved_method
-        # DBSCAN settings chosen on the setup page (else config.toml's).
-        self._set_dbscan_config(saved_state.get("dbscan") or {})
         # Restore the Apply-mask choice (also not in config.toml).
         self._apply_mask = bool(saved_state.get("apply_mask"))
         self._correction = dict(saved_state.get("correction") or {})
@@ -344,10 +324,6 @@ class AppController(QObject):
             self.session.layer_thickness = thickness
         # Part assignment (dhxml → part_id) per the chosen recipe, else config.
         method = (recipe or {}).get("part_method") or self._config.get("METHOD")
-        dbscan = (recipe or {}).get("dbscan")
-        if dbscan:  # the setup page's DBSCAN settings, kept with this build
-            self._set_dbscan_config(dbscan)
-            uistate.set_dbscan(store.cache_dir, dbscan)
         self._apply_part_assignment(store, method)
         if self._dbscan_wanted:
             self._dbscan_wanted = "force"  # a (re)build clusters afresh
@@ -638,38 +614,11 @@ class AppController(QObject):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self.session.cache_progress)
-        worker.finished.connect(
-            lambda n, s=store, total=len(layers): self._on_cache_ended(s, n, total))
+        worker.finished.connect(lambda _n: self._on_cache_finished(store))
         worker.error.connect(self._on_worker_error)
-        worker.error.connect(lambda _m: self._window.set_build_cancel(None))
         self._wire_teardown(thread, worker)
         self._thread, self._worker = thread, worker
-        self._cache_cancelled = False
-        self._window.set_build_cancel(self.cancel_build)
         thread.start()
-
-    def cancel_build(self) -> None:
-        """Stop a DataStore build after the layer it is on. The layers already
-        built are kept (a later build carries on from them)."""
-        worker = self._worker
-        if isinstance(worker, CacheWorker):
-            self._cache_cancelled = True
-            try:
-                worker.cancel()
-            except RuntimeError:  # already gone: it finished meanwhile
-                pass
-            self._window.set_status("Stopping the build after this layer…")
-
-    def _on_cache_ended(self, store, built: int, total: int) -> None:
-        self._window.set_build_cancel(None)
-        if self._cache_cancelled and built < total:
-            self._cache_cancelled = False
-            self._busy = False
-            self._dbscan_wanted = None  # nothing to cluster: the build stopped
-            self._window.build_cancelled(built, total, not self._setup_force)
-            return
-        self._cache_cancelled = False
-        self._on_cache_finished(store)
 
     def _wire_teardown(self, thread: QThread, worker) -> None:
         worker.finished.connect(thread.quit)
@@ -1284,9 +1233,6 @@ class AppController(QObject):
             thickness=self.session.layer_thickness, force=(mode == "force"))
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.progress.connect(
-            lambda text: self._window.set_background_job(
-                f"DBSCAN part assignment: {text}…", self.cancel_dbscan))
         worker.finished.connect(lambda res, s=store: self._on_dbscan_done(s, res))
         worker.error.connect(lambda msg, s=store: self._on_dbscan_error(s, msg))
         worker.finished.connect(thread.quit)
@@ -1296,7 +1242,7 @@ class AppController(QObject):
         thread.finished.connect(self._clear_dbscan)
         self._dbscan_thread, self._dbscan_worker = thread, worker
         self._window.set_background_job(
-            "DBSCAN part assignment: starting…", self.cancel_dbscan)
+            "DBSCAN part assignment running — this can take a while…")
         thread.start()
 
     def _clear_dbscan(self) -> None:
@@ -1307,31 +1253,9 @@ class AppController(QObject):
         if self._dbscan_wanted and self.session.store is not None:
             self._start_dbscan_if_wanted(self.session.store)
 
-    def cancel_dbscan(self) -> None:
-        """Stop a running DBSCAN part assignment (after a confirmation: the
-        work so far is lost)."""
-        worker = self._dbscan_worker
-        if worker is None:
-            return
-        if not _ask(self._window, "Stop DBSCAN?",
-                    "The clustering done so far is lost, and the build stays "
-                    "without a part column. You can run it again by rebuilding "
-                    "the DataStore with DBSCAN.",
-                    ok_text="Stop", cancel_text="Keep running"):
-            return
-        try:
-            worker.cancel()
-        except RuntimeError:  # already gone: it finished meanwhile
-            return
-        self._window.set_background_job("DBSCAN part assignment: stopping…")
-
     def _on_dbscan_done(self, store, result) -> None:
         if store is not self.session.store:
             return  # the build changed while it ran — the labels aren't ours
-        if result is None:  # cancelled
-            self._window.set_status(
-                "DBSCAN part assignment cancelled: no part column.")
-            return
         labels, info = result
         store.set_part_assignment(labels, method="labels")
         self._part_ids = {
@@ -1391,17 +1315,13 @@ class AppController(QObject):
                 thread.wait(3000)
             except RuntimeError:  # thread already deleted
                 pass
-        # A clustering run may have minutes to go: its process is ended at once
-        # (its result is cached only at the very end, so nothing half-written
-        # is left behind), and its thread then returns.
+        # A clustering run can't be interrupted politely and may have minutes to
+        # go; on exit it is stopped outright (its result cache is written only
+        # at the very end, so nothing half-written is left behind).
         try:
-            if self._dbscan_worker is not None:
-                self._dbscan_worker.cancel()
             if self._dbscan_thread is not None:
                 self._dbscan_thread.quit()
-                # Still reading the points (one uninterruptible call): last
-                # resort, as before, so the app can close.
-                if not self._dbscan_thread.wait(8000):
+                if not self._dbscan_thread.wait(500):
                     self._dbscan_thread.terminate()
                     self._dbscan_thread.wait(2000)
         except RuntimeError:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from ampm.stats import compute_cov
+from ohpal.ampm.stats import compute_cov
 
 
 def cov_df(rows, *, signal="s", group="part_id", layer="layer"):

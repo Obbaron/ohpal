@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import ampm.config as config
+import ohpal.ampm.config as config
 
 MINIMAL_TOML = """\
 [paths]
@@ -121,12 +121,6 @@ class TestCreateOrLoad:
         assert cfg["LAYER_THICKNESS"] == 0.03
 
     def test_autocreate_then_load(self, tmp_path, monkeypatch):
-        import ampm.setup_build as setup_build
-
-        ampm_pkg = types.ModuleType("ampm")
-        monkeypatch.setitem(sys.modules, "ampm", ampm_pkg)
-        monkeypatch.setitem(sys.modules, "ampm.setup_build", setup_build)
-
         # Populate a build dir so auto-detection succeeds.
         data = tmp_path / "data"
         data.mkdir()

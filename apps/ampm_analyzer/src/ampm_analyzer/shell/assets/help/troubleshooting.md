@@ -51,15 +51,8 @@ or no part assignment. Fix the cause (or edit the macro) and run it again. See
 ## DBSCAN part assignment failed
 
 No cluster could be matched to a part, or the computer ran out of memory.
-The build stays open without a part column. Check its settings (XY radius,
-Z radius, min samples) on the DataStore setup page, with a
-[K-distance curve](help:plot-kdistance) to guide you; or rebuild with
-**Direct** part assignment, which suits most builds, or reduce the layer
-range.
-
-To stop a DBSCAN run, press **Cancel** beside its note in the status bar.
-It stops at once; the build stays without a part column until you run it
-again.
+The build stays open without a part column. Rebuild with **Direct** part
+assignment, which suits most builds, or reduce the layer range.
 
 ## A plot says a column is not in the data
 
@@ -82,8 +75,6 @@ undo the removal, and the plot redraws.
   quicker.
 - DBSCAN is slow by nature; see
   [Setting up the DataStore](help:datastore-setup).
-- A DataStore build and a DBSCAN run can be stopped with **Cancel** in the
-  status bar.
 
 ## "Something went wrong"
 

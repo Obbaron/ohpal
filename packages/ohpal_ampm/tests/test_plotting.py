@@ -15,8 +15,8 @@ import polars as pl
 import pytest
 from plotly.graph_objects import Figure
 
-import ampm.plotting as plotting
-from ampm.plotting import (
+import ohpal.ampm.plotting as plotting
+from ohpal.ampm.plotting import (
     _build_hover,
     _resolve_color,
     _resolve_size,

@@ -2,7 +2,7 @@
 title: Setting up the DataStore
 section: Getting started
 order: 30
-keywords: datastore, build, rebuild, setup, layers, thickness, columns, rename, mask, masking, correction, part assignment, direct, dhxml, dbscan, eps, radius, min samples, cancel, stop, cache, required
+keywords: datastore, build, rebuild, setup, layers, thickness, columns, rename, mask, masking, correction, part assignment, direct, dhxml, dbscan, cache, required
 context: file.datastore
 ---
 # Setting up the DataStore
@@ -50,17 +50,8 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
   - **DBSCAN**: clusters the points themselves and matches each cluster to a
     part. It is computationally expensive and takes a while on a full build.
     It runs in the background after the build opens: you can work meanwhile,
-    and the part column appears when it finishes. The status bar shows how far
-    it has got, with **Cancel** to stop it. The result is saved, so reopening
-    the build is instant. Its settings appear when you choose it:
-    - **XY radius (eps)**: how close points must be in the plane to count as
-      neighbours, in mm.
-    - **Z radius**: the same between layers.
-    - **Min samples**: how many neighbours a point needs within the radius to
-      start or grow a cluster.
-
-    They start from the build's `config.toml` and are kept with the build.
-    Changing them means a rebuild. To choose them, plot a
+    and the part column appears when it finishes. The result is saved, so
+    reopening the build is instant. To check or tune its radius, plot a
     [K-distance curve](help:plot-kdistance).
 - **Apply correction**: removes the position-dependent bias of the MeltVIEW
   melt-pool signal. It is calibrated for the **MAIN** machine and the
@@ -70,13 +61,7 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
 ## Build, rebuild, cancel
 
 **Build DataStore** converts the chosen layers; progress shows in the status
-bar. **Cancel** on this page returns to the Start page without changing
-anything.
-
-To stop a build that is running, press **Cancel** beside the progress bar. It
-stops after the layer it is on and brings you back here with your choices as
-they were. The layers already converted are kept, so building again carries
-on from there (a rebuild starts over).
+bar. **Cancel** returns to the Start page without changing anything.
 
 On a build that already has a DataStore the button reads **Rebuild
 DataStore**. A rebuild is a clean slate: your column changes, filters, layout

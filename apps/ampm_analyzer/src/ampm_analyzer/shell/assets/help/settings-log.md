@@ -23,11 +23,8 @@ The bar along the bottom reports what the app is doing.
   added, a file written, or why something did not happen. Hover it to read a
   long message in full.
 - **The progress bar** shows while a build, query or export is running.
-  During a DataStore build, **Cancel** beside it stops the build after the
-  current layer.
 - **Background work** that takes a while, such as a DBSCAN part assignment,
-  is noted here with how far it has got until it finishes. You can keep
-  working meanwhile, or press **Cancel** beside it to stop it.
+  is noted here until it finishes. You can keep working meanwhile.
 - **● Recording macro** and a step count show while a
   [macro](help:macros) is being recorded.
 

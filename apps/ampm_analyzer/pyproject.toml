@@ -23,10 +23,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pyinstaller>=6.21,<7"]
+dev = ["pyinstaller>=6.21,<7", "pytest>=8,<10"]
 
 [project.gui-scripts]
-ampm-analyzer = "ampm_analyzer:main"
+ampm-analyzer = "ampm_analyzer.__main__:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "ampm_analyzer.__version__"}
@@ -41,3 +41,6 @@ ampm_analyzer = ["assets/*"]
 [tool.uv.sources]
 ohpal-ampm = { workspace = true }
 ohpal-samples = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

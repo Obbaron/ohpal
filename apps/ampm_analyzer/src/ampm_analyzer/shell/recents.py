@@ -1,6 +1,6 @@
 """Recent builds — a small persisted list, plus the dialog start-dir policy.
 
-Backed by the app's existing ``QSettings("AMPM", "AMPM Analyzer")`` store (the
+Backed by the app's settings store (``settings.app_settings``; the
 same one that holds window geometry), so it needs no extra file. Entries are a
 JSON blob under a single key; favourites and the two directory hints
 (``projects_root``, ``last_browse_dir``) are separate keys.
@@ -16,10 +16,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings
+from .settings import app_settings
 
-_ORG = "AMPM"
-_APP = "AMPM Analyzer"
 
 _ENTRIES_KEY = "recents/entries"
 _PROJECTS_ROOT_KEY = "recents/projects_root"
@@ -48,7 +46,7 @@ class RecentStore:
     """Read/write access to the recent-builds list and directory hints."""
 
     def __init__(self) -> None:
-        self._s = QSettings(_ORG, _APP)
+        self._s = app_settings()
 
     # -- raw entries ---------------------------------------------------
     def _read(self) -> list[RecentEntry]:

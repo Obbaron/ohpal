@@ -19,6 +19,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings
 
+from .settings import app_settings
+
 # -- fonts ---------------------------------------------------------------
 # Display name -> VisPy face. VisPy loads a face from "<face>-Regular.ttf",
 # "-Bold", "-Italic", "-BoldItalic" in a registered folder. Open Sans ships
@@ -177,7 +179,7 @@ _SETTINGS_GROUP = "plot_style"
 
 
 def _settings() -> QSettings:
-    return QSettings("AMPM", "AMPM Analyzer")
+    return app_settings()
 
 
 def _clean(key: str, style: dict) -> dict:

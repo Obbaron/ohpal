@@ -18,8 +18,8 @@ import pytest
 import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 
-import ampm.masking as masking
-from ampm.masking import (
+import ohpal.ampm.masking as masking
+from ohpal.ampm.masking import (
     apply_mask,
     apply_mask_keep,
     build_mask,

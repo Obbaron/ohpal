@@ -8,7 +8,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from ampm.cluster_cache import (
+from ohpal.ampm.cluster_cache import (
     CACHE_FORMAT_VERSION,
     _format_param_diff,
     cluster_or_load,
@@ -127,7 +127,7 @@ class TestLoad:
         save_cluster_labels(clustered, path, verbose=False)
         # Bump the expected version after writing the cache.
         monkeypatch.setattr(
-            "ampm.cluster_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+            "ohpal.ampm.cluster_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
         )
         df = keyed_df([(1, 100)])
         with pytest.raises(ValueError, match="version"):
@@ -272,7 +272,7 @@ class TestVerboseLogging:
         path = tmp_path / "c.pq"
         save_cluster_labels(keyed_df([(1, 100)], cluster=[0]), path, verbose=False)
         monkeypatch.setattr(
-            "ampm.cluster_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+            "ohpal.ampm.cluster_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
         )
         with pytest.raises(FileNotFoundError):
             load_cluster_labels(keyed_df([(1, 100)]), path, strict=False, verbose=True)

@@ -33,6 +33,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, QSettings, QStandardPaths, pyqtSignal
 
+from .settings import app_settings
+
 FORMAT = "ampm-macro"
 VERSION = 1
 FILE_FILTER = "AMPM macro (*.macro.json);;JSON (*.json)"
@@ -75,7 +77,7 @@ _RECENT_MAX = 8
 
 
 def _settings() -> QSettings:
-    return QSettings("AMPM", "AMPM Analyzer")  # the store recents/geometry use
+    return app_settings()  # the store recents/geometry use
 
 
 def recent() -> list[str]:

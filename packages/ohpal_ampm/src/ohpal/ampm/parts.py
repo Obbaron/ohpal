@@ -272,10 +272,10 @@ class QuantAMParts:
 
         Columns
         -------
-        Part ID         : str  ("Part(1)", "Part(2)", ...)
+        part_id         : str  ("Part(1)", "Part(2)", ...; QuantAM's "Source Index")
         Layer Thickness : float
-        X Position      : float
-        Y Position      : float
+        x_center        : float  (QuantAM's "X Position")
+        y_center        : float  (QuantAM's "Y Position")
         Layers Count    : int
 
         Each row is one physical part *instance* on the build plate.
@@ -284,7 +284,7 @@ class QuantAMParts:
         -------------------
         QuantAM lists each placed copy of a part as its own row, all sharing
         the same "Source Index" (e.g. fifteen rows of ``Part(1)`` in a
-        parameter-study build). To keep ``Part ID`` unique, duplicated names
+        parameter-study build). To keep ``part_id`` unique, duplicated names
         are suffixed with their QuantAM instance number (the "Sr. No." column):
         ``Part(1)#1``, ``Part(1)#4``, etc.
         """
@@ -708,7 +708,7 @@ def assign_nearest_part(
 
     A simpler alternative to DBSCAN clustering + ``compute_part_id_map`` when
     parts are well-separated (typical for builds with few, large parts).
-    Each row gets the Part ID of the closest part by 2D Euclidean distance
+    Each row gets the part_id of the closest part by 2D Euclidean distance
     in the (x_col, y_col) plane. Z is ignored.
 
     Parameters

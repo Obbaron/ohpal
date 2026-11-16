@@ -14,7 +14,7 @@ import time
 import polars as pl
 import pytest
 
-from ampm.datastore import (
+from ohpal.ampm.datastore import (
     CACHE_FORMAT_VERSION,
     EXPECTED_COLUMNS,
     DataStore,

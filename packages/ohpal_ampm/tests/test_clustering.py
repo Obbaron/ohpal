@@ -12,7 +12,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ampm.clustering import (
+from ohpal.ampm.clustering import (
     _stabilize_labels,
     _to_scaled_array,
     _UnionFind,

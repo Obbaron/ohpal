@@ -8,7 +8,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from ampm.sampling import (
+from ohpal.ampm.sampling import (
     downsample_grid,
     downsample_random,
     downsample_stride,

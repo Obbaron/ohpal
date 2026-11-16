@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from ampm.mask_cache import (
+from ohpal.ampm.mask_cache import (
     _META_VERSION_KEY,
     CACHE_FORMAT_VERSION,
     _format_param_diff,
@@ -153,7 +153,7 @@ class TestLoad:
         path = tmp_path / "m.pq"
         self._save(keyed_df, path, [(1, 10)])
         monkeypatch.setattr(
-            "ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+            "ohpal.ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
         )
         full = keyed_df([(1, 10)])
         with pytest.raises(ValueError, match="version"):
@@ -323,7 +323,7 @@ class TestVerboseLogging:
         path = tmp_path / "m.pq"
         self._save(keyed_df, path, [(1, 10)])
         monkeypatch.setattr(
-            "ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+            "ohpal.ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
         )
         with pytest.raises(FileNotFoundError):
             load_mask_keep(keyed_df([(1, 10)]), path, strict=False, verbose=True)
@@ -434,7 +434,7 @@ class TestAtomicReplace:
         import os
         import time
 
-        from ampm.mask_cache import _atomic_replace
+        from ohpal.ampm.mask_cache import _atomic_replace
 
         src = tmp_path / "src.tmp"
         src.write_text("payload")
@@ -450,7 +450,7 @@ class TestAtomicReplace:
         import os
         import time
 
-        from ampm.mask_cache import _atomic_replace
+        from ohpal.ampm.mask_cache import _atomic_replace
 
         src = tmp_path / "src.tmp"
         src.write_text("payload")
@@ -467,7 +467,7 @@ class TestAtomicReplace:
         import os
         import time
 
-        from ampm.mask_cache import _atomic_replace
+        from ohpal.ampm.mask_cache import _atomic_replace
 
         src = tmp_path / "src.tmp"
         src.write_text("payload")

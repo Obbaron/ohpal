@@ -20,13 +20,9 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 - **File tab.** Open or create a build, recent builds, and **Create Excel from
   AMPM** for one build, written to `<build>/exports/`.
 - **DataStore setup.** Choose and rename the imported columns, and the load recipe:
-  mask (STL), part assignment (Direct, DHXML, or DBSCAN) and correction. Built off
-  the UI thread with progress and a **Cancel** that stops after the current layer
-  (the layers built are kept); a rebuild starts from a clean slate.
-- **DBSCAN part assignment** is never the default. Its settings (XY radius, Z radius,
-  min samples) are on the setup page, start from `config.toml` and are kept per
-  build. It runs in the background as a separate process: the status bar shows
-  which chunk it is on, and **Cancel** (or closing the app) stops it at once.
+  mask (STL), part assignment (Direct, DHXML, or DBSCAN, which runs in the
+  background and is never the default) and correction. Built off the UI thread with
+  progress; a rebuild starts from a clean slate.
 - **Data tab.** A virtualised table of one layer; column info in the side panel;
   rename, hide, remove and restore columns; calculated columns (a formula language
   with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
@@ -61,13 +57,16 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   `pyproject.toml` reads it from there.
 - The executable has the app icon.
 - `just verify` / `make verify` import the new application.
-- The `ampm-analyzer` script now points at `ampm_analyzer:main`; the packaged app
-  also accepts `--dbscan-job <job.json>` (used internally to run DBSCAN).
-- `ohpal.ampm.clustering.cluster_dbscan_chunked` takes an optional
-  `progress(chunk, n_chunks)` callback.
+- **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
+  the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
+  current API; `just test` runs every package's tests (624 in all). The app has GUI
+  scenarios in `apps/ampm_analyzer/tests`, run with `just test-app <build folder>`.
+- Settings can be kept in an INI file instead of the registry by setting
+  `AMPM_SETTINGS_DIR` to a folder (the tests do; also useful for a portable copy).
 
 ### Removed
 
+- `tests/test_memprof.py`: it tested `ampm.memprof`, which no longer exists.
 - The 1.x interface: `ampm_analyzer/main.py` and the plot views in
   `ampm_analyzer/views/`, along with drop-in views from `%APPDATA%\AMPM\views`,
   `<project>/views` and `AMPM_VIEWS_PATH`.

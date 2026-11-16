@@ -33,10 +33,7 @@ its value, so you can see at a glance which points it would include.
 
 ## Settings
 
-The dialog starts from the build's DBSCAN settings: the ones on the
-DataStore setup page, which come from `config.toml` until you change them
-there. Once you have chosen values here, enter them on the setup page and
-rebuild.
+The dialog starts from the build's own DBSCAN settings.
 
 - **X, Y, Z**: the position columns. Choose *None (2D)* for Z to measure
   in the plane only.

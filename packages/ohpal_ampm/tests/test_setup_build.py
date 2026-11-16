@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from ampm.setup_build import (
+from ohpal.ampm.setup_build import (
     _extract_layer_thickness,
     _find_parts_csv,
     _find_source_dir,

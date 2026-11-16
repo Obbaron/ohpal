@@ -63,7 +63,7 @@ whole folder). A few layout details that make the build work:
 
 ```
 apps/ampm_analyzer/
-├── run.py                       # alternative launcher (calls ampm_analyzer.main)
+├── run.py                       # alternative launcher (imports ampm_analyzer.__main__)
 ├── app.spec                     # PyInstaller build spec
 ├── pyproject.toml
 └── src/

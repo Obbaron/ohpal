@@ -66,7 +66,9 @@ Run `just` to list available tasks:
 | `setup` | sync the venv and install all workspace members (editable) |
 | `verify` | smoke-test Python version, imports, and the `ohpal` namespace |
 | `run` | launch the AMPM Analyzer GUI |
-| `test` | run the pipeline test suite |
+| `test` | run the library tests (`ohpal_core`, `ohpal_samples`, `ohpal_ampm`) |
+| `test-app` | run the app's GUI scenarios on a build folder: `just test-app "C:\builds\JR299"` (see [apps/ampm_analyzer/tests](apps/ampm_analyzer/tests/README.md)) |
+| `test-all` | `test`, then `test-app` |
 | `build` | compile the standalone binary from `apps/ampm_analyzer/app.spec` |
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |

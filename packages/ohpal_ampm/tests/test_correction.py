@@ -13,7 +13,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ampm.correction import (
+from ohpal.ampm.correction import (
     _DEFAULT_COEFFICIENTS,
     _DEFAULT_POWER_MATRIX,
     MeltPoolCorrection,

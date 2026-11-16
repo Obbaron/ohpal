@@ -12,13 +12,13 @@ import json
 import polars as pl
 import pytest
 
-from ampm.parts import (
+from ohpal.core.build import (
+    BuildFileError, _parse_bounding_box, _suffix_duplicate_names)
+from ohpal.ampm.parts import (
     BuildStartedDHXML,
     QuantAMParts,
     _iter_sections,
-    _parse_bounding_box,
     _section_to_dataframe,
-    _suffix_duplicate_names,
     _try_numeric,
     apply_part_id_map,
     assign_bounding_box_part,
@@ -162,14 +162,14 @@ class TestQuantAMParts:
         q = QuantAMParts.from_path(write_csv(tmp_path, standard_csv()))
         pp = q.parent_parts()
         assert pp.columns == [
-            "Part ID",
+            "part_id",
             "Layer Thickness",
-            "X Position",
-            "Y Position",
+            "x_center",
+            "y_center",
             "Layers Count",
         ]
-        assert pp["Part ID"].to_list() == ["Part(1)", "Part(2)"]
-        assert pp["X Position"].to_list() == pytest.approx([-26.787, -13.823])
+        assert pp["part_id"].to_list() == ["Part(1)", "Part(2)"]
+        assert pp["x_center"].to_list() == pytest.approx([-26.787, -13.823])
 
     def test_parent_parts_suffixes_duplicates(self, tmp_path):
         csv_text = make_quantam_csv(
@@ -186,13 +186,13 @@ class TestQuantAMParts:
             ]
         )
         q = QuantAMParts.from_path(write_csv(tmp_path, csv_text))
-        ids = q.parent_parts()["Part ID"].to_list()
+        ids = q.parent_parts()["part_id"].to_list()
         assert ids == ["Part(1)#1", "Part(1)#4"]
 
     def test_volume_parameters_joins_on_instance(self, tmp_path):
         q = QuantAMParts.from_path(write_csv(tmp_path, standard_csv()))
         vp = q.volume_parameters(variant="1")
-        assert vp["Part ID"].to_list() == ["Part(1)", "Part(2)"]
+        assert vp["part_id"].to_list() == ["Part(1)", "Part(2)"]
         assert "Hatches Point Distance" in vp.columns
         assert "Sr. No." not in vp.columns
 
@@ -226,7 +226,7 @@ class TestBuildStartedDHXML:
         return p
 
     def test_missing_file(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(BuildFileError, match="not found"):
             BuildStartedDHXML.from_path(tmp_path / "nope.dhxml")
 
     def test_invalid_json(self, tmp_path):
@@ -237,7 +237,7 @@ class TestBuildStartedDHXML:
 
     def test_missing_parts_path(self, tmp_path):
         p = self._write(tmp_path, {"version1": {"build": {}}})
-        with pytest.raises(ValueError, match="not a recognized"):
+        with pytest.raises(ValueError, match="not a recogni[sz]ed"):
             BuildStartedDHXML.from_path(p)
 
     def test_empty_parts_list(self, tmp_path):
@@ -264,9 +264,9 @@ class TestBuildStartedDHXML:
         assert len(build) == 2
         assert build.part_names == ["Part(1)", "Part(2)"]
         table = build.parts_table()
-        assert table["Part ID"].to_list() == ["Part(1)", "Part(2)"]
-        assert table["X Position"].to_list() == pytest.approx([5.0, 25.0])
-        assert table["Y Position"].to_list() == pytest.approx([5.0, 5.0])
+        assert table["part_id"].to_list() == ["Part(1)", "Part(2)"]
+        assert table["x_center"].to_list() == pytest.approx([5.0, 25.0])
+        assert table["y_center"].to_list() == pytest.approx([5.0, 5.0])
 
     def test_duplicate_names_suffixed(self, tmp_path):
         p = self._write(
@@ -279,16 +279,16 @@ class TestBuildStartedDHXML:
             ),
         )
         build = BuildStartedDHXML.from_path(p)
-        assert build.parts_table()["Part ID"].to_list() == ["P#1", "P#2"]
+        assert build.parts_table()["part_id"].to_list() == ["P#1", "P#2"]
         assert build.part_names == ["P", "P"]  # original names preserved
 
 
 def parts_positions(ids, xs, ys):
     return pl.DataFrame(
         {
-            "Part ID": ids,
-            "X Position": pl.Series(xs, dtype=pl.Float64),
-            "Y Position": pl.Series(ys, dtype=pl.Float64),
+            "part_id": ids,
+            "x_center": pl.Series(xs, dtype=pl.Float64),
+            "y_center": pl.Series(ys, dtype=pl.Float64),
         }
     )
 
@@ -348,7 +348,7 @@ class TestApplyPartIdMap:
 class TestJoinPartsWithStats:
     def test_left_join_preserves_stats_rows(self):
         stats = pl.DataFrame({"part_id": ["A", "B"], "cov": [0.1, 0.2]})
-        ptable = pl.DataFrame({"Part ID": ["A"], "power": [200.0]})
+        ptable = pl.DataFrame({"part_id": ["A"], "power": [200.0]})
         out = join_parts_with_stats(stats, ptable, verbose=False)
         assert out.height == 2
         # B has no parameter row -> null power.
@@ -359,7 +359,7 @@ class TestJoinPartsWithStats:
         with pytest.raises(KeyError):
             join_parts_with_stats(
                 pl.DataFrame({"x": [1]}),
-                pl.DataFrame({"Part ID": ["A"]}),
+                pl.DataFrame({"part_id": ["A"]}),
                 verbose=False,
             )
         with pytest.raises(KeyError):
@@ -372,8 +372,8 @@ class TestJoinPartsWithStats:
 
 def parts_box_table(ids, boxes):
     """boxes: list of (xmin,ymin,zmin,xmax,ymax,zmax)."""
-    cols = {"Part ID": ids}
-    for i, key in enumerate(["X min", "Y min", "Z min", "X max", "Y max", "Z max"]):
+    cols = {"part_id": ids}
+    for i, key in enumerate(["x_min", "y_min", "z_min", "x_max", "y_max", "z_max"]):
         cols[key] = pl.Series([b[i] for b in boxes], dtype=pl.Float64)
     return pl.DataFrame(cols)
 
@@ -471,7 +471,7 @@ class TestParserRobustness:
         )
         q = QuantAMParts.from_path(write_csv(tmp_path, text))
         assert "Parent Parts" in q
-        assert q.parent_parts()["Part ID"].to_list() == ["Part(1)"]
+        assert q.parent_parts()["part_id"].to_list() == ["Part(1)"]
 
     def test_volume_parameters_variant_selection(self, tmp_path):
         # A part with two scan-volume instances (.1 and .2); each variant
@@ -592,13 +592,13 @@ class TestBuildStartedDHXMLRepr:
             encoding="utf-8",
         )
         build = BuildStartedDHXML.from_path(p)
-        assert "BuildStartedDHXML(" in repr(build)
+        assert "BuildParts(" in repr(build)  # the alias reports its base class
 
 
 class TestComputePartIdMapCoverage:
     def test_missing_parts_table_column_raises(self):
         clustered = pl.DataFrame({"cluster": [0], "Demand X": [1.0], "Demand Y": [1.0]})
-        ptable = pl.DataFrame({"Part ID": ["A"], "X Position": [0.0]})  # no Y Position
+        ptable = pl.DataFrame({"part_id": ["A"], "x_center": [0.0]})  # no y_center
         with pytest.raises(KeyError, match="parts_table"):
             compute_part_id_map(clustered, ptable, verbose=False)
 
@@ -625,7 +625,7 @@ class TestJoinPartsWithStatsCoverage:
     def test_verbose_warns_both_directions(self, capsys):
         # stats has C (no parts row); parts has D (no stats row).
         stats = pl.DataFrame({"part_id": ["A", "C"], "cov": [0.1, 0.3]})
-        ptable = pl.DataFrame({"Part ID": ["A", "D"], "power": [200.0, 300.0]})
+        ptable = pl.DataFrame({"part_id": ["A", "D"], "power": [200.0, 300.0]})
         join_parts_with_stats(stats, ptable, verbose=True)
         out = capsys.readouterr().out
         assert "no matching row" in out and "Note" in out
@@ -646,7 +646,7 @@ class TestJoinPartsWithStatsCoverage:
 class TestAssignNearestPartCoverage:
     def test_missing_parts_table_column_raises(self):
         masked = pl.DataFrame({"Demand X": [1.0], "Demand Y": [0.0]})
-        ptable = pl.DataFrame({"Part ID": ["A"], "X Position": [0.0]})  # no Y Position
+        ptable = pl.DataFrame({"part_id": ["A"], "x_center": [0.0]})  # no y_center
         with pytest.raises(KeyError, match="parts_table"):
             assign_nearest_part(masked, ptable, verbose=False)
 
@@ -665,7 +665,7 @@ class TestAssignNearestPartCoverage:
 class TestAssignBoundingBoxPartCoverage:
     def test_missing_parts_table_column_raises(self):
         masked = pl.DataFrame({"Demand X": [1.0], "Demand Y": [0.0]})
-        ptable = pl.DataFrame({"Part ID": ["A"], "X min": [0.0]})  # missing the rest
+        ptable = pl.DataFrame({"part_id": ["A"], "x_min": [0.0]})  # missing the rest
         with pytest.raises(KeyError, match="parts_table"):
             assign_bounding_box_part(masked, ptable, verbose=False)
 
