@@ -52,7 +52,7 @@ change a plot, and two plots can show different layers side by side.
 - **Filters**: a plot keeps the [filters](help:filters) that were active when
   it was created.
 - **Its title** is the tab's name. Rename it by editing the title; see
-  [Editing plot text](help:plot-elements).
+  [Editing plot elements](help:plot-elements).
 
 ## Next
 

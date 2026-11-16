@@ -142,7 +142,7 @@ class DetachedPlotWindow(QMainWindow):
         p.closed.connect(lambda: p.setVisible(False))
         # Editable elements: double-click opens the editor; an open editor
         # follows the selection; clicking off an element closes it.
-        p.elementEdited.connect(t.set_element)
+        p.elementEdited.connect(self._edit_element)
         p.elementReset.connect(self._reset_element)
         p.elementDefaultRequested.connect(self._save_element_default)
         p.elementClosed.connect(lambda: t.select_element(None))
@@ -165,9 +165,16 @@ class DetachedPlotWindow(QMainWindow):
         elif self._panel.element_key() is not None:
             self._panel.edit_element(self._tab, key)
 
+    def _edit_element(self, key: str, name: str, value) -> None:
+        self._tab.set_element(key, name, value)
+        if key.startswith("data_"):  # shared with the Points / Colour box
+            self._panel.sync_plot(self._tab.panel_state())
+
     def _reset_element(self, key: str, builtin: bool) -> None:
         self._tab.reset_element(key, builtin)
         self._panel.set_element_values(self._tab.element_values(key))
+        if key.startswith("data_"):
+            self._panel.sync_plot(self._tab.panel_state())
 
     def _save_element_default(self, key: str) -> None:
         from . import plot_elements

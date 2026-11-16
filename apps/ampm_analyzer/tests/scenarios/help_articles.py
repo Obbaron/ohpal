@@ -103,7 +103,7 @@ for a in arts:
     for target in a.links(): assert hd.find(arts, target) is not None
 # search in the window
 hw.search.setText("font"); app.processEvents()
-assert titles()[0] == "Editing plot text" and "result" in hw.count.text()
+assert titles()[0] == "Editing plot elements" and "result" in hw.count.text()
 hw._open_first_result(); assert hw.current_article() == "plot-elements" and hw.view.extraSelections(), "hits are highlighted"
 hw.search.setText("zzzqqq"); assert titles() == [] and "No articles match" in hw.count.text()
 hw._escape(); assert hw.search.text() == "" and len(titles()) == len(arts) and not hw.view.extraSelections()

@@ -59,5 +59,5 @@ the range you care about: the levels are recalculated to fit.
 ## See also
 
 - [Viewing and styling a plot](help:plot-view): colour map and range.
-- [Editing plot text](help:plot-elements): the title, axes and colour bar
+- [Editing plot elements](help:plot-elements): the title, axes and colour bar
   text.

@@ -38,9 +38,16 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
   side panel that show only what applies to the plot, with per-plot options (equal
   axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
-  measured points, level lines, eps guide); a legend for text-coloured scatters;
-  screenshots; editable plot text (fonts, sizes, colours, set as default); plots
-  popped out into their own windows and docked back.
+  measured points, level lines, eps guide); screenshots; plots popped out into
+  their own windows and docked back.
+- **Editable plot elements.** Click to select, double-click to edit in the side
+  panel, set as the default for new plots: the title (text, font, alignment),
+  the axes (titles, tick labels, number of ticks and their format, the axis
+  line, the gridlines), the colour bar (label, numbers, right of or below the
+  plot, gap, thickness), a framed **legend box** for groups (beside the plot or
+  inside a corner) and the data itself (marker, bar width and outline, line
+  widths, fill opacity, level lines, colour map). Hiding the title, axes or
+  legend gives their room to the plot.
 - **Undo / redo** of data shaping, and **macros**: record actions, save them to a
   file, check and run them on another build, recent macros one click away.
   Macros live in a **macro folder** (default `Documents\AMPM Analyzer\Macros`,

@@ -30,8 +30,9 @@ scenario then gets its own copy of that. A full run takes a while:
 A scenario that leaves a dialog waiting for a click fails after two minutes,
 naming the dialog and its text, rather than hanging.
 
-`gl_first_plot` needs a real OpenGL context, so it runs only on Linux under
-`xvfb-run` and is skipped elsewhere.
+`gl_first_plot` and `plot_elements_layout` need a real OpenGL context (the
+latter so the plot canvas is laid out at its real size), so they run only on
+Linux under `xvfb-run` and are skipped elsewhere.
 
 ## Layout
 

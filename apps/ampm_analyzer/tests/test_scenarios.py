@@ -28,7 +28,7 @@ SCENARIOS = sorted(p.stem for p in HERE.glob("*.py") if not p.name.startswith("_
 TIMEOUT_S = 1200          # the DBSCAN scenarios cluster a whole build
 
 # Need a real OpenGL context: Linux under xvfb only (skipped elsewhere).
-GL = {"gl_first_plot"}
+GL = {"gl_first_plot", "plot_elements_layout"}   # (the latter: real plot sizes)
 
 
 def _needs_build(name: str) -> bool:

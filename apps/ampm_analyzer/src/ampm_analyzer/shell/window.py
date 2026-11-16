@@ -784,8 +784,11 @@ class MainWindow(QMainWindow):
             lambda: self._active_plot and self._active_plot.select_element(None))
 
     def _edit_plot_element(self, key: str, name: str, value) -> None:
-        if self._active_plot is not None:
-            self._active_plot.set_element(key, name, value)
+        tab = self._active_plot
+        if tab is not None:
+            tab.set_element(key, name, value)
+            if key.startswith("data_"):  # shared with the Points / Colour box
+                self.panel.sync_plot(tab.panel_state())
 
     def _reset_plot_element(self, key: str, builtin: bool) -> None:
         tab = self._active_plot
@@ -793,6 +796,8 @@ class MainWindow(QMainWindow):
             return
         tab.reset_element(key, builtin)
         self.panel.set_element_values(tab.element_values(key))
+        if key.startswith("data_"):
+            self.panel.sync_plot(tab.panel_state())
 
     def _save_plot_element_default(self, key: str) -> None:
         tab = self._active_plot

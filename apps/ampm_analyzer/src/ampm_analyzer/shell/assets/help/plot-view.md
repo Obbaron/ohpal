@@ -88,7 +88,7 @@ colours, and the Colour group is not shown.
 
 The title, axes, category labels and colour bar can be restyled directly on
 the plot: click to select, double-click to edit. See
-[Editing plot text](help:plot-elements).
+[Editing plot elements](help:plot-elements).
 
 ## Saving an image
 

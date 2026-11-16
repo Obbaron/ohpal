@@ -103,10 +103,11 @@ assert w.panel.colour_box.isHidden() and not w.panel.points_box.isHidden()
 
 # 2D scatter coloured by text (20 parts): a legend of the categories, map-coloured
 tc = w._open_plot(PlotSpec(kind=SCATTER_2D, x="Demand X", y="Demand Y", color="part_id"), ALL); drain()
-assert "Legend" in tips(w.toolbar) and tc._has_legend and tc._cbar_is_legend and tc._cbar.visible
-names = [x.text for x in tc._cbar_extra]
+assert "Legend" in tips(w.toolbar) and tc._has_legend and tc._legend.visible
+assert tc._cbar is None or not tc._cbar.visible, "a legend box, not a colour bar"
+names = tc._legend_items[0]
 assert names[:3] == ["Part(1)", "Part(2)", "Part(3)"], names          # in natural order
-assert tc._cbar_auto == "part_id"
+assert tc._legend_auto == "part_id"
 ps = tc.panel_state(); assert ps["map_only"] and not ps["has_color"]
 w.panel.sync_plot(ps)
 assert not w.panel.colour_box.isHidden() and w.panel.min_slider.isHidden()

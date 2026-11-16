@@ -16,6 +16,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QFormLayout,
@@ -465,6 +466,30 @@ class SidePanel(QWidget):
                 h.addWidget(b)
             h.addStretch(1)
             return row
+        if f.kind == "choice":
+            combo = fix_combo(QComboBox())
+            for value, text in f.options:
+                combo.addItem(text, value)
+            combo.currentIndexChanged.connect(
+                lambda i, c=combo, n=f.name: self.elementEdited.emit(
+                    key, n, c.itemData(i)))
+            self._el_controls[f.name] = ("choice", combo)
+            return combo
+        if f.kind == "int":
+            spin = QSpinBox()
+            spin.setRange(f.lo, f.hi)
+            if f.suffix:
+                spin.setSuffix(f.suffix)
+            if f.special:
+                spin.setSpecialValueText(f.special)
+            spin.valueChanged.connect(emit(f.name))
+            self._el_controls[f.name] = ("int", spin)
+            return spin
+        if f.kind == "check":
+            box = QCheckBox()
+            box.toggled.connect(emit(f.name))
+            self._el_controls[f.name] = ("bool", box)
+            return box
         # colour: a swatch button that opens the colour picker
         btn = QPushButton()
         btn.setToolTip("Choose a colour")
@@ -511,8 +536,12 @@ class SidePanel(QWidget):
             elif kind == "font":
                 i = widget.findText(str(value))
                 widget.setCurrentIndex(i if i >= 0 else 0)
-            elif kind == "size":
+            elif kind in ("size", "int"):
                 widget.setValue(int(round(float(value))))
+            elif kind == "choice":
+                i = widget.findData(value)
+                if i >= 0:
+                    widget.setCurrentIndex(i)
             elif kind == "bool":
                 widget.setChecked(bool(value))
             else:

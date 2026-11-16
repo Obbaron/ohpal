@@ -33,7 +33,7 @@ ctl = lambda name: panel._el_controls[name][1]
 tab = w._open_plot(PlotSpec(kind="2D Scatter", x=X, y=Y, color=MP), ("all", None, None)); drain()
 assert tab.element_values("title")["font"] == "Open Sans" and tab.element_values("title")["size"] == 13
 assert tab._title_label._text_visual.face == "OpenSans"
-assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar"}
+assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "data_points"}
 assert tab._xaxis.axis.axis_label == X and tab._yaxis.axis.axis_label == Y
 
 # --- single click selects only; double-click opens the editor -----------------
@@ -42,7 +42,7 @@ assert tab.selected_element() == "title" and panel.element_key() is None, "a sin
 tab.elementActivated.emit("title")
 assert panel.isVisible() and panel.element_key() == "title" and panel.el_heading.text() == "Title"
 assert panel._plot_stack.currentIndex() == 1 and ctl("text").text() == tab.title
-assert set(panel._el_controls) == {"text", "font", "size", "bold", "italic", "color"}
+assert set(panel._el_controls) == {"text", "font", "size", "bold", "italic", "color", "align"}
 print("double-click opens the editor:", sorted(panel._el_controls))
 
 # --- live edits ----------------------------------------------------------------
@@ -133,7 +133,7 @@ print("pop-out and dock-in keep every element's styling; the floating window has
 
 # --- 3D + bars expose their own elements -------------------------------------------
 t3 = w._open_plot(PlotSpec(kind="3D Scatter", x=X, y=Y, z="Z", color=MP), ("all", None, None)); drain()
-assert set(t3._el_style) == {"title", "xaxis3d", "yaxis3d", "zaxis3d", "cbar"}
+assert set(t3._el_style) == {"title", "xaxis3d", "yaxis3d", "zaxis3d", "cbar", "legend", "data_points"}
 assert len(t3._axis_labels) == 3 and t3._axis_labels[2].text == "Z" and t3._axis_labels[0].bold
 t3.set_element("zaxis3d", "text", "Height"); t3.set_element("zaxis3d", "size", 16)
 assert t3._axis_labels[2].text == "Height" and t3._axis_labels[2].font_size == 16

@@ -66,13 +66,13 @@ _AXIS_TICK = "#8a94a6"
 _AXIS_TEXT = "#5a6472"
 _TITLE_TEXT = "#2a2f3a"   # plot title: darker than the axis text
 # Distribution plots.
-_CURVE_BLUE = (0.16, 0.40, 0.78, 1.0)   # the single k-distance curve
+# (The curves' and violins' colours and widths are the data element's,
+# see plot_elements.)
 _KDE_FILL_ALPHA = 0.18   # under a KDE curve; fainter as curves multiply
-_REF_RED = (0.80, 0.20, 0.20, 1.0)      # the k-distance curve's eps guide
-_VIOLIN_ALPHA = 0.85
 _VIOLIN_EDGE = (0.16, 0.18, 0.22, 0.55)
 _VIOLIN_INNER = (0.16, 0.18, 0.22, 0.85)  # whisker + quartile box
-_LEGEND_MAX = 24  # group names labelled on a KDE legend (more: every 2nd...)
+_LEGEND_PAD = 8          # px inside the legend box's frame
+_LEGEND_INSET = 10       # px from the plot's edge, for a legend inside it
 # Categorical scatter colours past this many come from the colormap (so the
 # side panel's Map applies to them); fewer use the fixed palette.
 _PALETTE_MAX = 8
@@ -91,6 +91,8 @@ _AXIS3D_KEYS = ("xaxis3d", "yaxis3d", "zaxis3d")
 _TITLE_H, _XAXIS_H, _YAXIS_W = 28, 42, 62      # px, at the default font sizes
 _AXIS_LABEL_MARGIN = 35                         # VisPy's default, px
 _CBAR_LABEL_W, _CBAR_W = 18, 74
+_CBAR_BOTTOM_PX = 14      # an automatic bar's thickness below the plot
+_TITLE_INSET = 4         # px from the strip's end, for a left / right title
 _CLICK_SLOP_PX = 4        # press→release travel that still counts as a click
 
 
@@ -331,8 +333,11 @@ class PlotTab(QWidget):
         self._view = None
         self._scatter = None
         self._grid = None
-        self._cbar_col = 2
-        self._cbar_label_col = None  # thin column holding the colourbar's name
+        # Fixed grid cells that hold the colour bar, its name and the legend
+        # (see _build_canvas). Empty, they are zero-sized: the plot gets the
+        # room.
+        self._slots: dict = {}
+        self._cbar_orient = None     # "right" / "bottom": where the bar sits
         self._xaxis = self._yaxis = None
         self._gridlines = None  # 2D screen-aligned gridlines
         self._floor = None      # 3D grid on the X-Y plane
@@ -352,7 +357,16 @@ class PlotTab(QWidget):
         # translucent fill, plus a dashed guide line. Violins: one mesh of
         # shapes, their outlines, and the quartile boxes / medians. The data
         # behind them is kept, so recolouring doesn't recompute densities.
-        self._cbar_is_legend = False  # the colour-bar column is a group legend
+        # A legend of groups (KDE curves, a scatter coloured by text): a framed
+        # box of swatches and names, beside the plot or inside a corner.
+        self._legend = None          # its VisPy widget
+        self._legend_parts: list = []
+        self._legend_items = None    # (names, colours) shown, or None
+        self._legend_auto = ""       # its automatic title (the group column)
+        self._legend_size = (0.0, 0.0)
+        self._legend_room = 0.0      # the plot height it was laid out for
+        self._tick_sig: dict = {}    # each axis's tick settings, last applied
+        self._grid_rgba = None       # the gridlines' colour, last applied
         self._curve_data = None
         self._curve_lines: list = []
         self._curve_fill = None
@@ -374,6 +388,9 @@ class PlotTab(QWidget):
         self._contour_data = None
         self._cbar_extra: list = []     # labels between the colour bar's ends
         self._cbar_extra_at: list = []  # their positions along it, 0..1
+        self._cbar_spec = None          # (lo, hi, levels) the bar shows
+        self._bar_w = 0.8               # drawn bar width, data units
+        self._bar_outline = None
 
         # Hover tooltip: the rows behind the drawn points + a floating label
         # near the cursor. 2D picks via a data-space KDTree; 3D projects the
@@ -400,6 +417,8 @@ class PlotTab(QWidget):
         # new plots, then this plot's edits), the selection and its outline.
         self._el_style: dict[str, dict] = {
             k: pe.default_style(k, spec.kind) for k in pe.keys_for(spec)}
+        self._data_key = pe.data_key(spec)
+        self._take_bridged(self._el_style[self._data_key])
         self._selected: str | None = None
         self._hl: _Highlight | None = None
         self._press_pos = None       # left-button press, to tell click from drag
@@ -493,23 +512,24 @@ class PlotTab(QWidget):
             self._title_label = scene.Label(
                 self.title, color=_TITLE_TEXT, font_size=13)
             self._title_label.height_max = _TITLE_H
-            grid.add_widget(self._title_label, row=0,
-                            col=0 if self.spec.is_3d else 1)
+            # Aligned to the plot's left / centre / right (Label centres).
+            self._title_label._set_pos = self._place_title
+            vcol = 0 if self.spec.is_3d else 1
+            grid.add_widget(self._title_label, row=0, col=vcol)
             self._title_label.visible = self._show_title
             if self.spec.is_3d:
                 # No left axis column in 3D — an empty grid column would take an
-                # equal stretch and shove the view into the right half. View at
-                # col 0, colourbar at col 1.
+                # equal stretch and shove the view into the right half.
                 view = grid.add_view(row=1, col=0)
                 view.camera = scene.cameras.TurntableCamera(fov=45)
-                self._cbar_col = 1
+                below = 2
             else:
                 view = grid.add_view(row=1, col=1)
                 # aspect=1 → one X unit == one Y unit, so parts aren't skewed.
                 # (Chart plots free it when they first render.)
                 view.camera = scene.cameras.PanZoomCamera(
                     aspect=1 if self._equal_axes else None)
-                self._cbar_col = 2
+                below = 3
                 self._yaxis = scene.AxisWidget(
                     orientation="left", axis_label=self.spec.y,
                     axis_font_size=9, tick_label_margin=12,
@@ -531,20 +551,33 @@ class PlotTab(QWidget):
                 # Match the axis strips to the canvas so there's no white frame.
                 self._xaxis.bgcolor = _BG
                 self._yaxis.bgcolor = _BG
+                for key, widget in (("xaxis", self._xaxis),
+                                    ("yaxis", self._yaxis)):
+                    self._own_ticks(key, widget.axis)
                 self._gridlines = scene.visuals.GridLines(
                     color=(0, 0, 0, 0.12), parent=view.scene
                 )
+                # Blended over the background (VisPy adds them on, which
+                # leaves a dark grid invisible).
+                self._gridlines.set_gl_state("translucent", cull_face=False,
+                                             depth_test=False)
+                self._gridlines.order = -10  # under the data
                 self._gridlines.visible = self._show_grid
-            # The colourbar's name lives in its own thin column just left of the
-            # bar (vertical text), so it sits in whitespace and never overlaps
-            # the bar. The bar itself then moves one column to the right.
-            self._cbar_label_col = self._cbar_col
-            self._cbar_col += 1
-            self._cbar_label = scene.Label(
-                "", rotation=-90, color=_AXIS_TEXT, font_size=9)
-            self._cbar_label.width_max = _CBAR_LABEL_W
-            grid.add_widget(self._cbar_label, row=1, col=self._cbar_label_col)
-            self._cbar_label.visible = False
+            # Cells for the colour bar and the legend, always in the grid (an
+            # empty column or row would take an equal share of the room) and
+            # zero-sized until something is in them. Right of the plot: a
+            # gap, the bar's name (vertical), then the bar or the legend.
+            # Below it: a gap, the bar, its name.
+            for name, row, col in (("gap_r", 1, vcol + 1), ("label_r", 1, vcol + 2),
+                                   ("side", 1, vcol + 3), ("gap_b", below, vcol),
+                                   ("bar_b", below + 1, vcol),
+                                   ("label_b", below + 2, vcol)):
+                slot = scene.Widget()
+                self._slots[name] = slot
+                self._size_slot(name, 0)
+                grid.add_widget(slot, row=row, col=col)
+            self._cbar_label = None
+            view.events.resize.connect(self._on_view_resize)
             self._scatter = scene.visuals.Markers()
             view.add(self._scatter)
             self._canvas, self._view = canvas, view
@@ -657,7 +690,10 @@ class PlotTab(QWidget):
         # raw signal column — _auto_text labels it from what the bars are.
 
         n = data.n
-        w = data.width or 0.8
+        # Bar width: a share of each bar's slot (a category, or a bin).
+        slot = 1.0 if data.categorical else (data.width or 1.0)
+        w = slot * float(self._ds("bar_width")) / 100.0
+        self._bar_w = w
         heights = np.where(np.isfinite(data.heights), data.heights, 0.0)
         verts = np.empty((4 * n, 3), "float32")
         faces = np.empty((2 * n, 3), "uint32")
@@ -676,6 +712,7 @@ class PlotTab(QWidget):
                 parent=self._view.scene)
         else:
             self._bars.set_data(vertices=verts, faces=faces, vertex_colors=vcol)
+        self._set_bar_outline(verts, n)
 
         hvals = data.heights[np.isfinite(data.heights)]
         ymin = min(0.0, float(hvals.min()) if hvals.size else 0.0)
@@ -705,6 +742,28 @@ class PlotTab(QWidget):
         self._rendered_once = True
         if self._view is not None and first:
             QTimer.singleShot(0, self.reset_view)
+
+    def _set_bar_outline(self, verts, n: int) -> None:
+        """A line round each bar, when asked for."""
+        from vispy import scene
+
+        if not self._ds("outline") or n == 0:
+            if self._bar_outline is not None:
+                self._bar_outline.parent = None
+            return
+        corners = verts[:, :2].reshape(n, 4, 2)
+        segs = np.stack([corners, np.roll(corners, -1, axis=1)], axis=2)
+        pos = segs.reshape(-1, 2).astype("float32")
+        color = self._ds("outline_color")
+        if self._bar_outline is None:
+            self._bar_outline = scene.visuals.Line(
+                pos=pos, connect="segments", color=color, width=1.0,
+                parent=self._view.scene)
+        else:
+            self._bar_outline.set_data(pos=pos, color=color)
+            if self._bar_outline.parent is None:
+                self._bar_outline.parent = self._view.scene
+        self._bar_outline.order = 1
 
     def _draw_category_axis(self, centers, labels, ymin, ymax, xlo, xhi) -> float:
         """A category x axis: a rule just below ``ymin`` and the category
@@ -792,7 +851,8 @@ class PlotTab(QWidget):
         if self.spec.is_kde:
             data.colors = plotdata._sample_colors(data.n, self.cmap)
         else:
-            data.colors = np.array([_CURVE_BLUE], "float32")
+            data.colors = np.array([QColor(self._ds("line_color")).getRgbF()],
+                                   "float32")
         self._curve_data = data
 
         # Filled areas under the KDE curves (one translucent mesh), then lines.
@@ -816,7 +876,9 @@ class PlotTab(QWidget):
                 faces.append(np.column_stack([j, j + 1, j + 3]))
                 faces.append(np.column_stack([j, j + 3, j + 2]))
                 fill = np.array(data.colors[c], "float32")
-                fill[3] = min(_KDE_FILL_ALPHA, max(0.03, 0.5 / data.n))
+                pct = float(self._ds("fill_opacity") or 0)
+                fill[3] = (pct / 100.0 if pct else
+                           min(_KDE_FILL_ALPHA, max(0.03, 0.5 / data.n)))
                 cols.append(np.tile(fill, (2 * m, 1)))
             V, F, C = np.vstack(verts), np.vstack(faces), np.vstack(cols)
             if self._curve_fill is None:
@@ -833,7 +895,8 @@ class PlotTab(QWidget):
         for c, ys in enumerate(data.ys):
             line = scene.visuals.Line(
                 pos=np.column_stack([x, np.asarray(ys, "float32")]),
-                color=tuple(float(v) for v in data.colors[c]), width=2.0,
+                color=tuple(float(v) for v in data.colors[c]),
+                width=float(self._ds("line_width")),
                 method="agg", parent=self._view.scene)
             line.order = 1
             self._curve_lines.append(line)
@@ -849,8 +912,7 @@ class PlotTab(QWidget):
         # KDE: a legend of the groups in the colour-bar column. One curve (or
         # the k-distance curve) needs none.
         if self.spec.is_kde and data.group_name and data.n > 1:
-            self._set_colorbar(0.0, 1.0, data.group_name,
-                               categories=(data.names, data.colors))
+            self._set_legend(data.group_name, data.names, data.colors)
         else:
             self._hide_colorbar()
         self._full_range = None
@@ -873,16 +935,17 @@ class PlotTab(QWidget):
                     item.parent = None
             return
         y = float(data.reference)
+        guide = QColor(self._ds("guide_color")).getRgbF()
         n = 60  # dashes: consecutive point pairs are drawn, gaps between
         pos = np.empty((2 * n, 2), "float32")
         pos[:, 0] = np.linspace(xlo, xhi, 2 * n + 1)[:2 * n]
         pos[:, 1] = y
         if self._ref_line is None:
             self._ref_line = scene.visuals.Line(
-                pos=pos, color=_REF_RED, width=1.0, connect="segments",
+                pos=pos, color=guide, width=1.0, connect="segments",
                 parent=self._view.scene)
         else:
-            self._ref_line.set_data(pos=pos)
+            self._ref_line.set_data(pos=pos, color=guide)
             if self._ref_line.parent is None:
                 self._ref_line.parent = self._view.scene
         self._ref_line.order = 2
@@ -890,10 +953,11 @@ class PlotTab(QWidget):
         text = f"eps = {_fmt(y)} mm"
         if self._ref_label is None:
             self._ref_label = scene.visuals.Text(
-                text, pos=(xhi, y + lift), color=_REF_RED, anchor_x="right",
+                text, pos=(xhi, y + lift), color=guide, anchor_x="right",
                 anchor_y="top", font_size=9, parent=self._view.scene)
         else:
             self._ref_label.text = text
+            self._ref_label.color = guide
             self._ref_label.pos = (xhi, y + lift)
             if self._ref_label.parent is None:
                 self._ref_label.parent = self._view.scene
@@ -940,7 +1004,7 @@ class PlotTab(QWidget):
             faces.append(np.column_stack([j, j + 1, j + 3]))
             faces.append(np.column_stack([j, j + 3, j + 2]))
             fill = np.array(colors[i], "float32")
-            fill[3] = _VIOLIN_ALPHA
+            fill[3] = float(self._ds("fill_opacity")) / 100.0
             cols.append(np.tile(fill, (2 * m, 1)))
             # outline: up the right side, down the left, closed
             ring = np.vstack([np.column_stack([c + half, ys]),
@@ -961,12 +1025,14 @@ class PlotTab(QWidget):
                 self._violin_mesh.parent = self._view.scene
         self._violin_mesh.order = 0
         E, L = np.vstack(edges), np.vstack(links).astype("uint32")
+        edge = QColor(self._ds("outline_color"))
+        edge = (edge.redF(), edge.greenF(), edge.blueF(), _VIOLIN_EDGE[3])
         if self._violin_edges is None:
             self._violin_edges = scene.visuals.Line(
-                pos=E, connect=L, color=_VIOLIN_EDGE, width=1.0,
+                pos=E, connect=L, color=edge, width=1.0,
                 parent=self._view.scene)
         else:
-            self._violin_edges.set_data(pos=E, connect=L)
+            self._violin_edges.set_data(pos=E, connect=L, color=edge)
             if self._violin_edges.parent is None:
                 self._violin_edges.parent = self._view.scene
         self._violin_edges.order = 1
@@ -1166,13 +1232,23 @@ class PlotTab(QWidget):
         inner = [float(v) for v in levels[1:-1]]
         self._contour_lines_ok = bool(inner) and bool(np.isfinite(field).all())
         if self._contour_lines_ok and self.spec.show_lines:
+            lc = QColor(self._ds("line_color"))
+            lev = (lc.redF(), lc.greenF(), lc.blueF(),
+                   float(self._ds("line_opacity")) / 100.0)
+            width = float(self._ds("line_width"))
+            if (self._contour_lines is not None
+                    and float(self._contour_lines.width) != width):
+                self._contour_lines.parent = None  # a new width: made again
+                self._contour_lines = None
             if self._contour_lines is None:
                 self._contour_lines = scene.visuals.Isocurve(
-                    field, levels=inner, color_lev=(0.0, 0.0, 0.0, 0.16),
-                    width=1, antialias=True, parent=self._view.scene)
+                    field, levels=inner, color_lev=lev,
+                    width=width, antialias=True,
+                    parent=self._view.scene)
                 self._contour_lines.set_gl_state("translucent", depth_test=False)
             else:
                 self._contour_lines.levels = inner
+                self._contour_lines.color = lev
                 self._contour_lines.set_data(field)
                 if self._contour_lines.parent is None:
                     self._contour_lines.parent = self._view.scene
@@ -1193,7 +1269,8 @@ class PlotTab(QWidget):
                 self._contour_pts.parent = self._view.scene
             self._contour_pts.set_data(
                 data.points, face_color=(1, 1, 1, 0.9),
-                edge_color=(0, 0, 0, 0.7), edge_width=1, size=6, symbol="disc")
+                edge_color=(0, 0, 0, 0.7), edge_width=1,
+                size=float(self._ds("point_size")), symbol="disc")
             self._contour_pts.antialias = 1
             self._contour_pts.order = 2   # on top of the bands and lines
             self._contour_pts.visible = True
@@ -1222,7 +1299,7 @@ class PlotTab(QWidget):
         try:
             dx, dy = self._bars.get_transform("canvas", "visual").map(event.pos)[:2]
             data = self._bar_data
-            w = data.width or 0.8
+            w = self._bar_w
             i = int(np.argmin(np.abs(data.centers - dx)))
             if not (0 <= i < data.n) or abs(dx - float(data.centers[i])) > w / 2:
                 self._hide_tooltip()
@@ -1237,8 +1314,9 @@ class PlotTab(QWidget):
             if data.labels is not None:          # bar: show the category
                 head = f"{data.x_name}: {data.labels[i]}"
             else:                                # histogram: show the bin range
-                head = (f"{data.x_name}: {_fmt(data.centers[i] - w / 2)}"
-                        f"–{_fmt(data.centers[i] + w / 2)}")
+                bw = data.width or w
+                head = (f"{data.x_name}: {_fmt(data.centers[i] - bw / 2)}"
+                        f"–{_fmt(data.centers[i] + bw / 2)}")
             text = f"{head}\n{data.value_name}: {_fmt(h)}"
             if self._tooltip is None:
                 self._tooltip = PlotTooltip(self._canvas.native)
@@ -1322,127 +1400,160 @@ class PlotTab(QWidget):
             _, lo, hi, name = leg
             self._set_colorbar(lo, hi, name)
         elif isinstance(leg, list) and leg:
-            # Coloured by a text column: a legend of its categories (swatches
-            # in the colour-bar column, as for a KDE's groups).
+            # Coloured by a text column: a legend box of its categories.
             names = [str(n) for n, _ in leg]
             colors = np.array([c for _, c in leg], "float32")
             self._legend_cmap = len(names) > _PALETTE_MAX
-            self._set_colorbar(0.0, 1.0, self.spec.color or "",
-                               categories=(names, colors))
+            self._set_legend(self.spec.color or "", names, colors)
         else:
             self._hide_colorbar()
 
     def _hide_colorbar(self) -> None:
         """No colour bar or legend on this plot (single colour, one curve)."""
         self._has_legend = False
-        self._cbar_is_legend = False
-        if self._cbar is not None:
-            self._cbar.visible = False
-        if self._cbar_label is not None:
-            self._cbar_label.visible = False
-        self._set_cbar_ticks(None, 0.0, 1.0)
+        self._legend_items = None
+        self._cbar_spec = None
+        self._set_cbar_ticks()
+        self._apply_visibility()
 
-    def _set_colorbar(self, lo, hi, name, levels=None, categories=None) -> None:
+    # -- colour bar ----------------------------------------------------
+    def _set_colorbar(self, lo, hi, name, levels=None) -> None:
         """Show the colour bar for [lo, hi]. With ``levels`` (a contour plot's
         band edges) the bar is drawn in the same discrete bands and labelled
-        at round levels along its length, not only at its ends. With
-        ``categories`` (names, colours) it is a legend instead: one swatch
-        per group, first at the top, each labelled with its name."""
-        from vispy import scene
+        at round levels along its length, not only at its ends."""
         from vispy.color import Colormap
 
-        self._cbar_is_legend = categories is not None
         self._has_legend = True
-        if categories is not None:
-            levels = None
-            swatches = np.asarray(categories[1], "float32")[::-1]
-            if len(swatches) == 1:
-                swatches = np.vstack([swatches, swatches])
-            cm = Colormap(swatches,
-                          controls=np.linspace(0.0, 1.0, len(swatches) + 1),
-                          interpolation="zero")
-        elif levels is not None and len(levels) > 2:
+        self._legend_items = None
+        if levels is not None and len(levels) > 2:
             colors = plotdata.band_colors(np.asarray(levels), self.cmap)
             cm = Colormap(colors, controls=np.linspace(0.0, 1.0, len(colors) + 1),
                           interpolation="zero")
         else:
             levels = None
             cm = Colormap(colormap_stops(self.cmap))
-        if self._cbar is None:
-            # No built-in label: the name is a separate vertical Label in the
-            # column to the left (see _build_canvas). The bar carries only the
-            # clim numbers at its ends, so it needs much less width.
-            self._cbar = scene.ColorBarWidget(
-                cmap=cm, orientation="left", label="",
-                clim=(_sig(lo), _sig(hi)), border_width=1,
-                border_color="#888888",
-            )
-            self._cbar.width_max = _CBAR_W  # bar + end numbers (name: own col)
-            self._cbar.bgcolor = _BG
-            self._grid.add_widget(self._cbar, row=1, col=self._cbar_col)
-        else:
-            self._cbar.cmap = cm
-            self._cbar.clim = (_sig(lo), _sig(hi))
-        if levels is not None:
-            # The bar's own two labels are just text: write them like the
-            # other levels (the top one only when it falls on the stride).
-            marks = dict(plotdata.level_labels(np.asarray(levels)))
-            self._cbar.clim = (marks.get(0, ""), marks.get(len(levels) - 1, ""))
-        elif categories is not None:
-            self._cbar.clim = ("", "")  # names go beside the swatches instead
         self._cbar_auto = str(name)
-        if self._cbar_label is not None:
-            self._cbar_label.visible = self._show_legend
-        self._cbar.visible = self._show_legend
-        self._set_cbar_ticks(levels, lo, hi)
-        if categories is not None:
-            self._set_cbar_names(list(categories[0]))
+        self._cbar_spec = (float(lo), float(hi), levels)
+        self._cbar_cm = cm
+        self._ensure_cbar()
+        self._cbar.cmap = cm
+        self._set_cbar_ticks()
+        self._apply_visibility()
         self._apply_element("cbar")  # label text + fonts (a new bar included)
 
-    def _set_cbar_ticks(self, levels, lo, hi) -> None:
-        """Labels along a banded colour bar. VisPy's bar only labels its two
-        ends; these extra labels sit between them at round levels."""
+    def _ensure_cbar(self) -> None:
+        """The colour bar widget (and its name) in the cells for the chosen
+        position; made again when the position changes (VisPy fixes a bar's
+        orientation when it is made)."""
+        from vispy import scene
+
+        orient = self._el_style["cbar"].get("orient", "right")
+        if self._cbar is not None and self._cbar_orient == orient:
+            return
+        old_bar, old_label = self._cbar, self._cbar_label
+        for widget, slot in ((old_bar, "side" if self._cbar_orient == "right"
+                              else "bar_b"),
+                             (old_label, "label_r" if self._cbar_orient == "right"
+                              else "label_b")):
+            if widget is not None and widget in self._slots[slot]._widgets:
+                self._slots[slot].remove_widget(widget)
+        for t in self._cbar_extra:
+            t.parent = None
+        self._cbar_extra, self._cbar_extra_at = [], []
+        right = orient == "right"
+        # No built-in label: the name is a separate Label in its own cell, so
+        # it sits in whitespace and never overlaps the bar or its numbers.
+        bar = scene.ColorBarWidget(
+            cmap=getattr(self, "_cbar_cm", "viridis"),
+            orientation="left" if right else "bottom", label="", clim=("", ""),
+            border_width=1, border_color="#888888")
+        bar.bgcolor = _BG
+        base = bar._calc_size
+
+        def calc_size(bar=bar, base=base):
+            major, minor = base()
+            px = float(self._el_style["cbar"].get("thickness") or 0)
+            if px > 0:  # a set thickness, in pixels
+                minor = px
+            elif not right:  # automatic, across a wide plot: a slim bar
+                minor = _CBAR_BOTTOM_PX
+            # A collapsed cell (bar hidden) must still give VisPy a size.
+            major = max(float(major), 4.0)
+            return (major, min(max(float(minor), 1.0), major))
+
+        bar._calc_size = calc_size
+        label = scene.Label("", rotation=-90 if right else 0,
+                            color=_AXIS_TEXT, font_size=9)
+        self._slots["side" if right else "bar_b"].add_widget(bar)
+        self._slots["label_r" if right else "label_b"].add_widget(label)
+        self._cbar, self._cbar_label, self._cbar_orient = bar, label, orient
+
+    def _cbar_number(self, value: float) -> str:
+        st = self._el_style["cbar"]
+        return pe.format_number(value, st.get("num_format", "auto"),
+                                st.get("num_decimals", 2))
+
+    def _set_cbar_ticks(self) -> None:
+        """The numbers along the bar. VisPy's bar labels only its two ends;
+        the labels between them (a banded bar's round levels, or the ticks
+        asked for in the editor) are extra text placed along it."""
         from vispy import scene
 
         for t in self._cbar_extra:
             t.parent = None
         self._cbar_extra, self._cbar_extra_at = [], []
-        if levels is None or self._cbar is None or hi <= lo:
+        if self._cbar is None or self._cbar_spec is None:
             return
-        last = len(levels) - 1
-        for index, text in plotdata.level_labels(np.asarray(levels)):
-            if index in (0, last):
-                continue  # the bar's own end labels
+        lo, hi, levels = self._cbar_spec
+        st = self._el_style["cbar"]
+        auto = st.get("num_format", "auto") == "auto"
+        marks = []  # (fraction along the bar, text) between the ends
+        if levels is not None:
+            last = len(levels) - 1
+            texts = dict(plotdata.level_labels(np.asarray(levels)))
+            if not auto:
+                texts = {i: self._cbar_number(float(levels[i])) for i in texts}
+            self._cbar.clim = (texts.get(0, ""), texts.get(last, ""))
+            if hi > lo:
+                marks = [((float(levels[i]) - lo) / (hi - lo), t)
+                         for i, t in texts.items() if i not in (0, last)]
+        else:
+            self._cbar.clim = ((_sig(lo), _sig(hi)) if auto else
+                               (self._cbar_number(lo), self._cbar_number(hi)))
+            n = int(st.get("num_ticks") or 0)
+            if n and hi > lo:
+                for v in pe.nice_ticks(lo, hi, max(2, n)):
+                    frac = (v - lo) / (hi - lo)
+                    if 0.08 < frac < 0.92:  # clear of the end numbers
+                        marks.append((frac, self._cbar_number(v)))
+        for frac, text in marks:
             label = scene.visuals.Text(
                 text, parent=self._cbar, color="black", font_size=12)
             self._cbar_extra.append(label)
-            self._cbar_extra_at.append(
-                (float(levels[index]) - lo) / (hi - lo))
-        self._place_cbar_ticks()
-
-    def _set_cbar_names(self, names: list) -> None:
-        """A legend's labels: each group's name beside its swatch (every 2nd,
-        3rd... when there are too many to read)."""
-        from vispy import scene
-
-        n = len(names)
-        every = max(1, int(np.ceil(n / _LEGEND_MAX)))
-        for i, name in enumerate(names):
-            if i % every:
-                continue
-            label = scene.visuals.Text(
-                str(name), parent=self._cbar, color="black", font_size=12)
-            self._cbar_extra.append(label)
-            self._cbar_extra_at.append((n - 1 - i + 0.5) / n)
+            self._cbar_extra_at.append(frac)
         self._place_cbar_ticks()
 
     def _place_cbar_ticks(self) -> None:
-        """Put the extra labels between the bar's own end labels (whose
-        positions VisPy recomputes whenever the bar is laid out)."""
-        if not self._cbar_extra or self._cbar is None:
+        """Put the end numbers (below a horizontal bar, where VisPy would put
+        them on its ends) and the extra labels between them (VisPy places
+        its own labels again whenever the bar is laid out)."""
+        if self._cbar is None:
             return
         try:
             low, high = self._cbar.ticks
+            if self._cbar_orient == "bottom":
+                cb = self._cbar._colorbar
+                cx, cy = (float(v) for v in np.asarray(cb.pos).reshape(-1)[:2])
+                hw, hh = (float(v) for v in cb._halfdim)
+                for tick, x in ((low, cx - hw), (high, cx + hw)):
+                    want = (x, cy + hh + 3.0)
+                    old = np.asarray(tick.pos, dtype="float64").reshape(-1)[:2]
+                    if not np.allclose(old, want, atol=0.25):
+                        tick.pos = want
+                    if tuple(tick.anchors) != ("center", "bottom"):
+                        tick.anchors = ("center", "bottom")
+            if not self._cbar_extra:
+                return
             p0 = np.asarray(low.pos, dtype="float64").reshape(-1)[:2]
             p1 = np.asarray(high.pos, dtype="float64").reshape(-1)[:2]
             for label, frac in zip(self._cbar_extra, self._cbar_extra_at):
@@ -1454,6 +1565,169 @@ class PlotTab(QWidget):
                 label.visible = bool(self._cbar.visible)
         except Exception:  # noqa: BLE001 - labels are cosmetic
             pass
+
+    # -- legend box ----------------------------------------------------
+    def _set_legend(self, name: str, names: list, colors) -> None:
+        """A legend of groups: one swatch and name per group, in a box."""
+        self._has_legend = True
+        self._cbar_spec = None
+        self._legend_auto = str(name)
+        self._legend_items = (list(names), np.asarray(colors, "float32"))
+        self._apply_visibility()
+        self._apply_element("legend")
+
+    def _legend_place(self) -> str:
+        return self._el_style.get("legend", {}).get("place", "outside")
+
+    def _build_legend(self) -> None:
+        """Lay the legend out: title, then the rows, as many as fit beside
+        the plot (the rest are counted on a last row)."""
+        from vispy import scene
+
+        st = self._el_style.get("legend")
+        if st is None or self._legend_items is None or self._view is None:
+            return
+        place = self._legend_place()
+        host = self._slots["side"] if place == "outside" else self._view
+        if self._legend is None or self._legend.parent is not host:
+            if self._legend is not None:
+                self._legend.parent = None
+            self._legend = scene.Widget(parent=host)
+            self._legend_parts = []
+        for part in self._legend_parts:
+            part.parent = None
+        self._legend_parts = []
+        names, colors = self._legend_items
+
+        def metrics(prefix):
+            font = QFont(st.get(prefix + "font") or pe.DEFAULT_FONT)
+            font.setPixelSize(max(1, int(round(self._px(st[prefix + "size"])))))
+            font.setBold(bool(st.get(prefix + "bold", False)))
+            font.setItalic(bool(st.get(prefix + "italic", False)))
+            return QFontMetricsF(font)
+
+        title = st.get("text") or self._legend_auto
+        fm_t, fm_n = metrics(""), metrics("name_")
+        row_h = max(fm_n.height() * 1.35, 10.0)
+        swatch = max(6.0, fm_n.height() * 0.7)
+        title_h = fm_t.height() * 1.4 if title else 0.0
+        try:
+            self._legend_room = float(self._view.size[1])
+        except Exception:  # noqa: BLE001
+            self._legend_room = 400.0
+        room = self._legend_room - (
+            0 if place == "outside" else 2 * _LEGEND_INSET)
+        fit = max(1, int((room - 2 * _LEGEND_PAD - title_h) // row_h))
+        rows = list(names)
+        if len(rows) > fit:  # the rest, counted
+            rows = rows[:max(0, fit - 1)] + [f"+ {len(names) - fit + 1} more"]
+        width = fm_t.horizontalAdvance(title) if title else 0.0
+        for text in rows:
+            width = max(width, swatch + 6 + fm_n.horizontalAdvance(text))
+        width += 2 * _LEGEND_PAD
+        height = 2 * _LEGEND_PAD + title_h + row_h * len(rows)
+        self._legend_size = (float(np.ceil(width)), float(np.ceil(height)))
+        y = float(_LEGEND_PAD)
+        if title:
+            t = scene.visuals.Text(title, parent=self._legend, anchor_x="left",
+                                   anchor_y="center",
+                                   pos=(_LEGEND_PAD, y + title_h / 2))
+            _style_text(t, st)
+            self._legend_parts.append(t)
+            y += title_h
+        # Every row has a swatch except a last "+ n more".
+        shown = list(range(len(rows) if len(rows) == len(names)
+                           else len(rows) - 1))
+        if shown:
+            centres = np.array([[_LEGEND_PAD + swatch / 2, y + (i + 0.5) * row_h]
+                                for i in shown], "float32")
+            marks = scene.visuals.Markers(parent=self._legend)
+            marks.set_data(centres, face_color=colors[shown], size=swatch,
+                           symbol="square", edge_width=0)
+            marks.antialias = 0
+            self._legend_parts.append(marks)
+        name_st = {"font": st.get("name_font"), "size": st["name_size"],
+                   "color": st.get("name_color", _AXIS_TEXT)}
+        for i, text in enumerate(rows):
+            t = scene.visuals.Text(
+                text, parent=self._legend, anchor_x="left", anchor_y="center",
+                pos=(_LEGEND_PAD + swatch + 6, y + (i + 0.5) * row_h))
+            _style_text(t, name_st)
+            self._legend_parts.append(t)
+        frame = bool(st.get("frame", True))
+        self._legend.border_color = st.get("frame_color") if frame else None
+        self._legend.border_width = 1 if frame else 0
+        # Inside the plot it covers the data, so it gets a backing.
+        self._legend.bgcolor = ((1, 1, 1, 0.92) if place != "outside"
+                                else (1, 1, 1, 0.55) if frame else None)
+        self._legend.size = self._legend_size
+        self._place_legend()
+
+    def _on_view_resize(self, _event=None) -> None:
+        """The plot area changed size: re-fit the legend's rows to it."""
+        if self._legend is None or not self._legend.visible:
+            return
+        try:
+            room = float(self._view.size[1])
+        except Exception:  # noqa: BLE001
+            return
+        if abs(room - self._legend_room) > 16:
+            self._legend_room = room
+            QTimer.singleShot(0, lambda: self._apply_element("legend"))
+        else:
+            self._place_legend()
+
+    def _place_legend(self) -> None:
+        """Pin the legend to its corner (the plot's size may have changed)."""
+        if self._legend is None or self._view is None:
+            return
+        place = self._legend_place()
+        w, h = self._legend_size
+        if place == "outside":
+            pos = (6.0, 0.0)
+        else:
+            vw, vh = (float(v) for v in self._view.size)
+            x = _LEGEND_INSET if place.endswith("left") else vw - w - _LEGEND_INSET
+            y = _LEGEND_INSET if place.startswith("top") else vh - h - _LEGEND_INSET
+            pos = (max(0.0, x), max(0.0, y))
+        if tuple(round(float(v), 1) for v in self._legend.pos) != tuple(
+                round(v, 1) for v in pos):
+            self._legend.pos = pos
+
+    # -- what is shown, and the room it takes ---------------------------
+    def _size_slot(self, name: str, px: float) -> None:
+        slot = self._slots.get(name)
+        if slot is None:
+            return
+        px = max(0.0, float(px))
+        if name.endswith("_b"):
+            slot.height_min = slot.height_max = px
+        else:
+            slot.width_min = slot.width_max = px
+
+    def _layout_side(self) -> None:
+        """Size the colour bar's and legend's cells for what is shown. A
+        hidden bar or legend takes no room: the plot gets it."""
+        if not self._slots:
+            return
+        sizes = dict.fromkeys(self._slots, 0.0)
+        legend = self._show_legend and self._has_legend
+        st = self._el_style["cbar"]
+        if legend and self._legend_items is not None:
+            if self._legend_place() == "outside":
+                sizes["side"] = self._legend_size[0] + 6.0
+        elif legend and self._cbar is not None:
+            gap = float(st.get("gap", 0))
+            label = self._cbar_label_extent(st)
+            if self._cbar_orient == "bottom":
+                sizes.update(gap_b=gap + 4.0, bar_b=self._cbar_extent(st),
+                             label_b=label)
+            else:
+                sizes.update(gap_r=gap, label_r=label,
+                             side=self._cbar_extent(st))
+        for name, px in sizes.items():
+            self._size_slot(name, px)
+        self._relayout()
 
     def _apply_visibility(self) -> None:
         if self._yaxis is not None:
@@ -1476,10 +1750,20 @@ class PlotTab(QWidget):
         for t in self._bar_labels:
             t.visible = self._show_axes
         legend = self._show_legend and self._has_legend
+        box = legend and self._legend_items is not None
         if self._cbar is not None:
-            self._cbar.visible = legend
+            self._cbar.visible = legend and not box
         if self._cbar_label is not None:
-            self._cbar_label.visible = legend and self._cbar is not None
+            self._cbar_label.visible = legend and not box
+        if box:
+            self._build_legend()
+        if self._legend is not None:
+            self._legend.visible = box
+        # Hidden axes give their strips back to the plot.
+        for key in ("xaxis", "yaxis"):
+            if key in self._el_style:
+                self._apply_element(key)
+        self._layout_side()
         self._elements_changed()  # a hidden element can't stay outlined
         self._note_controls()
 
@@ -1652,6 +1936,24 @@ class PlotTab(QWidget):
         dpi = getattr(self._canvas, "dpi", None) or 96.0
         return float(pt) * float(dpi) / 72.0
 
+    def _place_title(self) -> None:
+        """Put the title text at the left, centre or right of its strip."""
+        label = self._title_label
+        if label is None:
+            return
+        tv, rect = label._text_visual, label.rect
+        align = self._el_style.get("title", {}).get("align", "center")
+        cy = rect.center[1]
+        if align == "left":
+            pos, anchors = (rect.left + _TITLE_INSET, cy), ("left", "center")
+        elif align == "right":
+            pos, anchors = (rect.right - _TITLE_INSET, cy), ("right", "center")
+        else:
+            pos, anchors = rect.center, ("center", "center")
+        if tuple(tv.anchors) != anchors:
+            tv.anchors = anchors
+        tv.pos = pos
+
     def _title_height(self) -> float:
         size = self._el_style["title"]["size"]
         return max(18.0, _TITLE_H + 1.5 * (self._px(size) - self._px(13)))
@@ -1674,6 +1976,8 @@ class PlotTab(QWidget):
             return str(self.spec.z or "")
         if key == "cbar":
             return self._cbar_auto
+        if key == "legend":
+            return self._legend_auto
         return ""
 
     def element_keys(self) -> list[str]:
@@ -1694,13 +1998,60 @@ class PlotTab(QWidget):
             return self._show_axes and bool(self._bar_labels)
         if key == "cbar":
             return self._cbar is not None and bool(self._cbar.visible)
+        if key == "legend":
+            return self._legend is not None and bool(self._legend.visible)
+        if key == self._data_key:
+            return self._data_present()
         return False
+
+    def _data_present(self) -> bool:
+        """The data is drawn (something to click and style)."""
+        k = self._data_key
+        if k == "data_points":
+            return (self._last_pos is not None and self._scatter is not None
+                    and self._scatter.parent is not None)
+        if k == "data_bars":
+            return self._bar_data is not None and self._bars is not None
+        if k in ("data_curves", "data_kdist"):
+            return self._curve_data is not None and bool(self._curve_lines)
+        if k == "data_violins":
+            return self._violin_data is not None
+        if k == "data_contour":
+            return self._contour_data is not None
+        return False
+
+    # The data's settings shared with the side panel's Points / Colour
+    # controls live on the plot; the element shows (and saves) them.
+    def _bridged(self) -> dict:
+        return {"symbol": self._symbol, "size": int(self._base_size),
+                "opacity": int(round(self._opacity * 100)), "cmap": self.cmap,
+                "scale": self.scale}
+
+    def _take_bridged(self, style: dict) -> None:
+        """A new plot starts from its data element's default."""
+        if "symbol" in style:
+            self._symbol = style["symbol"]
+        if "size" in style:
+            self._base_size = max(1, int(style["size"]))
+        if "opacity" in style:
+            self._opacity = max(0.0, min(1.0, style["opacity"] / 100.0))
+        if "cmap" in style:
+            self.cmap = style["cmap"]
+        if "scale" in style:
+            self.scale = style["scale"]
+
+    def _ds(self, name: str):
+        """One of the data element's settings."""
+        st = self._el_style.get(self._data_key, {})
+        return st.get(name, pe.ELEMENTS[self._data_key].defaults.get(name))
 
     def element_values(self, key: str) -> dict:
         """The element's current style, for the editor."""
         vals = dict(self._el_style.get(key, {}))
         if key == "title":
             vals["text"] = self.title
+        if key == self._data_key:
+            vals.update({k: v for k, v in self._bridged().items() if k in vals})
         return vals
 
     def element_auto_text(self, key: str) -> str:
@@ -1721,7 +2072,15 @@ class PlotTab(QWidget):
         if name not in style:
             return
         style[name] = value
-        self._apply_element(key)
+        if key in ("xaxis", "yaxis") and name.startswith("grid_"):
+            # One set of gridlines: either axis's editor sets it.
+            other = self._el_style.get("yaxis" if key == "xaxis" else "xaxis")
+            if other is not None:
+                other[name] = value
+        if key == self._data_key:
+            self._apply_data({name: value})
+        else:
+            self._apply_element(key)
         self._elements_changed()
 
     def reset_element(self, key: str, builtin: bool = False) -> None:
@@ -1735,13 +2094,38 @@ class PlotTab(QWidget):
         if "text" in fresh:
             fresh["text"] = self._el_style[key].get("text", "")
         self._el_style[key] = fresh
-        self._apply_element(key)
+        if key in ("xaxis", "yaxis"):
+            other = self._el_style.get("yaxis" if key == "xaxis" else "xaxis")
+            if other is not None:
+                other.update({k: v for k, v in fresh.items()
+                              if k.startswith("grid_")})
+        if key == self._data_key:
+            self._apply_data(fresh)
+        else:
+            self._apply_element(key)
         self._elements_changed()
 
     def save_element_default(self, key: str) -> None:
         """Make this element's styling the default for new plots."""
         if key in self._el_style:
-            pe.save_default(key, self._el_style[key])
+            pe.save_default(key, self.element_values(key), self.spec.kind)
+
+    def _apply_data(self, changes: dict) -> None:
+        """Apply data settings: the shared ones through the plot's own
+        setters (as the side panel does), the rest by drawing again."""
+        setters = {"symbol": self.set_marker_symbol,
+                   "size": self.set_marker_size, "opacity": self.set_opacity,
+                   "cmap": self.set_colormap, "scale": self.set_scale}
+        live = self._bridged()
+        redraw = False
+        for name, value in changes.items():
+            if name in pe.BRIDGED:
+                if name in setters and live.get(name) != value:
+                    setters[name](value)
+            else:
+                redraw = True
+        if redraw:
+            self._render()
 
     def _apply_elements(self) -> None:
         for key in self._el_style:
@@ -1758,6 +2142,7 @@ class PlotTab(QWidget):
                     _style_text(self._title_label._text_visual, st)
                     self._title_label.height_max = (
                         self._title_height() if self._show_title else 0)
+                    self._place_title()
             elif key in ("xaxis", "yaxis"):
                 self._apply_axis(key, st)
             elif key in _AXIS3D_KEYS:
@@ -1770,43 +2155,71 @@ class PlotTab(QWidget):
                 for label in self._bar_labels:
                     _style_text(label, st)
             elif key == "cbar":
-                if self._cbar_label is not None:
-                    self._cbar_label.text = st.get("text") or self._cbar_auto
-                    _style_text(self._cbar_label._text_visual, st)
-                    self._cbar_label.width_max = max(12.0, _CBAR_LABEL_W + 1.3 * (
-                        self._px(st["size"]) - self._px(9)))
-                if self._cbar is not None:
-                    for tick in [*self._cbar.ticks, *self._cbar_extra]:
-                        _style_text(tick, st, "num_")
-                    self._cbar.width_max = self._cbar_width(st)
+                self._apply_cbar(st)
+            elif key == "legend":
+                if (self._legend_items is not None and self._show_legend
+                        and self._has_legend):
+                    self._build_legend()
+                    self._layout_side()
             self._relayout()
         except Exception:  # noqa: BLE001 - styling is cosmetic; never break a plot
             pass
 
-    def _cbar_width(self, st: dict) -> float:
-        """How wide the colour bar's column must be for its numbers.
+    def _apply_cbar(self, st: dict) -> None:
+        if self._cbar_spec is not None and self._cbar is not None:
+            moved = st.get("orient", "right") != self._cbar_orient
+            self._ensure_cbar()          # a new position: a new bar
+            if moved:
+                self._cbar.cmap = self._cbar_cm
+                self._apply_visibility()
+            self._cbar._update_colorbar()  # a new thickness
+            self._set_cbar_ticks()       # number format / count
+        if self._cbar_label is not None:
+            self._cbar_label.text = st.get("text") or self._cbar_auto
+            _style_text(self._cbar_label._text_visual, st)
+        if self._cbar is not None:
+            for tick in [*self._cbar.ticks, *self._cbar_extra]:
+                _style_text(tick, st, "num_")
+        self._layout_side()
 
-        A plain bar has a number at each end only and keeps its usual width.
-        A banded (contour) bar is labelled all the way along, right beside
-        the bar's name, so its column is fitted to the text: the bar sits in
-        the middle with the numbers on one side, hence twice (the widest
-        number + a gap) plus the bar."""
-        usual = max(48.0, _CBAR_W + 2.6 * (
-            self._px(st["num_size"]) - self._px(12)))
-        if not self._cbar_extra:
-            return usual
-        labels = [str(t.text) for t in [*self._cbar.ticks, *self._cbar_extra]]
-        font = QFont(st.get("num_font") or pe.DEFAULT_FONT)
-        font.setPixelSize(max(1, int(round(self._px(st["num_size"])))))
-        fm = QFontMetricsF(font)
-        widest = max((fm.horizontalAdvance(t) for t in labels), default=0.0)
+    def _cbar_label_extent(self, st: dict) -> float:
+        """The depth of the colour bar's name cell (0 with no name)."""
+        if not (st.get("text") or self._cbar_auto):
+            return 0.0
+        return max(12.0, _CBAR_LABEL_W + 1.3 * (
+            self._px(st["size"]) - self._px(9)))
+
+    def _cbar_extent(self, st: dict) -> float:
+        """How much room the colour bar's cell needs across the bar: the
+        bar and its numbers (width beside the plot, height below it)."""
         try:
             bar = 2.0 * float(self._cbar._colorbar._halfdim[1])
         except Exception:  # noqa: BLE001
             bar = 22.0
-        bar = min(max(bar, 12.0), 40.0)
-        gap = 18.0 if self._cbar_is_legend else 12.0  # names: more air
-        return max(usual, 2.0 * (widest + gap) + bar)
+        if st.get("thickness"):
+            bar = float(st["thickness"])
+        elif self._cbar_orient == "bottom":
+            bar = _CBAR_BOTTOM_PX
+        bar = min(max(bar, 4.0), 48.0)
+        num_px = self._px(st["num_size"])
+        if self._cbar_orient == "bottom":
+            # The bar sits mid-cell with its numbers hanging below it: room
+            # for them on both sides keeps them clear of the name.
+            return max(24.0, bar + 2.0 * (num_px * 1.3 + 4.0))
+        usual = max(48.0, _CBAR_W + 2.6 * (num_px - self._px(12)))
+        if st.get("thickness") and not self._cbar_extra:
+            usual = max(usual, bar / 0.8 + 8.0)
+        labels = [str(t.text) for t in [*self._cbar.ticks, *self._cbar_extra]]
+        if not self._cbar_extra and st.get("num_format", "auto") == "auto":
+            return usual
+        # Labelled along its length (or wide numbers): fit to the text. The
+        # bar sits in the middle with the numbers on one side, hence twice
+        # (the widest number + a gap) plus the bar.
+        font = QFont(st.get("num_font") or pe.DEFAULT_FONT)
+        font.setPixelSize(max(1, int(round(num_px))))
+        fm = QFontMetricsF(font)
+        widest = max((fm.horizontalAdvance(t) for t in labels), default=0.0)
+        return max(usual, 2.0 * (widest + 12.0) + bar)
 
     def _relayout(self) -> None:
         """Have the canvas grid pick up changed strip sizes (it only re-reads
@@ -1823,15 +2236,66 @@ class PlotTab(QWidget):
         axis.axis_label = st.get("text") or self._auto_text(key)
         _style_text(axis._axis_label_vis, st)
         _style_text(axis._text, st, "tick_")
+        line = st.get("line_color", _AXIS_TICK) if st.get("line") else _AXIS_LINE
+        if str(axis.axis_color) != str(line):
+            axis.axis_color = line
+        if self._gridlines is not None:  # shared by both axes' editors
+            rgba = QColor(st.get("grid_color", "#000000"))
+            want = (rgba.redF(), rgba.greenF(), rgba.blueF(),
+                    float(st.get("grid_opacity", 12)) / 100.0)
+            if self._grid_rgba != want:
+                self._grid_rgba = want
+                self._gridlines._grid_color_fn["color"] = want
+                self._gridlines.update()
+        sig = (st.get("ticks"), st.get("format"), st.get("decimals"))
+        if self._tick_sig.get(key) != sig:  # new ticks: lay out again
+            self._tick_sig[key] = sig
+            axis._need_update = True
+            axis.update()
         # Bigger fonts need a deeper strip and the title pushed further out.
         d_title = self._px(st["size"]) - self._px(9)
         d_tick = self._px(st["tick_size"]) - self._px(8)
         if key == "xaxis":  # tick labels stack above the title
             axis.axis_label_margin = max(
                 16.0, _AXIS_LABEL_MARGIN + d_tick + 0.5 * d_title)
-            widget.height_max = max(24.0, _XAXIS_H + d_tick + 1.3 * d_title)
+            # A hidden axis gives its strip back to the plot.
+            widget.height_max = (max(24.0, _XAXIS_H + d_tick + 1.3 * d_title)
+                                 if widget.visible else 0)
         else:               # tick labels sit beside the (rotated) title
             self._fit_yaxis(force=True)
+
+    def _own_ticks(self, key: str, axis) -> None:
+        """Route an axis's tick placement through the element's settings
+        (number of ticks, number format); VisPy's own when automatic."""
+        ticker = axis.ticker
+        own = ticker._get_tick_frac_labels
+        ticker._get_tick_frac_labels = (
+            lambda k=key, own=own, axis=axis: self._tick_fracs(k, own, axis))
+
+    def _tick_fracs(self, key: str, own, axis):
+        st = self._el_style.get(key, {})
+        count = int(st.get("ticks") or 0)
+        fmt, dec = st.get("format", "auto"), st.get("decimals", 2)
+        if not count and fmt == "auto":
+            return own()
+        lo, hi = (float(v) for v in axis.domain)
+        flip = hi < lo
+        if flip:
+            lo, hi = hi, lo
+        span = hi - lo
+        if count:
+            major = np.asarray(pe.nice_ticks(lo, hi, max(2, count)), "float64")
+            minor = np.zeros(0)
+        else:
+            major_frac, minor, _ = own()
+            frac = np.asarray(major_frac, "float64")
+            major = lo + (1.0 - frac if flip else frac) * span
+            minor = np.asarray(minor, "float64")
+        labels = [pe.format_number(float(v), fmt, dec) for v in major]
+        if not count:
+            return major_frac, minor, labels
+        frac = (major - lo) / span if span else np.zeros_like(major)
+        return (1.0 - frac if flip else frac), minor, labels
 
     def _fit_yaxis(self, force: bool = False) -> None:
         """Size the Y strip to the tick labels on screen, so the (rotated)
@@ -1842,6 +2306,12 @@ class PlotTab(QWidget):
         widget = self._yaxis
         if widget is None:
             return
+        if not widget.visible:  # hidden: its strip goes to the plot
+            if widget.width_max != 0:
+                widget.width_max = 0
+                self._relayout()
+            return
+        force = force or not widget.width_max
         st, axis = self._el_style["yaxis"], widget.axis
         labels = axis._text.text or []
         if isinstance(labels, str):
@@ -1925,8 +2395,13 @@ class PlotTab(QWidget):
         if key == "title":
             strip = self._widget_rect(self._title_label)
             c = strip.center()
-            return self._text_box(self.title, st, c.x(), c.y()).intersected(
-                strip.adjusted(0, -4, 0, 4))
+            box = self._text_box(self.title, st, c.x(), c.y())
+            align = st.get("align", "center")
+            if align == "left":
+                box.moveLeft(strip.left() + _TITLE_INSET - 6)
+            elif align == "right":
+                box.moveRight(strip.right() - _TITLE_INSET + 6)
+            return box.intersected(strip.adjusted(0, -4, 0, 4))
         if key == "xaxis":
             # The title hangs a little below its strip (into the canvas
             # margin), so the outline takes the title's own box in too.
@@ -1945,6 +2420,10 @@ class PlotTab(QWidget):
             if self._cbar_label is not None and self._cbar_label.visible:
                 rect = rect.united(self._widget_rect(self._cbar_label))
             return rect
+        if key == "legend":
+            return self._widget_rect(self._legend)
+        if key == self._data_key:
+            return self._widget_rect(self._view)
         if key in _AXIS3D_KEYS:
             label = self._axis_labels[_AXIS3D_KEYS.index(key)]
             pts = self._scene_points(label, label.pos)
@@ -1962,16 +2441,32 @@ class PlotTab(QWidget):
             return rect.intersected(view) if rect is not None else None
         return None
 
-    def _element_at(self, pos) -> str | None:
-        """The element under a canvas position (None over the data)."""
+    def _element_at(self, pos, probe: bool = True) -> str | None:
+        """The element under a canvas position. The data counts where its
+        tooltip would show (a point, a bar, a curve, a violin) or, for a
+        filled contour, anywhere on it. ``probe=False``: the hover has just
+        run for ``pos``, so the tooltip already says."""
         if pos is None:
             return None
         pt = QPointF(float(pos[0]), float(pos[1]))
         for key in self._el_style:
+            if key == self._data_key:
+                continue
             rect = self._element_rect(key)
             if rect is not None and rect.contains(pt):
                 return key
-        return None
+        key = self._data_key
+        rect = self._element_rect(key)
+        if rect is None or not rect.contains(pt):
+            return None
+        if key == "data_contour":
+            return key
+        if probe:
+            from types import SimpleNamespace
+
+            self._hover_data(SimpleNamespace(pos=pos, buttons=None))
+        tip = self._tooltip
+        return key if tip is not None and not tip.isHidden() else None
 
     def select_element(self, key: str | None) -> None:
         """Select an element (outlined on the plot), or clear with None."""
@@ -2003,6 +2498,7 @@ class PlotTab(QWidget):
         # A new frame: the layout / camera may have moved every element.
         self._rect_cache = {}
         self._place_cbar_ticks()
+        self._on_view_resize()
         self._check_axes_layout()
         if self._selected is not None:
             QTimer.singleShot(0, self._sync_highlight)
@@ -2066,7 +2562,8 @@ class PlotTab(QWidget):
         """Pointing hand over anything that can be clicked to edit."""
         if self._canvas is None or getattr(event, "buttons", None):
             return
-        over = self._element_at(getattr(event, "pos", None)) is not None
+        over = self._element_at(getattr(event, "pos", None),
+                                probe=False) is not None
         if over != self._hand:
             self._hand = over
             if over:
@@ -2309,7 +2806,11 @@ class PlotTab(QWidget):
             self._hover_pos = None
 
     def _on_mouse_move(self, event) -> None:
-        self._hover_cursor(event)
+        self._hover_data(event)
+        self._hover_cursor(event)  # after: the tooltip says if over the data
+
+    def _hover_data(self, event) -> None:
+        """The tooltip for the data under the pointer (hidden off it)."""
         if self.spec.is_bar or self.spec.is_hist or self.spec.is_cov:
             self._bar_hover(event)
             return
@@ -2459,6 +2960,10 @@ class PlotTab(QWidget):
         self._contour_data = None
         self._cbar_extra, self._cbar_extra_at = [], []
         self._axis_labels = []
+        self._legend = None
+        self._legend_parts = []
+        self._bar_outline = None
+        self._slots = {}
         self._hide_tooltip()
         if self._hl is not None:
             self._hl.hide()

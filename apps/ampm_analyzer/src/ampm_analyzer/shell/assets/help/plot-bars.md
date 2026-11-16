@@ -41,5 +41,5 @@ look at part of the build.
 ## See also
 
 - [CoV summary](help:plot-cov): a ready-made bar chart of signal stability.
-- [Editing plot text](help:plot-elements): to restyle the category labels and
+- [Editing plot elements](help:plot-elements): to restyle the category labels and
   axes.

@@ -125,9 +125,9 @@ cols = list(s.result.df.columns); MP = next(n for n in cols if "elt" in n and "o
 tk = w._open_plot(PlotSpec(kind=KDE, x=MP, y="density", group_by="part_id"), ("all", None, None)); drain()
 assert tk._curve_data is not None and tk._curve_data.n == 20
 assert len(tk._curve_lines) == 20 and tk._curve_fill is not None
-assert [x.text for x in tk._cbar_extra][:2] == ["Part(1)", "Part(2)"] and tk._cbar_auto == "part_id"
+assert tk._legend_items[0][:2] == ["Part(1)", "Part(2)"] and tk._legend_auto == "part_id"
+assert tk._legend.visible and (tk._cbar is None or not tk._cbar.visible)
 assert tk.panel_state()["map_only"] and not tk.panel_state()["has_color"]
-assert tk.element_values("cbar")["num_size"] == 9
 cached = tk._dist_data
 tk.set_colormap("viridis"); assert tk._dist_data is cached, "a recolour reuses the densities"
 assert tk._curve_data.colors.shape == (20, 4)
