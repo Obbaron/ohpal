@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, macros, theme, titlebar, toolbars, uistate
+from . import icons, macros, plot_library, theme, titlebar, toolbars, uistate
 from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
@@ -228,6 +228,10 @@ class MainWindow(QMainWindow):
         self.backstage.openRecentRequested.connect(self.controller.open_recent)
         self.backstage.createExcelRequested.connect(self.controller.create_excel)
         self.backstage.datastoreBuildRequested.connect(self._on_build_requested)
+        self.backstage.libraryOpenRequested.connect(self._open_from_library)
+        self.backstage.libraryBrowseRequested.connect(
+            lambda: self._open_from_library(None))
+        self.backstage.libraryFolderRequested.connect(self._open_plot_library_folder)
         self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
 
@@ -238,6 +242,11 @@ class MainWindow(QMainWindow):
         self._pending_grid_state: bytes | None = None  # per-build column layout
         self._pending_grid_layout = ([], [], [])  # (columns, order, hidden) by name
         self._grid_cache_dir = None  # where to persist the layout
+        # The build's own plots: reopened (live) after its first query, and
+        # kept in its cache folder as they change (see plot_library).
+        self._pending_plots: list | None = None
+        self._plots_hold = False     # closing / reopening many: save once after
+        self._plots_store = None     # the store of the build those plots are of
         self._last_columns: list[str] | None = None  # to rebuild toolbar on change
 
         # Theme: "auto" follows the OS (and keeps following live), or a fixed
@@ -341,6 +350,11 @@ class MainWindow(QMainWindow):
         # Build identified — set the title + reveal the DataStore entry. The
         # Data tab is only opened once there's a query result (see _on_query_ready),
         # so New (which goes to setup first) doesn't flash an empty grid.
+        # The previous build's plots belong to it: keep them with it and
+        # close them (they reopen with it). Frozen plots and floating windows
+        # are self-contained and stay.
+        self._save_plots()
+        self._close_live_plots()
         self.setWindowTitle(f"{APP_TITLE} — {self.session.build_name}")
         self.backstage.set_build_loaded(True)
         self.backstage.refresh_recents()  # the just-loaded build is now recent
@@ -349,6 +363,8 @@ class MainWindow(QMainWindow):
         # before the first query, so the controller's pipeline applies them to
         # the first result (and the setup form below can reflect the renames).
         self._grid_cache_dir = store.cache_dir
+        self._pending_plots = plot_library.load_build_plots(store.cache_dir)
+        self._plots_store = store
         self._reset_history()  # undo history (and a recording) is per build
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
@@ -379,10 +395,13 @@ class MainWindow(QMainWindow):
         clean. The build recipe (mask, parts, correction, renames) is written
         afresh by the build itself."""
         self._reset_history()
-        # Plots drawn from the old DataStore are stale now; close them. (Popped-
-        # out plot windows are self-contained copies and are left alone.)
-        for tab in list(self._plot_tabs):
-            self._close_plot(tab)
+        # Plots drawn from the old DataStore are stale now; close them, and
+        # forget them. (Popped-out plot windows are self-contained copies, and
+        # frozen plots from the library show their own data: both stay.)
+        self._close_live_plots()
+        self._pending_plots = None
+        if self._grid_cache_dir is not None:
+            plot_library.clear_build_plots(self._grid_cache_dir)
         self.session.derivations = []
         self.session.removed = []
         self.controller.set_filters([])
@@ -459,6 +478,8 @@ class MainWindow(QMainWindow):
             else ""
         )
         self.set_status(f"Loaded {where}: {result.total_rows:,} rows{capped}")
+        if self._pending_plots:  # the build's own plots, once it has data
+            self._restore_plots()
 
     def _on_load_failed(self, message: str) -> None:
         self.backstage.set_loading(False)
@@ -496,28 +517,287 @@ class MainWindow(QMainWindow):
         self.actions.note("plot", spec=asdict(spec), span=list(span))
         self.recorder.link_output(tab)
 
-    def _open_plot(self, spec, span):
+    def _open_plot(self, spec, span, *, select: bool = True, appearance=None,
+                   row_filter=None):
         """Create a plot tab for ``spec`` over ``span`` and start its query.
-        Shared by the New-plot dialog and by macro plot steps."""
+        Shared by the New-plot dialog, macro plot steps and the build's saved
+        plots (which bring their look and filter)."""
         store = self.session.store
         layers = list(store.layers) if store is not None else []
         self._ensure_data_tab()
         tab = PlotTab(spec, span=span, layers=layers)
-        tab.row_filter = self.controller.filters()  # snapshot the active filter
-        self._plot_tabs.append(tab)
-        if spec.is_layer_viewer:  # the scrub slider re-queries its layer
-            tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
-        tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
-        self._wire_plot_elements(tab)
-        index = self._add_page(tab, tab.title, closable=True)
-        self.tabbar.setCurrentIndex(index)
+        tab.row_filter = (list(row_filter) if row_filter is not None
+                          else self.controller.filters())  # the active filter
+        if appearance:
+            tab.apply_appearance(appearance)
+        self._add_plot_tab(tab, select=select)
         # Query this plot's own span, then shape + feed it.
         tab.set_loading(f"Querying {tab.span_label}…")
         self.controller.query_for(*span, lambda raw, t=tab: self._feed_plot(t, raw))
+        self._save_plots()
         return tab
+
+    def _add_plot_tab(self, tab, *, select: bool = True) -> None:
+        self._plot_tabs.append(tab)
+        if tab.spec.is_layer_viewer:  # the scrub slider re-queries its layer
+            tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
+        tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
+        self._wire_plot_elements(tab)
+        index = self._add_page(tab, self._tab_label(tab), closable=True)
+        if self._frozen(tab):
+            info = tab.context["frozen"]
+            self.tabbar.setTabToolTip(
+                index, f"Frozen plot from {info.get('build') or 'another build'}, "
+                f"saved {plot_library.when(info.get('saved') or '')}")
+        if select:
+            self.tabbar.setCurrentIndex(index)
+
+    @staticmethod
+    def _frozen(tab) -> dict | None:
+        """A frozen plot's info (from the library), else None."""
+        ctx = getattr(tab, "context", None)
+        return ctx.get("frozen") if ctx else None
+
+    def _tab_label(self, tab) -> str:
+        info = self._frozen(tab)
+        if info and info.get("build"):
+            return f"{tab.title} · {info['build']}"
+        return tab.title
+
+    # -- the build's own plots (kept with the build) ------------------------
+    def _build_plot_tabs(self, windows: bool = False) -> list:
+        """The plots that belong to the open build: its tabs and docked-back
+        plots made from it (not frozen plots), and with ``windows`` its
+        floating windows too. (While the app runs a floating window stays
+        open whatever build is shown, so it is kept with the build only when
+        the app closes; it then reopens as a tab.)"""
+        store = self._plots_store
+        out = []
+        for tab in self._plot_tabs:
+            ctx = tab.context
+            if ctx is None or (ctx.get("store") is store and store is not None
+                               and not ctx.get("frozen")):
+                out.append(tab)
+        for win in self._detached if windows else ():
+            if (store is not None and getattr(win, "_store", None) is store
+                    and not getattr(win, "_frozen", None)):
+                out.append(win._tab)
+        return out
+
+    def _save_plots(self, windows: bool = False) -> None:
+        """Keep the build's plots with it, as they are now."""
+        if self._plots_hold or self._grid_cache_dir is None:
+            return
+        if self._pending_plots:
+            return  # not reopened yet: keep what is saved
+        records = []
+        for tab in self._build_plot_tabs(windows):
+            try:
+                records.append(plot_library.record(tab))
+            except Exception:  # noqa: BLE001 - one odd plot never loses the rest
+                continue
+        plot_library.save_build_plots(self._grid_cache_dir, records)
+
+    def _close_live_plots(self) -> None:
+        """Close the open build's plot tabs (not frozen ones, nor plots of
+        other builds docked in), without saving each step."""
+        self._plots_hold = True
+        try:
+            store = self._plots_store
+            for tab in list(self._plot_tabs):
+                ctx = tab.context
+                if ctx is None or (not ctx.get("frozen") and ctx.get("store") is store):
+                    self._close_plot(tab)
+        finally:
+            self._plots_hold = False
+
+    def _restore_plots(self) -> None:
+        """Reopen the build's saved plots, behind the Data tab."""
+        records, self._pending_plots = self._pending_plots or [], None
+        opened = 0
+        self._plots_hold = True
+        try:
+            for rec in records:
+                try:
+                    spec = plot_library.spec_from(rec.get("spec"))
+                except plot_library.LibraryError:
+                    continue
+                self._open_plot(spec, plot_library.span_from(rec.get("span")),
+                                select=False, appearance=rec.get("appearance"),
+                                row_filter=rec.get("row_filter") or [])
+                opened += 1
+        finally:
+            self._plots_hold = False
+        self._save_plots()
+        if opened:
+            self.set_status(f"Reopened this build's {opened} "
+                            f"plot{'s' if opened != 1 else ''}.")
+
+    # -- the plot library (frozen plots) -------------------------------------
+    def _library_context(self, tab) -> dict:
+        """What a plot is made from: its own context (frozen, or a floating
+        window's), else the open build's."""
+        if tab.context is not None:
+            return tab.context
+        return {"store": self.session.store, "build_name": self.session.build_name,
+                "derivations": list(self.session.derivations),
+                "removed": list(self.session.removed),
+                "row_filter": list(tab.row_filter or []),
+                "renames": dict(self.session.renames)}
+
+    def _save_plot_to_library(self, tab=None, context=None) -> None:
+        """Freeze a plot (its look and the rows it draws) into the library."""
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        from . import derive
+        from .message_dialog import ask, tell
+
+        tab = tab or self._active_plot
+        if tab is None:
+            return
+        if getattr(tab, "_df", None) is None:
+            self.set_status("Let the plot finish loading before saving it.")
+            return
+        ctx = context or self._library_context(tab)
+        info0 = ctx.get("frozen")
+        build = (info0 or {}).get("build") or ctx.get("build_name") or "build"
+        renames = dict(ctx.get("renames") or {})
+        layers = [tab.span[1]] if tab.span[0] == "single" else []
+        if info0 is not None:                  # already frozen: as it was
+            frame, layers = tab.raw, list(info0.get("layers") or [])
+        elif tab.spec.is_layer_viewer:         # every layer it can show
+            layers = list(tab._layers)
+            guess = tab._df.estimated_size() * max(1, len(layers))
+            if guess > plot_library.BIG_BYTES and not ask(
+                    self, "Save to plot library",
+                    f"This Layer Viewer keeps every one of its {len(layers)} "
+                    f"layers, about {guess / 1e6:,.0f} MB of data before "
+                    "compression. Save it?", ok_text="Save", cancel_text="Cancel"):
+                return
+            from .controller import _PLOT_SAMPLE_ROWS
+            import polars as pl
+
+            parts = []
+            for i, L in enumerate(layers):
+                self.set_status(f"Freezing layer {L} ({i + 1}/{len(layers)})…")
+                QApplication.processEvents()
+                try:
+                    raw = ctx["store"].query(layers=(L, L), columns=None,
+                                             sample_to=_PLOT_SAMPLE_ROWS)
+                except Exception as exc:  # noqa: BLE001
+                    tell(self, "Save to plot library",
+                         f"Couldn't read layer {L} of {build}: {exc}")
+                    return
+                parts.append(derive.shape(
+                    raw, ctx["derivations"], ctx["removed"],
+                    list(tab.row_filter or []), renames))
+            frame = pl.concat(parts, how="diagonal_relaxed") if parts else tab._df
+        else:
+            frame = tab._df
+        frame = frame.select(plot_library.plot_columns(
+            tab.spec, frame.columns, renames))
+        size = frame.estimated_size()
+        if (size > plot_library.BIG_BYTES and not tab.spec.is_layer_viewer
+                and not ask(self, "Save to plot library",
+                            f"This plot draws {frame.height:,} rows, about "
+                            f"{size / 1e6:,.0f} MB before compression. Save it?",
+                            ok_text="Save", cancel_text="Cancel")):
+            return
+        where = plot_library.ensure_folder() or Path.home()
+        start = str(Path(where) / (plot_library.safe_name(
+            f"{tab.title} ({build})") + plot_library.SUFFIX))
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save to plot library", start, plot_library.FILE_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith(plot_library.SUFFIX):
+            path += plot_library.SUFFIX
+        info = plot_library.frozen_info(tab, build=build, renames=renames,
+                                        layers=layers, rows=frame.height)
+        if info0 is not None:                  # a re-save keeps where it's from
+            info["saved"] = info0.get("saved") or info["saved"]
+            info["row_filter"] = info0.get("row_filter") or []
+        try:
+            nbytes = plot_library.save_frozen(path, info, frame)
+        except Exception as exc:  # noqa: BLE001
+            tell(self, "Save to plot library", f"Couldn't save the plot: {exc}")
+            return
+        self.backstage.refresh_library()
+        self.set_status(f"Saved '{tab.title}' to the plot library "
+                        f"({Path(path).name}, {nbytes / 1e6:,.1f} MB).")
+
+    def _open_from_library(self, path=None) -> None:
+        """Open a frozen plot: it shows the numbers of the build it was
+        saved from, whatever build (if any) is open."""
+        from pathlib import Path
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .message_dialog import tell
+
+        if not path:
+            where = plot_library.ensure_folder() or Path.home()
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open from the plot library", str(where),
+                plot_library.FILE_FILTER)
+            if not path:
+                return
+        try:
+            info, df = plot_library.load_frozen(path)
+            spec = plot_library.spec_from(info.get("spec"))
+        except plot_library.LibraryError as exc:
+            tell(self, "Plot library", f"This plot can't be opened: {exc}")
+            return
+        span = plot_library.span_from(info.get("span"))
+        tab = PlotTab(spec, span=span, layers=list(info.get("layers") or []))
+        tab.row_filter = list(info.get("row_filter") or [])
+        tab.context = {"frozen": info, "store": None,
+                       "build_name": info.get("build") or "",
+                       "derivations": [], "removed": [], "row_filter": [],
+                       "renames": dict(info.get("renames") or {})}
+        tab.apply_appearance(info.get("appearance") or {})
+        self._add_plot_tab(tab)
+        self._feed_plot(tab, df)
+        self.set_status(f"Opened '{tab.title}', frozen from "
+                        f"{info.get('build') or 'another build'}.")
+
+    def _show_plot_library(self) -> None:
+        self.backstage.show_library_page()
+        self.tabbar.setCurrentIndex(0)
+
+    def _open_plot_library_folder(self) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        path = plot_library.ensure_folder()
+        if path is None:
+            self.set_status(f"The plot library isn't available: {plot_library.folder()}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _choose_plot_library_folder(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path = QFileDialog.getExistingDirectory(
+            self, "Plot library folder", str(plot_library.folder()))
+        if not path:
+            return
+        plot_library.set_folder(path)
+        self.backstage.refresh_library()
+        self.set_status(f"Plots are now saved to and listed from {path}.")
+
+    def _reset_plot_library_folder(self) -> None:
+        plot_library.set_folder(None)
+        self.backstage.refresh_library()
+        self.set_status(f"Plots are saved to the default folder, "
+                        f"{plot_library.default_folder()}.")
 
     def _close_plot(self, tab) -> None:
         """Close a plot tab (a macro that failed takes back the plots it opened)."""
+        if not isinstance(tab, QWidget):  # not a tab on screen: just forget it
+            if tab in self._plot_tabs:
+                self._plot_tabs.remove(tab)
+            return
         idx = self.stack.indexOf(tab)
         if idx >= 0:
             self._close_tab(idx)
@@ -526,7 +806,8 @@ class MainWindow(QMainWindow):
         """A plot's on-canvas title was renamed; mirror it onto its tab."""
         idx = self.stack.indexOf(tab)
         if idx >= 0:
-            self.tabbar.setTabText(idx, name)
+            self.tabbar.setTabText(idx, self._tab_label(tab))
+        self._save_plots()
 
     # -- editable plot elements ------------------------------------------
     def _wire_plot_elements(self, tab) -> None:
@@ -565,6 +846,9 @@ class MainWindow(QMainWindow):
         if tab not in self._plot_tabs:
             return
         tab.span = ("single", layer, layer)
+        if self._frozen(tab):  # its layers are in its own data
+            self._feed_plot(tab, tab.raw)
+            return
         if tab.context is not None:
             # Self-contained: query the tab's own build directly (synchronous —
             # a single cached layer is cheap, and this is a rare docked-back
@@ -596,14 +880,7 @@ class MainWindow(QMainWindow):
 
         store = self.session.store
         layers = list(p._layers) or (list(store.layers) if store else [])
-        context = {
-            "store": store,
-            "build_name": self.session.build_name,
-            "derivations": list(self.session.derivations),
-            "removed": list(self.session.removed),
-            "row_filter": list(p.row_filter),
-            "renames": dict(self.session.renames),
-        }
+        context = self._library_context(p)  # its own, or the open build's
         win = DetachedPlotWindow(
             spec=p.spec, span=p.span, layers=layers, raw=p.raw,
             appearance=p.appearance(), context=context,
@@ -611,6 +888,8 @@ class MainWindow(QMainWindow):
         )
         win.closed.connect(self._on_detached_closed)
         win.dockRequested.connect(self._dock_plot)
+        win.libraryRequested.connect(
+            lambda w: self._save_plot_to_library(w._tab, w.context()))
         # A plot made while recording stays linked to its macro step.
         self.recorder.relink_output(p, win._tab)
         win._tab.specChanged.connect(
@@ -632,6 +911,7 @@ class MainWindow(QMainWindow):
                 self.session.renames):
             self.set_status("The macro being recorded keeps this plot's new "
                             "setting.")
+        self._save_plots()
 
     def _on_detached_closed(self, win) -> None:
         if win in self._detached:
@@ -641,26 +921,25 @@ class MainWindow(QMainWindow):
         """Re-add a floating window's plot as a self-contained tab, then close
         the window. The tab keeps the window's frozen context, so a plot from
         another build docks in cleanly alongside the current one."""
-        if self.session.result is None:
+        payload = win.dock_payload()
+        frozen = payload["context"].get("frozen")
+        if self.session.result is None and not frozen:
             self.set_status("Load a build before docking a plot in.")
             return
-        payload = win.dock_payload()
-        self._ensure_data_tab()
+        if self.session.result is not None:
+            self._ensure_data_tab()
         spec = payload["spec"]
         tab = PlotTab(spec, span=payload["span"], layers=payload["layers"])
         tab.row_filter = payload["context"]["row_filter"]
+        if frozen:
+            tab.row_filter = list(frozen.get("row_filter") or [])
         tab.context = payload["context"]
         tab.apply_appearance(payload["appearance"])
-        self._plot_tabs.append(tab)
-        if spec.is_layer_viewer:
-            tab.layerChanged.connect(lambda L, t=tab: self._scrub_layer(t, L))
-        tab.titleChanged.connect(lambda name, t=tab: self._on_plot_renamed(t, name))
-        self._wire_plot_elements(tab)
+        self._add_plot_tab(tab)
         self.recorder.relink_output(win._tab, tab)
-        index = self._add_page(tab, tab.title, closable=True)
-        self.tabbar.setCurrentIndex(index)
         self._feed_plot(tab, payload["raw"])  # shape via context + render
         win.close()  # fires closed -> _on_detached_closed drops the reference
+        self._save_plots()
 
     def _feed_plot(self, tab, raw_df) -> None:
         if tab not in self._plot_tabs:
@@ -678,6 +957,10 @@ class MainWindow(QMainWindow):
         """Shape a plot's raw frame: a self-contained tab uses its frozen
         context; a session-linked tab follows the live session."""
         ctx = tab.context
+        if ctx is not None and ctx.get("frozen"):  # drawn from its own rows
+            return plot_library.view_frame(
+                raw_df, tab.spec, tab.span,
+                ctx["frozen"].get("layer_column") or "layer")
         if ctx is not None:
             from . import derive
             return derive.shape(raw_df, ctx["derivations"], ctx["removed"],
@@ -761,6 +1044,7 @@ class MainWindow(QMainWindow):
             if hasattr(widget, "release"):
                 widget.release()
             widget.deleteLater()
+            self._save_plots()
 
     def _wire_panel_controls(self) -> None:
         """Route side-panel controls to whichever plot is active."""
@@ -929,8 +1213,9 @@ class MainWindow(QMainWindow):
         widget = self.stack.widget(self.tabbar.currentIndex())
         kind = widget.property("tabkind") if widget is not None else "file"
         if kind == "file":
-            on_setup = self.backstage.main_stack.currentIndex() == 1
-            return ["file.datastore" if on_setup else "file.start", "file"]
+            page = self.backstage.main_stack.currentIndex()
+            return [{1: "file.datastore", 2: "file.library"}.get(page, "file.start"),
+                    "file"]
         if kind == "data":
             # Recording is a mode the user is in; anything else is the tab.
             return (["data.macros"] if self.recorder.active else []) + ["data"]
@@ -1014,6 +1299,21 @@ class MainWindow(QMainWindow):
             reset = menu.addAction("Use the default folder")
             reset.setToolTip(str(macros.default_folder()))
             reset.triggered.connect(self._reset_macro_folder)
+        menu.addSection("Plot library")
+        full = str(plot_library.folder())
+        shown = menu.fontMetrics().elidedText(
+            full, Qt.TextElideMode.ElideMiddle, 340)
+        where = menu.addAction(f"Folder: {shown}")
+        where.setToolTip(full)
+        where.setEnabled(False)
+        menu.addAction("Open plot library folder").triggered.connect(
+            self._open_plot_library_folder)
+        menu.addAction("Change plot library folder…").triggered.connect(
+            self._choose_plot_library_folder)
+        if not plot_library.is_default_folder():
+            reset = menu.addAction("Use the default plot library folder")
+            reset.setToolTip(str(plot_library.default_folder()))
+            reset.triggered.connect(self._reset_plot_library_folder)
         return menu
 
     def _icon_color(self) -> str:
@@ -1112,6 +1412,7 @@ class MainWindow(QMainWindow):
                 on_remove_filter=self._on_remove_last_filter,
                 on_reset_filter=self._on_reset_filters,
                 on_new_plot=lambda name=None: self._new_plot(name),
+                on_plot_library=self._show_plot_library,
                 on_export_excel=self._export_excel,
                 recording=self.recorder.active,
                 on_macro_record=self._toggle_macro_recording,
@@ -1141,6 +1442,8 @@ class MainWindow(QMainWindow):
             return
         if key == "screenshot":
             self._screenshot_plot()
+        elif key == "save_library":
+            self._save_plot_to_library(tab)
         else:
             tab.set_control(key, value)
 
@@ -1852,5 +2155,8 @@ class MainWindow(QMainWindow):
 
     # -- shutdown ------------------------------------------------------
     def closeEvent(self, event) -> None:
+        # The build's plots, with their latest look (floating windows too:
+        # they reopen as tabs).
+        self._save_plots(windows=True)
         self.controller.shutdown()  # stop any running worker thread
         super().closeEvent(event)

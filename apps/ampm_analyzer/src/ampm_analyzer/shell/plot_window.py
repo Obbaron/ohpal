@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QToolBar,
 )
 
-from . import derive, toolbars
+from . import derive, plot_library, toolbars
 from .dock import SidePanel
 from .plot_tab import PlotTab
 from .workers import release_after
@@ -36,6 +36,7 @@ class DetachedPlotWindow(QMainWindow):
 
     closed = pyqtSignal(object)  # emits self so the owner can drop its reference
     dockRequested = pyqtSignal(object)  # emits self when "Dock in" is clicked
+    libraryRequested = pyqtSignal(object)  # emits self: save to the plot library
 
     def __init__(self, *, spec, span, layers, raw, appearance, context,
                  icon_color: str, parent=None) -> None:
@@ -47,6 +48,8 @@ class DetachedPlotWindow(QMainWindow):
         self._row_filter = list(context.get("row_filter") or [])
         self._renames = dict(context.get("renames") or {})
         self._build_name = context.get("build_name") or "build"
+        # A frozen plot (from the library) draws its own rows: no store.
+        self._frozen = context.get("frozen")
         self._icon_color = icon_color
         self._thread = None
         self._worker = None
@@ -96,6 +99,8 @@ class DetachedPlotWindow(QMainWindow):
     def _control(self, key: str, value=None) -> None:
         if key == "screenshot":
             self._screenshot()
+        elif key == "save_library":
+            self.libraryRequested.emit(self)
         else:
             self._tab.set_control(key, value)
 
@@ -112,6 +117,20 @@ class DetachedPlotWindow(QMainWindow):
     def _request_dock(self) -> None:
         self.dockRequested.emit(self)
 
+    def context(self) -> dict:
+        """What this plot is made from (its frozen context)."""
+        ctx = {
+            "store": self._store,
+            "build_name": self._build_name,
+            "derivations": self._derivations,
+            "removed": self._removed,
+            "row_filter": self._row_filter,
+            "renames": self._renames,
+        }
+        if self._frozen:
+            ctx["frozen"] = self._frozen
+        return ctx
+
     def dock_payload(self) -> dict:
         """Everything the main window needs to re-create this plot as a tab."""
         return {
@@ -120,14 +139,7 @@ class DetachedPlotWindow(QMainWindow):
             "layers": list(self._tab._layers),
             "raw": self._tab.raw,
             "appearance": self._tab.appearance(),
-            "context": {
-                "store": self._store,
-                "build_name": self._build_name,
-                "derivations": self._derivations,
-                "removed": self._removed,
-                "row_filter": self._row_filter,
-                "renames": self._renames,
-            },
+            "context": self.context(),
         }
 
     def _wire_panel(self) -> None:
@@ -194,14 +206,22 @@ class DetachedPlotWindow(QMainWindow):
     def _feed(self, raw) -> None:
         self._tab.raw = raw
         self._tab.set_renames(self._renames)  # resolve hover extras
-        shaped = derive.shape(raw, self._derivations, self._removed,
-                              self._row_filter, self._renames)
+        if self._frozen:  # its own rows (a Layer Viewer: the layer it's on)
+            shaped = plot_library.view_frame(
+                raw, self._tab.spec, self._tab.span,
+                self._frozen.get("layer_column") or "layer")
+        else:
+            shaped = derive.shape(raw, self._derivations, self._removed,
+                                  self._row_filter, self._renames)
         self._tab.set_dataframe(shaped)
         if self._panel.isVisible():
             self._panel.sync_plot(self._tab.panel_state())
 
     def _scrub(self, layer: int) -> None:
         self._tab.span = ("single", layer, layer)
+        if self._frozen:
+            self._feed(self._tab.raw)
+            return
         self._query(layer, layer)
 
     def _query(self, lo: int, hi: int) -> None:

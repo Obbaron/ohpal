@@ -17,7 +17,7 @@ from ampm_analyzer.shell.window import MainWindow
 for kind in PLOT_KINDS:
     cs = PC.controls_for(kind)
     keys = [c.key for c in cs]
-    assert keys[0] == "reset_view" and keys[-1] == "screenshot", (kind, keys)
+    assert keys[0] == "reset_view" and keys[-2:] == ["screenshot", "save_library"], (kind, keys)
     assert len(set(keys)) == len(keys), keys
     groups = [PC.GROUPS.index(c.group) for c in cs]
     assert groups == sorted(groups), (kind, keys)       # grouped, in order

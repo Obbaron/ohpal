@@ -169,6 +169,7 @@ def populate_data(
     on_remove_filter=None,
     on_reset_filter=None,
     on_new_plot=None,
+    on_plot_library=None,
     on_export_excel=None,
     recording: bool = False,
     on_macro_record=None,
@@ -285,6 +286,11 @@ def populate_data(
         a = plot_btn.menu().addAction(icons.for_view(view_name, color), view_name)
         if on_new_plot is not None:
             a.triggered.connect(lambda _c=False, n=view_name: on_new_plot(n))
+    if on_plot_library is not None:
+        plot_btn.menu().addSeparator()
+        lib = plot_btn.menu().addAction(
+            icons.ui("plot_library", color), "Open from the plot library…")
+        lib.triggered.connect(lambda _c=False: on_plot_library())
     toolbar.addSeparator()
 
     # Export

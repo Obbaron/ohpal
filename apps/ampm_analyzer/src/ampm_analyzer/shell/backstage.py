@@ -1,8 +1,9 @@
 """File tab — the backstage, modelled on PowerPoint's File view.
 
 Full-window takeover (no per-tab toolbar). Left sidebar of file actions; a main
-area that stacks a Start page (primary tiles + Recent/Favourites/Search) and a
-DataStore page. The DataStore entry appears dynamically once a build is loaded
+area that stacks a Start page (primary tiles + Recent/Favourites/Search), a
+DataStore page and the Plot library (frozen plots, openable with or without a
+build). The DataStore entry appears dynamically once a build is loaded
 — the backstage is where the parquet-cache definition (columns, ranges, bounds,
 pipeline) is created and rebuilt.
 
@@ -31,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons
+from . import icons, plot_library
 from .datastore_settings import DataStoreSettings
 from .recents import RecentStore
 
@@ -83,6 +84,9 @@ class Backstage(QWidget):
     createExcelRequested = pyqtSignal()
     datastoreBuildRequested = pyqtSignal()  # Build/Rebuild on the setup page
     openRecentRequested = pyqtSignal(str)   # open a build chosen from Recent
+    libraryOpenRequested = pyqtSignal(str)  # open a frozen plot (its file)
+    libraryBrowseRequested = pyqtSignal()   # open one from anywhere
+    libraryFolderRequested = pyqtSignal()   # show the library folder
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -120,6 +124,7 @@ class Backstage(QWidget):
         self.btn_new = add("New", primary=True)
         self.btn_open = add("Open", primary=True)
         self.btn_excel = add("Create Excel from AMPM", primary=True)
+        self.btn_library = add("Plot library", primary=True)
         lay.addSpacing(8)
         # Appears only once a build is loaded.
         self.btn_datastore = add("DataStore")
@@ -132,6 +137,7 @@ class Backstage(QWidget):
         self.btn_new.clicked.connect(self.newRequested)
         self.btn_open.clicked.connect(self.openRequested)
         self.btn_excel.clicked.connect(self.createExcelRequested)
+        self.btn_library.clicked.connect(self.show_library_page)
         self.btn_datastore.clicked.connect(self.show_datastore_page)
         return bar
 
@@ -144,6 +150,7 @@ class Backstage(QWidget):
         outer.addWidget(self.main_stack)
         self.main_stack.addWidget(self._start_page())       # index 0
         self.main_stack.addWidget(self._datastore_page())   # index 1
+        self.main_stack.addWidget(self._library_page())     # index 2
         return container
 
     def _start_page(self) -> QWidget:
@@ -293,6 +300,96 @@ class Backstage(QWidget):
         lay.addWidget(scroll, 1)
         return page
 
+    # -- plot library ----------------------------------------------------
+    def _library_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setSpacing(10)
+        heading = QLabel("Plot library")
+        heading.setProperty("class", "SectionHeading")
+        lay.addWidget(heading)
+        sub = QLabel(
+            "Frozen plots: each keeps the data of the build it was saved from, "
+            "so plots of different builds can be opened side by side. Save one "
+            "from a plot's toolbar.")
+        sub.setProperty("class", "TileSub")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        strip = QHBoxLayout()
+        strip.setSpacing(8)
+        self.lib_search = QLineEdit()
+        self.lib_search.setPlaceholderText("Search by title, build or kind")
+        self.lib_search.setFixedWidth(280)
+        self.lib_search.textChanged.connect(lambda _t: self.refresh_library())
+        strip.addWidget(self.lib_search)
+        strip.addStretch(1)
+        self.lib_open = QPushButton("Open")
+        self.lib_open.setProperty("primary", "true")
+        self.lib_open.clicked.connect(self._open_selected_plot)
+        strip.addWidget(self.lib_open)
+        browse = QPushButton("Browse…")
+        browse.setToolTip("Open a saved plot from another folder")
+        browse.clicked.connect(self.libraryBrowseRequested)
+        strip.addWidget(browse)
+        folder = QPushButton("Open folder")
+        folder.clicked.connect(self.libraryFolderRequested)
+        strip.addWidget(folder)
+        lay.addLayout(strip)
+
+        self.library = QListWidget()
+        self.library.setSpacing(3)
+        self.library.itemDoubleClicked.connect(
+            lambda item: self._emit_open(item))
+        self.library.currentItemChanged.connect(
+            lambda *_: self.lib_open.setEnabled(
+                self.library.currentItem() is not None))
+        lay.addWidget(self.library, 1)
+        self.lib_empty = QLabel("")
+        self.lib_empty.setProperty("class", "TileSub")
+        self.lib_empty.setWordWrap(True)
+        lay.addWidget(self.lib_empty)
+        return page
+
+    def refresh_library(self) -> None:
+        """List the library folder's plots (newest first, searched)."""
+        if not hasattr(self, "library"):
+            return
+        self.library.clear()
+        query = self.lib_search.text().strip().lower()
+        shown = 0
+        for e in plot_library.entries():
+            text = f"{e.title}\n{e.kind}  ·  from {e.build}  ·  {e.saved_text}" \
+                   f"  ·  {e.rows:,} rows"
+            if query and query not in f"{e.title} {e.build} {e.kind}".lower():
+                continue
+            item = QListWidgetItem(text, self.library)
+            item.setData(Qt.ItemDataRole.UserRole, e.path)
+            item.setToolTip(e.path)
+            item.setIcon(icons.for_view(e.kind, self.palette().text().color().name()))
+            shown += 1
+        self.lib_open.setEnabled(False)
+        if shown:
+            self.lib_empty.setText("")
+        elif query:
+            self.lib_empty.setText("No saved plots match.")
+        else:
+            self.lib_empty.setText(
+                f"No plots saved yet. The library is {plot_library.folder()}.")
+
+    def _emit_open(self, item) -> None:
+        path = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if path:
+            self.libraryOpenRequested.emit(path)
+
+    def _open_selected_plot(self) -> None:
+        self._emit_open(self.library.currentItem())
+
+    def show_library_page(self) -> None:
+        self.refresh_library()
+        self.main_stack.setCurrentIndex(2)
+
     def _divider(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -335,6 +432,7 @@ class Backstage(QWidget):
             self.btn_new: "load_packet",
             self.btn_open: "open",
             self.btn_excel: "create_excel",
+            self.btn_library: "plot_library",
             self.btn_datastore: "datastore",
             self.btn_export: "export",
             self.btn_info: "info",

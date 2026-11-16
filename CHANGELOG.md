@@ -48,6 +48,15 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   inside a corner) and the data itself (marker, bar width and outline, line
   widths, fill opacity, level lines, colour map). Hiding the title, axes or
   legend gives their room to the plot.
+- **Plots are kept with their build.** A build's plots (with their styling and
+  filters) reopen when the build is opened again, drawn from its current data.
+  Opening another build closes them; rebuilding the DataStore clears them.
+- **Plot library.** **Save to plot library** freezes a plot: its look and the
+  rows it draws, in one `.ampmplot` file (a Layer Viewer keeps every layer).
+  **File ▸ Plot library** (or **New plot ▸ Open from the plot library…**)
+  opens one beside another build's plots, or with no build open, for
+  comparing builds. The library folder (default `Documents\AMPM Analyzer\Plots`)
+  can be changed in Settings.
 - **Undo / redo** of data shaping, and **macros**: record actions, save them to a
   file, check and run them on another build, recent macros one click away.
   Macros live in a **macro folder** (default `Documents\AMPM Analyzer\Macros`,
@@ -59,7 +68,7 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   asks for them each time, with the recorded value filled in. When a build
   lacks a column the macro reads, the issues list offers the build's columns
   to use instead for that run.
-- **Help.** A searchable in-app guide of 29 articles that opens on the article for
+- **Help.** A searchable in-app guide of 30 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,
   traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Analyzer\crash-reports` and

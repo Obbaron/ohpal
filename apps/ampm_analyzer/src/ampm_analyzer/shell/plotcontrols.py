@@ -54,8 +54,10 @@ BBOX = Control("bbox", "BBox", "bbox")
 LEGEND = Control("legend", "Legend", "legend")
 TITLE = Control("title", "Title", "title")
 SCREENSHOT = Control("screenshot", "Screenshot", "screenshot", "action", "export")
+SAVE_LIBRARY = Control("save_library", "Save to plot library", "save_library",
+                       "action", "export")
 
-COMMON = (RESET_VIEW, AXES, GRID, BBOX, LEGEND, TITLE, SCREENSHOT)
+COMMON = (RESET_VIEW, AXES, GRID, BBOX, LEGEND, TITLE, SCREENSHOT, SAVE_LIBRARY)
 
 # -- view options: only on the views they apply to ---------------------------
 CAMERA_3D = Control(

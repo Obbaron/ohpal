@@ -54,7 +54,19 @@ change a plot, and two plots can show different layers side by side.
 - **Its title** is the tab's name. Rename it by editing the title; see
   [Editing plot elements](help:plot-elements).
 
+## Plots are kept with the build
+
+A build's plots are saved with it, with their styling and the filters they
+were made with. Opening the build again reopens them (behind the Data tab)
+and draws them from its current data. Opening another build closes them, to
+come back with their own build. Rebuilding the DataStore starts afresh,
+without them.
+
+To keep a plot exactly as it is, numbers and all, save it to the
+[plot library](help:plot-library).
+
 ## Next
 
 - [Viewing and styling a plot](help:plot-view)
 - [Plot windows](help:plot-windows)
+- [The plot library](help:plot-library)

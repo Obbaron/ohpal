@@ -58,6 +58,7 @@ UI = {
     "reset_view": "fit-to-screen", "axes": "x-axis", "grid": "grid",
     "bbox": "cube", "legend": "legend", "title": "custom/title",
     "clear_sel": "close", "screenshot": "camera",
+    "save_library": "bookmark--add", "plot_library": "catalog",
     # plot toolbar: view options (only on the views they apply to)
     "view3d": "view", "equal_axes": "center--square",
     "layer_prev": "chevron--left", "layer_next": "chevron--right",
