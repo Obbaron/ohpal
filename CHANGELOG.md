@@ -133,6 +133,10 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 - An error in the interface no longer closes the app without a message.
 - A freeze when a background query finished while the window was rebuilding a
   toolbar (workers are now freed on the main thread).
+- Data tab columns ticked in **Show / hide** but missing from the grid. After
+  a column was removed (for example by a macro), a column shown again could
+  come back with no width; a rebuild kept it. Columns now keep their own
+  width by name, and a layout saved like that is mended when it's opened.
 
 ## [1.3.1] - 2026-06-26
 

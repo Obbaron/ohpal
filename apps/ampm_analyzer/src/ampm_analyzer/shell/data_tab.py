@@ -134,6 +134,9 @@ DEFAULT_ORDER = [
     "LaserVIEW (median)", "Laser back reflection (median)",
 ]
 DEFAULT_HIDDEN = {"Start time", "Duration", "Demand focus", "layer"}
+# A shown column narrower than this is a leftover of the header's own
+# bookkeeping (see DataTab._fit_sections), never a width the user chose.
+_MIN_SHOWN_WIDTH = 12
 
 
 class DataTab(QWidget):
@@ -205,6 +208,7 @@ class DataTab(QWidget):
         self._last_cols: list[str] = []
         self._order_names: list[str] = []
         self._hidden_names: set[str] = set()
+        self._widths: dict[str, int] = {}  # column -> width, kept by name
 
     # -- filter chip bar -----------------------------------------------
     def _build_filter_bar(self) -> QFrame:
@@ -429,7 +433,14 @@ class DataTab(QWidget):
         first = not self._layout_done
         new_cols = list(df.columns)
         cols_changed = (not first) and (new_cols != self._last_cols)
-        self.model.set_dataframe(df)
+        # The header resets with the model, still laid out for the old
+        # columns: don't take that for the user's layout (_apply_layout sets
+        # it again by name).
+        self._applying = True
+        try:
+            self.model.set_dataframe(df)
+        finally:
+            self._applying = False
         self._apply_layout(first, cols_changed)
         self._last_cols = new_cols
         # A column added mid-session (e.g. a new derived column, often off-screen
@@ -478,6 +489,7 @@ class DataTab(QWidget):
                 # Same columns (e.g. a layer change): re-assert the exact layout
                 # (order / hidden / widths) so a model reset can't drop it.
                 header.restoreState(QByteArray(self._last_state))
+            self._fit_sections()  # also mends a layout saved broken
         finally:
             self._applying = False
             self._capture_names()
@@ -496,6 +508,33 @@ class DataTab(QWidget):
         self._hidden_names = {
             cols[i] for i in range(n) if header.isSectionHidden(i)
         }
+        for i in range(min(n, header.count())):
+            size = header.sectionSize(i)
+            if not header.isSectionHidden(i) and size >= _MIN_SHOWN_WIDTH:
+                self._widths[cols[i]] = size
+
+    def _set_sections(self, hidden: set[str]) -> None:
+        """Every column's width (its own, by name) and hidden flag, set from
+        scratch. The header keeps its sections by position when the column
+        set changes, so a slot that held a hidden column can come back on a
+        shown one with no width: shown in the Show / hide menu, invisible in
+        the grid. Showing each section, sizing it, then hiding it again
+        leaves nothing over from the old layout."""
+        header = self.table.horizontalHeader()
+        default = header.defaultSectionSize()
+        for i, name in enumerate(self.model.columns):
+            header.setSectionHidden(i, False)
+            header.resizeSection(i, self._widths.get(name, default))
+            header.setSectionHidden(i, name in hidden)
+
+    def _fit_sections(self) -> None:
+        """Give any shown column left with no width its own width back."""
+        header = self.table.horizontalHeader()
+        default = header.defaultSectionSize()
+        for i, name in enumerate(self.model.columns):
+            if (i < header.count() and not header.isSectionHidden(i)
+                    and header.sectionSize(i) < _MIN_SHOWN_WIDTH):
+                header.resizeSection(i, self._widths.get(name, default))
 
     def _apply_named_layout(self) -> None:
         """Reorder + hide by saved column names; new columns go last, visible."""
@@ -508,8 +547,7 @@ class DataTab(QWidget):
             cur_vis = header.visualIndex(logical[name])
             if cur_vis != target_vis:
                 header.moveSection(cur_vis, target_vis)
-        for name, i in logical.items():
-            header.setSectionHidden(i, name in self._hidden_names)
+        self._set_sections(self._hidden_names)
 
     def _apply_defaults(self) -> None:
         header = self.table.horizontalHeader()
@@ -526,11 +564,11 @@ class DataTab(QWidget):
             cur_vis = header.visualIndex(logical[name])
             if cur_vis != target_vis:
                 header.moveSection(cur_vis, target_vis)
-        # Set every column's visibility, not just the hidden ones: the header
-        # can carry hidden flags from a previous layout (a rebuilt DataStore
-        # reuses this grid), and those stick to a slot, not a column name.
-        for name, i in logical.items():
-            header.setSectionHidden(i, name in default_hidden)
+        # Set every column's visibility and width, not just the hidden ones:
+        # the header can carry hidden flags and zero widths from a previous
+        # layout (a rebuilt DataStore reuses this grid), and those stick to a
+        # slot, not a column name.
+        self._set_sections(default_hidden)
 
     def _on_header_changed(self, *args) -> None:
         if self._applying:
@@ -585,7 +623,13 @@ class DataTab(QWidget):
         cols = self.model.columns
         if name not in cols:
             return
-        self.table.horizontalHeader().setSectionHidden(cols.index(name), not visible)
+        self._applying = True
+        try:
+            self.table.horizontalHeader().setSectionHidden(
+                cols.index(name), not visible)
+            self._fit_sections()
+        finally:
+            self._applying = False
         self._on_header_changed()
 
     def clear_column_settings(self) -> None:
@@ -602,6 +646,7 @@ class DataTab(QWidget):
         try:
             for i, name in enumerate(self.model.columns):
                 header.setSectionHidden(i, name in hidden)
+            self._fit_sections()
         finally:
             self._applying = False
             self._capture_names()
