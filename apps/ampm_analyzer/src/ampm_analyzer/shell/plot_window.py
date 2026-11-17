@@ -68,6 +68,8 @@ class DetachedPlotWindow(QMainWindow):
         self.setCentralWidget(split)
 
         self._toolbar = QToolBar()
+        from .widgets import on_blank_click  # empty toolbar space deselects
+        on_blank_click(self._toolbar, lambda: self._tab.select_element(None))
         self._toolbar.setMovable(False)
         self.addToolBar(self._toolbar)
         self._build_toolbar()
@@ -172,9 +174,12 @@ class DetachedPlotWindow(QMainWindow):
             self._build_toolbar()
 
     def _on_element_selected(self, key: str) -> None:
+        """As in the main window: with the panel open, a click shows what
+        was selected; clicking off goes back to the plot's controls."""
         if not key:
             self._panel.show_plot_controls()
-        elif self._panel.element_key() is not None:
+        elif self._panel.isVisible():
+            self._panel.show_for("plot")
             self._panel.edit_element(self._tab, key)
 
     def _edit_element(self, key: str, name: str, value) -> None:
@@ -200,6 +205,9 @@ class DetachedPlotWindow(QMainWindow):
         if on:
             self._panel.show_for("plot")
             self._panel.sync_plot(self._tab.panel_state())
+            key = self._tab.selected_element()
+            if key:  # an opened panel shows what is selected
+                self._panel.edit_element(self._tab, key)
         self._panel.setVisible(on)
 
     # -- data ----------------------------------------------------------

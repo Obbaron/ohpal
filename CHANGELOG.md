@@ -43,8 +43,9 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   it depends on (what it draws and filters on, and the inputs of calculated
   columns among them) and draws only its filter's rows, so many open plots
   stay light.
-- **Editable plot elements.** Click to select, double-click to edit in the side
-  panel, set as the default for new plots: the title (text, font, alignment),
+- **Editable plot elements.** Click to select (an open side panel shows the
+  element at once), double-click to open the side panel on it, click empty
+  plot or toolbar space to deselect; set as the default for new plots: the title (text, font, alignment),
   the axes (titles, tick labels, number of ticks and their format, the axis
   line, the gridlines), the colour bar (label, numbers, right of or below the
   plot, gap, thickness), a framed **legend box** for groups (beside the plot or

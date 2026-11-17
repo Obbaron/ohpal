@@ -12,13 +12,13 @@ axes, the colour bar, the legend and the data itself.
 
 ## Select and edit
 
-- **Click** an element to select it. An outline marks the selection.
-- **Double-click** it to open its editor in the side panel.
+- **Click** an element to select it. An outline marks the selection. If the
+  side panel is open, it shows the element's editor straight away.
+- **Double-click** an element to open the side panel on its editor.
 - Edits apply as you make them.
-- Click the **‹** arrow, or an empty part of the plot, to go back to the
-  plot's usual controls.
+- Click an empty part of the plot or of the toolbar (or the **‹** arrow) to
+  deselect, and go back to the plot's usual controls.
 
-Once the editor is open, clicking another element switches the editor to it.
 The pointer turns into a hand over anything that can be edited. The data
 counts where its tooltip shows: on a point, a bar, a curve or a violin (and
 anywhere on a filled contour).

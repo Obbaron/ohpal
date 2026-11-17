@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtWidgets import QComboBox
 
 
@@ -20,3 +21,23 @@ def fix_combo(cb: QComboBox) -> QComboBox:
     obvious place to hang a real per-combo fix if one is ever needed.
     """
     return cb
+
+
+class _BlankClick(QObject):
+    def __init__(self, widget, callback) -> None:
+        super().__init__(widget)
+        self._widget, self._callback = widget, callback
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        # A press reaches the widget itself only on its bare background (or
+        # passed up from a label, a separator, a spacer): controls take
+        # their own.
+        if obj is self._widget and event.type() == QEvent.Type.MouseButtonPress:
+            self._callback()
+        return False  # just observe
+
+
+def on_blank_click(widget, callback) -> None:
+    """Call ``callback`` when ``widget``'s empty space is clicked (used to
+    deselect by clicking an empty part of a toolbar)."""
+    widget.installEventFilter(_BlankClick(widget, callback))

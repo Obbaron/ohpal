@@ -163,6 +163,10 @@ class MainWindow(QMainWindow):
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        # A click on the toolbar's empty space deselects (as on empty grid or
+        # plot space).
+        from .widgets import on_blank_click
+        on_blank_click(self.toolbar, self._deselect)
         self.toolbar.setIconSize(QSize(18, 18))
         root.addWidget(self.toolbar)
 
@@ -852,14 +856,26 @@ class MainWindow(QMainWindow):
             self._sync_toolbar(self.tabbar.currentIndex())  # reflect the toggle
 
     def _on_element_selected(self, tab, key: str) -> None:
-        """A single click only selects — but an editor that is already open
-        follows the selection, and clicking off an element closes it."""
+        """A click selects; with the side panel open it shows what was
+        selected at once (a double-click opens the panel). Clicking off an
+        element goes back to the plot's controls."""
         if tab is not self._active_plot:
             return
         if not key:
             self.panel.show_plot_controls()
-        elif self.panel.element_key() is not None:
+        elif self.panel.isVisible():
+            self.panel.show_for("plot")
             self.panel.edit_element(tab, key)
+
+    def _deselect(self) -> None:
+        """Clear the selection on the current tab: the grid's columns, or a
+        plot's element (the side panel follows)."""
+        widget = self.stack.currentWidget()
+        kind = widget.property("tabkind") if widget is not None else None
+        if kind == "data" and self._data_tab is not None:
+            self._data_tab.clear_selection()
+        elif kind == "plot" and self._active_plot is not None:
+            self._active_plot.select_element(None)
 
     def _scrub_layer(self, tab, layer: int) -> None:
         """Re-query a Layer Viewer's chosen layer and feed it (camera stays
@@ -2190,8 +2206,21 @@ class MainWindow(QMainWindow):
         if checked:
             self.panel.show_for(kind)
             self.panel.setVisible(True)
+            self._show_selection_in_panel(kind)
         else:
             self.panel.setVisible(False)
+
+    def _show_selection_in_panel(self, kind) -> None:
+        """An opened panel shows what is selected: the grid's column, or the
+        plot's element (else its controls)."""
+        if kind == "data" and self._data_tab is not None:
+            cols = self._data_tab.selected_columns()
+            self.panel.show_column_info(
+                self._data_tab.column_info(cols[0]) if cols else None)
+        elif kind == "plot" and self._active_plot is not None:
+            key = self._active_plot.selected_element()
+            if key:
+                self.panel.edit_element(self._active_plot, key)
 
     # -- shutdown ------------------------------------------------------
     def closeEvent(self, event) -> None:

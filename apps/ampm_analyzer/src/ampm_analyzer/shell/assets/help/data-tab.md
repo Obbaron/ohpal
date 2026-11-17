@@ -22,7 +22,8 @@ filters, renames) apply to every layer and to every plot.
 ## Working with columns
 
 - **Select** a column by clicking its header. Ctrl-click or Shift-click selects
-  several. **Reset selection** on the toolbar clears it.
+  several. Clicking empty space in the grid or on the toolbar, or **Reset
+  selection** on the toolbar, clears it.
 - **Reorder** by dragging a header; a line shows where it will land.
 - **Resize** by dragging a header's edge. A name too long for its column shows
   its end (`…ches Power`), since that is usually the part that differs.
@@ -42,7 +43,8 @@ column's name (editable), how many rows it has and how many are empty, and its
 type. For decimal columns, **Sig figs** sets how many significant figures the
 table displays; it changes the display only, never the values.
 
-While the panel is open it follows the column you select.
+While the panel is open it follows the column you select, and opening it
+(the toolbar's panel button) shows the selected column.
 
 ## What else you can do here
 

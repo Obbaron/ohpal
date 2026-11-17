@@ -36,14 +36,39 @@ assert tab._title_label._text_visual.face == "OpenSans"
 assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "data_points"}
 assert tab._xaxis.axis.axis_label == X and tab._yaxis.axis.axis_label == Y
 
-# --- single click selects only; double-click opens the editor -----------------
+# --- a click selects (the panel, if open, follows); double-click opens it -------
+w._toggle_sidebar(False); assert not panel.isVisible()
 tab.select_element("title")
-assert tab.selected_element() == "title" and panel.element_key() is None, "a single click must not swap the panel"
+assert tab.selected_element() == "title" and not panel.isVisible(), "a click doesn't open the panel"
 tab.elementActivated.emit("title")
 assert panel.isVisible() and panel.element_key() == "title" and panel.el_heading.text() == "Title"
 assert panel._plot_stack.currentIndex() == 1 and ctl("text").text() == tab.title
 assert set(panel._el_controls) == {"text", "font", "size", "bold", "italic", "color", "align"}
 print("double-click opens the editor:", sorted(panel._el_controls))
+# panel open: a single click shows the new selection at once, even from the
+# plot's own controls
+tab.select_element(None); assert panel.element_key() is None and panel._plot_stack.currentIndex() == 0
+tab.select_element("yaxis"); assert panel.element_key() == "yaxis" and panel.el_heading.text() == "Y axis"
+tab.select_element("title"); assert panel.element_key() == "title"
+# a click on the toolbar's empty space deselects
+from PyQt6.QtCore import QEvent, QPointF, Qt as _Qt
+from PyQt6.QtGui import QMouseEvent
+def blank_click(bar):
+    p = QPointF(bar.width() - 5, bar.height() / 2)
+    QApplication.sendEvent(bar, QMouseEvent(QEvent.Type.MouseButtonPress, p, QPointF(bar.mapToGlobal(p.toPoint())),
+                                            _Qt.MouseButton.LeftButton, _Qt.MouseButton.LeftButton, _Qt.KeyboardModifier.NoModifier))
+blank_click(w.toolbar)
+assert tab.selected_element() is None and panel.element_key() is None and panel.isVisible()
+# re-opening the panel shows what is selected
+w._toggle_sidebar(False); tab.select_element("xaxis"); w._toggle_sidebar(True)
+assert panel.element_key() == "xaxis"
+# the Data tab: the toolbar's empty space clears the column selection too
+w.tabbar.setCurrentIndex(w.stack.indexOf(w._data_tab)); app.processEvents()
+w._data_tab.table.selectColumn(1); assert w._data_tab.selected_columns()
+blank_click(w.toolbar); assert w._data_tab.selected_columns() == []
+w.tabbar.setCurrentIndex(w.stack.indexOf(tab)); app.processEvents()
+tab.select_element("title"); tab.elementActivated.emit("title"); assert panel.element_key() == "title"   # as before
+print("open panel follows single clicks; empty toolbar space deselects (plot and grid)")
 
 # --- live edits ----------------------------------------------------------------
 tv = tab._title_label._text_visual
