@@ -20,6 +20,7 @@ def sections(csv):
 # 1. builds without duplicate names: keys are the bare names, exactly as before
 for csv in sys.argv[3:]:
     qp = QuantAMParts.from_path(csv); new = sections(csv)
+    assert "Parent Parts" not in new, "the CSV's own index isn't offered"
     for name, body in new.items():
         df = qp[name]
         if name != "Parent Parts":
@@ -53,8 +54,12 @@ for _ in range(20): app.processEvents()
 grid_ids = set(w.session.result.df["part_id"].drop_nulls().unique().to_list()) - {"noise"}
 print("grid part ids (sample):", sorted(x for x in grid_ids if "#" in x))
 assert any("#" in x for x in grid_ids), "test build should have suffixed part ids on the grid"
-sec, body = w.controller.parts_csv_sections()[0]
-col = "X Position" if "X Position" in body.columns else next(c for c in body.columns if c != "part_id")
+# The column that tells the parts apart best (most distinct values), so each
+# copy's own value is really checked.
+sec, body, col = max(((n, b, c) for n, b in w.controller.parts_csv_sections()
+                      for c in b.columns if c != "part_id"),
+                     key=lambda t: t[1][t[2]].n_unique())
+print("checking", sec, "/", col, body[col].n_unique(), "distinct values")
 out = w._run("parts_csv_import", items=[[sec, col]]); assert out.ok, out
 df = w.session.result.df
 parts = df.filter(pl.col("part_id").is_not_null() & (pl.col("part_id") != "noise"))
@@ -62,8 +67,13 @@ missing = parts.filter(pl.col(col).is_null())["part_id"].unique().to_list()
 assert not missing, f"parts with no imported value: {missing}"
 want = dict(zip(body["part_id"].to_list(), body[col].to_list()))
 got = parts.group_by("part_id").agg(pl.col(col).n_unique().alias("n"), pl.col(col).first().alias("v"))
+def same(a, b):
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
 for pid, n, v in got.iter_rows():
-    assert n == 1 and float(v) == float(want[pid]), (pid, v, want[pid])
+    assert n == 1 and same(v, want[pid]), (pid, v, want[pid])
 print(f"end to end: '{col}' matched all {got.height} parts on the grid, each with its own value")
 print("ALL PARTS-CSV FIX CHECKS PASS")
 try: w.controller.shutdown()

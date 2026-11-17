@@ -122,4 +122,28 @@ assert grip.right() >= card.width() - 6 and grip.bottom() >= card.height() - 6, 
 hw = HelpWindow(); hw.show(); app.processEvents()
 assert hw._resize_rim and hw._grip is not None and isinstance(hw, DraggableCard)
 print("log and help windows: edges and corners resize; the grip is in the card's corner")
+
+# --- Import parts CSV: large, resizable, Import (accent) then Cancel ----------------
+import polars as pl
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QDialog
+body = pl.DataFrame({"part_id": ["Part(1)", "Part(2)"], "Hatch Speed": [800, 900],
+                     "Hatch Power": [200, 210]})
+imp = import_parts_dialog.ImportPartsCSVDialog([("Strategy", body)])
+imp.show(); app.processEvents()
+avail = QGuiApplication.primaryScreen().availableGeometry()
+assert imp.width() == min(1120, int(avail.width() * 0.9)), (imp.width(), avail)
+assert imp.height() == min(720, int(avail.height() * 0.9)), (imp.height(), avail)
+assert imp._grip is not None and imp._grip.isVisible(), "a corner grip to resize"
+assert imp._ok.x() < imp.cancel_btn.x(), "Import first, then Cancel"
+assert "palette(highlight)" in imp._ok.styleSheet() and imp._ok.isEnabled()
+assert imp.cancel_btn.text() == "Cancel"
+imp._ok.click(); app.processEvents()
+assert imp.isVisible() and imp.count_label.text() == "Tick a column to import."
+imp._pages["Strategy"].cols_list.item(0).setCheckState(Qt.CheckState.Checked)
+assert imp.count_label.text() == "1 column staged to import."
+imp._ok.click(); app.processEvents()
+assert imp.result() == QDialog.DialogCode.Accepted and imp.result_values() == [("Strategy", "Hatch Speed")]
+print("Import parts CSV: opens large, resizes, Import (accent) then Cancel")
+
 print("ALL CARD CHECKS PASS")

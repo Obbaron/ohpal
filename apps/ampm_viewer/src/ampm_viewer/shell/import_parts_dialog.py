@@ -1,26 +1,28 @@
 """Import columns from a QuantAM parts CSV onto the grid.
 
-A tabbed picker — one tab per CSV section (Parent Parts, Strategy, Scan Volume,
-…). Each tab shows the section's per-part data (support rows hidden) and a
-checkable list of its columns; the user stages the columns they want and the
-window joins each onto the grid, keyed on ``part_id``.
+A tabbed picker: one tab per CSV section (Strategy, Scan Volume, ...; the
+internal Parent Parts index is left out). Each tab shows the section's
+per-part data (support rows hidden) and a checkable list of its columns; the
+user stages the columns they want and the window joins each onto the grid,
+keyed on ``part_id``.
 
-Styled as a frameless card to match the other dialogs.
+Styled as a frameless card to match the other dialogs; resizable from its
+edges and corner grip.
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -39,6 +41,7 @@ _PRIMARY_QSS = (
 )
 
 _PREVIEW_ROWS = 50  # cap the preview; parts tables are small, but be safe
+_SIZE = (1120, 720)  # opening size (kept within the screen)
 
 
 class _SectionPage(QWidget):
@@ -103,6 +106,7 @@ class ImportPartsCSVDialog(DraggableCard, QDialog):
         outer.setContentsMargins(0, 0, 0, 0)
         card = QFrame()
         card.setObjectName("ImportCard")
+        self.setMinimumSize(640, 420)
         card.setStyleSheet(
             "#ImportCard { background: palette(window); "
             "border: 1px solid palette(mid); border-radius: 10px; }"
@@ -127,31 +131,48 @@ class ImportPartsCSVDialog(DraggableCard, QDialog):
         self.count_label.setStyleSheet("color: palette(placeholder-text);")
         lay.addWidget(self.count_label)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self._ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok.setText("Import")
-        self._ok.setIcon(QIcon())
+        # Import (the accent button) first, then Cancel, as in Settings.
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self._ok = QPushButton("Import")
         self._ok.setDefault(True)
         self._ok.setStyleSheet(_PRIMARY_QSS)
-        self._ok.setEnabled(False)
-        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel.setText("Close")
-        cancel.setIcon(QIcon())
-        lay.addWidget(buttons)
+        self._ok.clicked.connect(self._import)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(self._ok)
+        buttons.addWidget(self.cancel_btn)
+        buttons.addSpacing(10)  # clear of the corner grip
+        lay.addLayout(buttons)
 
-        self.resize(820, 520)
+        # Edges and corners resize the frameless window; a grip in its corner.
+        self.enable_resize(outer, card)
+        self._open_size()
+
+    def _open_size(self) -> None:
+        """Open large (most of the screen on a small one)."""
+        w, h = _SIZE
+        screen = (self.parent().screen() if self.parent() is not None
+                  else QGuiApplication.primaryScreen())
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = min(w, int(avail.width() * 0.9))
+            h = min(h, int(avail.height() * 0.9))
+        self.resize(w, h)
+
+    def _import(self) -> None:
+        if self.result_values():
+            self.accept()
+        else:  # nothing ticked yet: say so, rather than a dead button
+            self.count_label.setText("Tick a column to import.")
+            self.count_label.setStyleSheet("color: #c0392b;")
 
     def _update_count(self) -> None:
         n = len(self.result_values())
+        self.count_label.setStyleSheet("color: palette(placeholder-text);")
         self.count_label.setText(
             "No columns staged." if not n
             else f"{n} column{'s' if n != 1 else ''} staged to import.")
-        self._ok.setEnabled(n > 0)
 
     def result_values(self) -> list[tuple[str, str]]:
         """Staged (section name, column name) pairs."""

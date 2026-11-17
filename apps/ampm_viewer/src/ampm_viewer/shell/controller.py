@@ -1138,8 +1138,9 @@ class AppController(QObject):
 
         Each ``body_df`` is keyed by ``part_id`` with the section's own data
         columns; support rows (the ``.s`` variant of "Sr. No.") are dropped,
-        leaving one row per placed part. The Parent Parts section has no variant
-        suffix, so it passes through whole.
+        leaving one row per placed part. The Parent Parts section is left out:
+        it is the CSV's own index of parts (part assignment reads it), not
+        data to import.
 
         ``part_id`` is the id part assignment puts on the grid, NOT the bare
         "Source Index": a name placed several times (a parametric build) is one
@@ -1173,6 +1174,8 @@ class AppController(QObject):
             ids = None
         out = []
         for name in qp.section_names:
+            if name == SECTION_PARENT:
+                continue  # internal: the parts' index, not data to import
             df = qp[name]
             if "Source Index" not in df.columns:
                 continue
@@ -1181,7 +1184,7 @@ class AppController(QObject):
             if not data_cols:
                 continue
             body = df
-            if name != SECTION_PARENT and "Sr. No." in df.columns:
+            if "Sr. No." in df.columns:
                 sr = df["Sr. No."].cast(pl.Utf8)
                 body = df.filter(sr.str.ends_with(f".{variant}"))
             bare = pl.col("Source Index").cast(pl.Utf8)

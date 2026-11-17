@@ -38,9 +38,11 @@ part against hatch speed and power in a [contour plot](help:plot-contour).
 
 ## Import parts CSV
 
-Opens the parts CSV section by section (Parent Parts, Strategy, Scan
-Volume, …). Tick the columns you want from any section; the count at the
-bottom shows how many are staged. **Import** adds them all in one step.
+Opens the parts CSV section by section (Strategy, Scan Volume, …; the
+Parent Parts section is the CSV's own index of parts and isn't offered). Tick
+the columns you want from any section; the count at the bottom shows how many
+are staged. **Import** adds them all in one step. Drag the window's edges or
+its corner to make it bigger.
 
 Both this and **Add laser parameters** need the parts CSV; without one they
 are greyed out.
