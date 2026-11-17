@@ -1,11 +1,225 @@
 # Changelog
 
-All notable changes to AMPM Analyzer are documented in this file.
+All notable changes to AMPM Viewer (named AMPM Analyzer before 2.0.0) are
+documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.0.0] - 2026-11-17
+
+A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
+1.x window (Config and Analysis tabs, Plotly plot views loaded from disk) is
+replaced by a new PyQt6 interface with fast VisPy plots, a data table you shape before plotting, undo / redo, macros, a plot library for
+comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
+self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm` pipeline underneath keeps
+its API: it gains a few additions (listed under *Pipeline*) and loses only the
+Plotly figure builders, which the app replaces.
+
+### Added
+
+- **New interface.** A frameless window whose tab row doubles as the title bar
+  (File, Data, one tab per plot), a toolbar that changes with the tab, a side
+  panel, light and dark themes, and frameless, draggable dialogs throughout.
+- **Settings window** (the gear), laid out like Excel's Options: General
+  (theme, kept between starts; the builds folder New and Open start in, by
+  default `Builds` in the AMPM folder; clear the Recent list), Plots (the plot library folder; reset plot style
+  defaults), Macros (the macro folder; clear recent macros) and Files (the
+  AMPM folder, crash reports and settings, each with Open). Changes apply on
+  **OK**.
+- **File tab.** **New** makes a single build, a stacked build or an **Excel
+  template** (one build's samples workbook, written to `<build>/exports/`);
+  **Open** and **Plot library** sit beside it. The landing page lists recent
+  builds and library plots with their type, status and when they were opened,
+  in columns, with Favourites and search. Once a build is loaded, **Info** shows
+  its properties (type, folder, layers built, size on disk, processing,
+  inputs), and **Close** leads back to the landing page from any other page.
+- **Stacked builds.** **New ▸ Stacked build** reads a stepped build (separate
+  jobs printed one on top of another, each its own build folder) as one:
+  `layer` and `Z` carry on from step to step, a `step` column says which step a
+  row came from, a `Build time` column runs through every layer and step, and
+  part ids take the step (`S2 Part(3)`). Kept in its own folder
+  (`stacked.toml`) with its own settings and plots; one setup for every step,
+  with each step's own STL, parts CSV and .dhxml.
+- **DataStore setup.** Foldable groups: the build's inputs, each with
+  **Browse...** to choose another (saved in `config.toml`); the layer thickness
+  and all layers or a From / To range; the imported columns and their renames
+  (with **All**, **None**, **Default** and **Clear renames**); and the load
+  recipe: mask (STL), part assignment (Direct with a **Max distance**, DHXML, or
+  DBSCAN) with a **Part filter** of the parts to keep, and correction (override
+  the column or write a new one). Built off the UI thread with progress and a
+  **Cancel** that stops after the current layer (the layers built are kept); a
+  rebuild starts from a clean slate.
+- **DBSCAN part assignment** is never the default. Its settings (XY radius, Z radius,
+  min samples, layers per chunk and chunk overlap) are on the setup page, start
+  from `config.toml` and are kept per build. It runs in the background as a separate process: the status bar shows
+  which chunk it is on, and **Cancel** (or closing the app) stops it at once.
+- **Side panel** in cards on a tinted background. On the Data tab with no
+  column selected it shows the whole grid: rows (and how many the filters
+  leave), columns, layer and filters at a glance; the filters, to edit, remove
+  or clear; significant figures for every decimal column at once; and every
+  column, to find, show or hide, or open. A column shows its type, a
+  histogram, rows, empty cells, min, max, mean and standard deviation (distinct
+  values for text) and its significant figures with an example. On a plot:
+  marker buttons, size and opacity with their values, a gallery of colour
+  maps, and the colour range as two handles on the colour bar, labelled with
+  the values they sit at. An element's editor groups its properties in cards,
+  with font and size on one row and bold, italic and alignment as buttons.
+  The panel is always wide enough for its widest card, so none is cut off.
+- **Data tab.** A virtualised table of one layer; column details in the side panel;
+  rename, hide, remove and restore columns; calculated columns (a formula language
+  with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
+  if / elif / else rules; filters; a column from Excel; export to Excel.
+- **Parts.** When parts are assigned: per-part calculations (CoV as mean, std and
+  their ratio), and **Import from parts CSV**: any column of any section of the
+  QuantAM parts CSV (the laser parameters are in its Scan Volume section).
+- **Plots** (VisPy): 2D and 3D scatter, Layer Viewer (scrub layer by layer),
+  Single Layer, Bar, Histogram, CoV Summary, Contour (filled-contour look), KDE,
+  Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
+  side panel that show only what applies to the plot, with per-plot options (equal
+  axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
+  measured points, level lines, eps guide); screenshots; plots popped out into
+  their own windows and docked back. A plot queries and keeps only the columns
+  it depends on (what it draws and filters on, and the inputs of calculated
+  columns among them) and draws only its filter's rows, so many open plots
+  stay light.
+- **Editable plot elements.** Click to select (an open side panel shows the
+  element at once), double-click to open the side panel on it, click empty
+  plot or toolbar space to deselect; set as the default for new plots: the title (text, font, alignment),
+  the axes (titles, tick labels, number of ticks and their format, the axis
+  line, the gridlines), the colour bar (label, numbers, right of or below the
+  plot, gap, thickness), a framed **legend box** for groups (beside the plot or
+  inside a corner) and the data itself (marker, bar width and outline, line
+  widths, fill opacity, level lines, colour map). Hiding the title, axes or
+  legend gives their room to the plot. Labels never overlap: category names
+  turn (automatically, or at a chosen angle) and thin out when crowded, and
+  axis and colour-bar numbers thin out the same way.
+- **Plots are kept with their build.** A build's plots (with their styling and
+  filters) reopen when the build is opened again, drawn from its current data.
+  Opening another build closes them; rebuilding the DataStore clears them.
+- **Plot library.** **Save to plot library** freezes a plot: its look and the
+  rows it draws, in one `.ampmplot` file (a Layer Viewer keeps every layer).
+  **File ▸ Plot library** (or **New plot ▸ Open from the plot library…**)
+  opens one beside another build's plots, or with no build open, for
+  comparing builds. The library folder (default `Plots` in the AMPM folder)
+  can be changed in Settings.
+- **Undo / redo** of data shaping, and **macros**: record actions, save them to a
+  file, check and run them on another build, recent macros one click away.
+  Macros live in a **macro folder** (default `Macros` in the AMPM folder,
+  changeable in Settings, for example to a shared team folder); Save and Browse
+  start there and the Run menu lists its macros.
+  Showing and hiding columns are recorded, and a plot's step keeps the plot
+  toolbar options changed while recording. On Stop, values such as a filter's
+  condition or a plot's layers can be marked **Ask when run**: the macro then
+  asks for them each time, with the recorded value filled in. When a build
+  lacks a column the macro reads, the issues list offers the build's columns
+  to use instead for that run.
+- **Help.** A searchable in-app guide of 31 articles that opens on the article for
+  what you are doing (Help button or F1). It replaces `docs/APP.md`.
+- **Unexpected errors** are written to a report file (version, platform,
+  traceback, recent log) in `crash-reports` in the AMPM folder and
+  shown in a dialog; the app keeps running. Hard crashes are recorded in
+  `fatal.log` in the same folder.
+- The version is shown in Help and in crash reports.
+- Log window: captured console output, exportable. The log and help windows
+  resize from their edges and corners.
+- **Pipeline (`ohpal.ampm`).**
+  - `ohpal.ampm.stacked`: several build folders read as one stepped build
+    (`write_stack`, `read_stack`, `load_stack`, `StackedStore`), with `layer`,
+    `Z` and a `Build time` column continued from step to step.
+  - `build_mask(..., verbose=False)`: slices without printing the slicer's
+    progress (the app uses it, and logs one line when the mask is ready).
+  - `DataStore.cached_layers()`: the layers whose Parquet is built, from one
+    directory read.
+  - `DataStore.set_part_assignment(table, method="labels")`: per-point part
+    ids keyed by (`layer`, `Start time`), such as a DBSCAN clustering's.
+  - `QuantAMParts.part_ids_by_instance()`: the `part_id` of every placed
+    instance, keyed by its QuantAM instance number, so any per-instance section
+    of the parts CSV lines up with the ids part assignment puts on the data.
+
+### Changed
+
+- **Renamed to AMPM Viewer** (was AMPM Analyzer): the window, the executable
+  (`ampm-viewer-v2.0.0-x64.exe`), the `ampm-viewer` distribution and script, the
+  `ampm_viewer` package and the `apps/ampm_viewer` folder.
+- **One AMPM folder** for what the app keeps (its settings, `ampm-viewer.conf`;
+  the default builds folder, `Builds`; the macro folder, the plot library and
+  crash reports): `%APPDATA%\AMPM` on Windows,
+  `~/Library/Application Support/AMPM` on macOS and `$XDG_DATA_HOME/AMPM` on
+  Linux (`AMPM_DATA_DIR` overrides it).
+- The version is defined once, as `__version__` in `ampm_viewer/__init__.py`;
+  `pyproject.toml` reads it from there.
+- The app is one self-contained executable, named with its version and
+  architecture: `ampm-viewer-v2.0.0-x64.exe` or `-arm64.exe` (PyInstaller
+  one-file: no `_internal` folder beside it). Its Windows file properties carry
+  the app's name and version.
+- The app icon is on the executable and on every window (title bar, taskbar,
+  floating plots, help, log); on Windows the taskbar groups the app's windows
+  under it.
+- `just verify` / `make verify` import the new application.
+- The `ampm-viewer` script points at `ampm_viewer:main`; the packaged app
+  also accepts `--dbscan-job <job.json>` (used internally to run DBSCAN).
+- `ohpal.ampm.clustering.cluster_dbscan_chunked` takes an optional
+  `progress(chunk, n_chunks)` callback.
+- **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
+  the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
+  current API; `just test` runs every package's tests (580 in all). The app has 31 GUI
+  scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
+  several at once (pytest-xdist; the number of workers follows the machine's cores
+  and memory).
+- Settings are kept in `ampm-viewer.conf` in the AMPM folder (not the registry).
+  `AMPM_SETTINGS_DIR` names another folder for them (the tests do).
+- **Faster.** Opening a 1.6 million row build and one plot of every kind took
+  37 s; it takes 13 s. Each plot opens two to five times faster (a KDE 8.9 s to
+  1.7 s, a contour 5.0 s to 1.4 s, a 2D scatter 3.4 s to 1.4 s); opening a
+  build 1.7 s to 0.7 s.
+  - Text on plots: a glyph is drawn once per process instead of once per text,
+    and the text of one plot shares one font atlas (it was a quarter of the
+    time to open a plot, and each text took its own 3 MB texture).
+  - Shader sources are parsed once each, not once per visual.
+  - VisPy no longer looks for matplotlib on every draw of a line (it tried
+    `import matplotlib` for each named colour; the built app searched for it
+    every frame).
+  - A legend is built once, not three times, when a plot opens.
+  - Part assignment uses every core, and makes the `part_id` column directly
+    from its codes (20 times faster).
+  - A contour over continuous data (more than 400 distinct X or Y values)
+    puts the values into 200 steps first: it was a grid as wide as the number
+    of distinct values (gigabytes for a million rows).
+  - KDE and violin groups are split from one array, not a Python list per
+    value; colouring by a category column no longer loops over every row.
+  - `import ohpal.ampm` takes 0.4 s, not 1.5 s: scikit-learn and trimesh are
+    imported when first used, and the KDE no longer imports `scipy.signal`.
+- **Smaller.** The executable is 183 MB, not 235 MB: `pyarrow` is no longer a
+  dependency (the mask and cluster caches are read and written with Polars,
+  which now needs to be 1.30 or later; caches written before still load), and
+  Qt's translations and PDF module are left out.
+
+### Removed
+
+- `tests/test_memprof.py`: it tested `ampm.memprof`, which no longer exists.
+- `ohpal.ampm.plotting` (the 1.x Plotly figure builders) and its tests, the
+  Plotly example scripts (`examples/cov_summary.py`, `example_view.py`,
+  `parametric.py`, `tune_eps.py`, `view_3d.py`, `view_layers.py`,
+  `pipeline/04_visualize.py`) and `docs/PLOTTING.md`: plots are the app's.
+- Dependencies nothing uses any more: `plotly` and `matplotlib` (and what they
+  pulled in), and `PyQt6` from the headless `ohpal-ampm` (the app has its own).
+  `uv.lock` and `requirements.txt` are regenerated.
+- Unused imports across the packages, the app and the tests.
+- Code nothing called: the controller's old config and packet helpers,
+  `remove_derivation`, `colref.rename_name_set`, `icons.list_chart_icons` and
+  the 53 chart icons only it listed, the side panel's `has_content_for`, the
+  expression editor's `set_columns`, `plot_elements.DATA_KEYS`,
+  `plotspec.SCATTER_KINDS` and the Excel export dialog's unused `key_default`.
+- The 1.x interface: `ampm_analyzer/main.py` and the plot views in
+  `ampm_analyzer/views/`, along with drop-in views from `%APPDATA%\AMPM\views`,
+  `<project>/views` and `AMPM_VIEWS_PATH`.
+
+### Fixed
+
+- An error in the interface no longer closes the app without a message.
 
 ## [1.3.1] - 2026-06-26
 
@@ -373,7 +587,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Obbaron/ohpal/releases/tag/v2.0.0
 [1.3.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...v1.2.0

@@ -6,9 +6,9 @@ from . import (
     mask_cache,
     masking,
     parts,
-    plotting,
     sampling,
     setup_build,
+    stacked,
     stats,
 )
 from .config import create_or_load_config, load_config
@@ -19,7 +19,6 @@ __all__ = [
     "load_config",
     "create_or_load_config",
     "sampling",
-    "plotting",
     "masking",
     "mask_cache",
     "clustering",
@@ -29,4 +28,5 @@ __all__ = [
     "correction",
     "config",
     "setup_build",
+    "stacked",
 ]

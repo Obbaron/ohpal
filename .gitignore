@@ -31,6 +31,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...but app.spec is our hand-written, checked-in PyInstaller build config.
+!apps/ampm_viewer/app.spec
 
 # Installer logs
 pip-log.txt
@@ -223,3 +225,5 @@ profile_dhxml.py
 profile_direct.py
 y.py
 z.py
+# Windows alternate-data-stream artifacts
+*:Zone.Identifier

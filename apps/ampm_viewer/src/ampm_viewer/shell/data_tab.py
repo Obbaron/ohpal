@@ -1,0 +1,723 @@
+"""Data tab — the grid view / data-shaping staging area.
+
+A virtualised table (QTableView + DataFrameModel) over the current query
+result. Columns can be reordered by dragging headers and shown/hidden from the
+toolbar dropdown; the layout (order / hidden / widths) is captured as a header
+blob and persisted per build by the window.
+
+The data *toolbar* lives on the main window (it swaps per active tab); this
+widget is only the grid surface.
+"""
+
+from __future__ import annotations
+
+from PyQt6.QtCore import QByteArray, QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QPen
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableView,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .grid_model import DataFrameModel
+
+
+class _HeaderRenameEdit(QLineEdit):
+    """A transient editor floated over a header section to rename a column.
+
+    Enter commits, Esc or clicking away cancels — all funnelled through one
+    ``done(bool)`` signal (True = commit)."""
+
+    done = pyqtSignal(bool)
+
+    def keyPressEvent(self, e) -> None:  # noqa: N802 (Qt override)
+        if e.key() == Qt.Key.Key_Escape:
+            self.done.emit(False)
+            return
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.done.emit(True)
+            return
+        super().keyPressEvent(e)
+
+    def focusOutEvent(self, e) -> None:  # noqa: N802
+        super().focusOutEvent(e)
+        self.done.emit(False)  # click away cancels
+
+
+class ReorderHeader(QHeaderView):
+    """Movable header that draws a drop-position indicator while dragging.
+
+    QHeaderView already shows a translucent ghost of the dragged section; this
+    adds a clear accent line at the boundary where it will land on release.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setSectionsMovable(True)
+        self.setSectionsClickable(True)
+        self._drop_x: int | None = None
+
+    # Horizontal space a section's label can't use: the stylesheet's 8px padding
+    # each side plus the 1px divider (see QHeaderView::section in theme.py).
+    _LABEL_INSET = 17
+
+    def initStyleOptionForIndex(self, option, logicalIndex: int) -> None:
+        """Labels stay centred; one too long for its column is trimmed from the
+        LEFT ("…ches Power") so its end — usually the part that tells similar
+        columns apart — stays readable, instead of showing a clipped middle."""
+        super().initStyleOptionForIndex(option, logicalIndex)
+        text = option.text
+        if not text:
+            return
+        font = QFont(self.font())
+        font.setWeight(QFont.Weight.DemiBold)  # section labels are drawn at 600
+        fm = QFontMetrics(font)
+        avail = self.sectionSize(logicalIndex) - self._LABEL_INSET
+        if avail > 0 and fm.horizontalAdvance(text) > avail:
+            option.text = fm.elidedText(text, Qt.TextElideMode.ElideLeft, avail)
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)  # let Qt do the ghost drag
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        x = int(event.position().x())
+        vi = self.visualIndexAt(x)
+        if vi == -1:
+            return
+        logical = self.logicalIndex(vi)
+        left = self.sectionViewportPosition(logical)
+        width = self.sectionSize(logical)
+        drop = left + width if x > left + width / 2 else left
+        if drop == self._drop_x:
+            return  # line hasn't moved — skip the repaint
+        old = self._drop_x
+        self._drop_x = drop
+        vp = self.viewport()
+        if old is not None:  # clear the old line's strip
+            vp.update(old - 2, 0, 5, self.height())
+        vp.update(drop - 2, 0, 5, self.height())  # draw the new one
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drop_x = None
+        self.viewport().update()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._drop_x is None:
+            return
+        painter = QPainter(self.viewport())
+        pen = QPen(self.palette().color(self.palette().ColorRole.Highlight))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.drawLine(self._drop_x, 0, self._drop_x, self.height())
+        painter.end()
+
+# Default visual order (left → right) and the columns hidden by default.
+DEFAULT_ORDER = [
+    "Start time", "Duration", "Demand focus", "layer",
+    "Demand X", "Demand Y", "Z",
+    "Demand laser power (mean)", "Laser output power (mean)",
+    "MeltVIEW melt pool (mean)", "MeltVIEW plasma (mean)",
+    "LaserVIEW (mean)", "Laser back reflection (mean)",
+    "Demand laser power (median)", "Laser output power (median)",
+    "MeltVIEW melt pool (median)", "MeltVIEW plasma (median)",
+    "LaserVIEW (median)", "Laser back reflection (median)",
+]
+DEFAULT_HIDDEN = {"Start time", "Duration", "Demand focus", "layer"}
+# A shown column narrower than this is a leftover of the header's own
+# bookkeeping (see DataTab._fit_sections), never a width the user chose.
+_MIN_SHOWN_WIDTH = 12
+
+
+class DataTab(QWidget):
+    # Emitted when the user changes the column layout (reorder / show-hide /
+    # resize) — the window persists it per build.
+    layoutChanged = pyqtSignal()
+    # Emitted when a column header is renamed inline (old name, new name).
+    renameRequested = pyqtSignal(str, str)
+    # Emitted when a column's cells are double-clicked (its display name) — the
+    # window opens the column-info panel. (Header double-click renames instead.)
+    columnActivated = pyqtSignal(str)
+    # Emitted when the column selection changes (current column's display name,
+    # or "" when nothing is selected) — an open column-info panel follows it.
+    columnSelectionChanged = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("tabkind", "data")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._filter_bar = self._build_filter_bar()
+        lay.addWidget(self._filter_bar)
+
+        self.model = DataFrameModel(self)
+        self.table = QTableView()
+        self.table.setModel(self.model)
+        self.table.verticalHeader().setVisible(False)
+
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectColumns
+        )
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        header = ReorderHeader(self.table)  # movable + drop-position indicator
+        self.table.setHorizontalHeader(header)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.sectionMoved.connect(self._on_header_changed)
+        header.sectionResized.connect(lambda *_: self._on_header_changed())
+        header.sectionClicked.connect(self._on_section_clicked)
+        header.sectionDoubleClicked.connect(self._begin_rename)  # header → rename
+        self.table.doubleClicked.connect(self._on_cell_double)   # cell → info panel
+        self.table.selectionModel().selectionChanged.connect(
+            self._on_selection_changed)                          # follow selection
+
+        # Clicking empty grid space clears the column selection.
+        self.table.viewport().installEventFilter(self)
+
+        # Inline column-rename state.
+        self._rename_armed = False
+        self._editor: _HeaderRenameEdit | None = None
+        self._editing_old = ""
+        self._renames: dict[str, str] = {}  # original -> display, for defaults
+
+        lay.addWidget(self.table)
+
+        self._applying = False      # suppress layoutChanged during programmatic apply
+        self._persisted: bytes | None = None  # saved header blob for this build
+        self._persisted_cols: list[str] = []  # columns the blob was saved with
+        self._layout_done = False   # whether the layout has been applied once
+        self._last_state: bytes | None = None  # most recent captured header blob
+        # Name-based layout snapshot, used when the column set changes (add /
+        # remove) — restoring a count-mismatched blob corrupts the header.
+        self._last_cols: list[str] = []
+        self._order_names: list[str] = []
+        self._hidden_names: set[str] = set()
+        self._widths: dict[str, int] = {}  # column -> width, kept by name
+
+    # -- filter chip bar -----------------------------------------------
+    def _build_filter_bar(self) -> QFrame:
+        bar = QFrame()
+        bar.setObjectName("FilterBar")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 4, 10, 4)
+        h.setSpacing(6)
+        h.addWidget(QLabel("Filter:"))
+        self._chips = QHBoxLayout()
+        self._chips.setSpacing(6)
+        h.addLayout(self._chips)
+        h.addStretch(1)
+        self._count = QLabel("")
+        self._count.setProperty("class", "PanelHeading")
+        h.addWidget(self._count)
+        bar.setVisible(False)
+        return bar
+
+    def set_filters(self, conditions, shown, total, on_remove, on_edit) -> None:
+        """Show active filter chips and the shown/total count.
+
+        Clicking a chip's label edits that condition; the ✕ removes it.
+        """
+        while self._chips.count():
+            item = self._chips.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for i, cond in enumerate(conditions):
+            self._chips.addWidget(self._make_chip(i, cond, on_remove, on_edit))
+        if conditions:
+            self._count.setText(f"{shown:,} of {total:,} rows")
+        self._filter_bar.setVisible(bool(conditions))
+
+    def _make_chip(self, index, cond, on_remove, on_edit) -> QFrame:
+        chip = QFrame()
+        chip.setProperty("class", "FilterChip")
+        h = QHBoxLayout(chip)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        one_line = " ".join(cond.split())
+        label = one_line if len(one_line) <= 40 else one_line[:37] + "…"
+        edit = QPushButton(label)
+        edit.setToolTip(f"{cond}\n\nClick to edit")
+        edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit.clicked.connect(lambda _c=False, idx=index: on_edit(idx))
+        close = QToolButton()
+        close.setText("✕")
+        close.setToolTip("Remove this condition")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.clicked.connect(lambda _c=False, idx=index: on_remove(idx))
+        h.addWidget(edit)
+        h.addWidget(close)
+        return chip
+
+    # -- model ---------------------------------------------------------
+    @property
+    def _columns(self) -> list[str]:
+        return self.model.columns
+
+    def selected_columns(self) -> list[str]:
+        sel = self.table.selectionModel()
+        if sel is None:
+            return []
+        cols = sorted(idx.column() for idx in sel.selectedColumns())
+        names = self.model.columns
+        return [names[c] for c in cols if c < len(names)]
+
+    # -- inline column rename ------------------------------------------
+    def start_rename(self) -> None:
+        """Toolbar entry: rename the selected column now; with no selection, arm
+        click-to-rename (the next header click opens the editor)."""
+        cols = self.selected_columns()
+        if cols:
+            try:
+                self._begin_rename(self.model.columns.index(cols[0]))
+                return
+            except ValueError:
+                pass
+        self._arm_rename()
+
+    def set_renames(self, renames) -> None:
+        """Hand the current rename map (original -> display) so default layout
+        picks resolve renamed columns."""
+        self._renames = dict(renames or {})
+
+    # -- column info panel ---------------------------------------------
+    def _on_cell_double(self, index) -> None:
+        """Double-click in a column's cells → open its info panel."""
+        if not index.isValid():
+            return
+        cols = self.model.columns
+        c = index.column()
+        if 0 <= c < len(cols):
+            self.columnActivated.emit(cols[c])
+
+    def _on_selection_changed(self, *_a) -> None:
+        """Report the current column so an open info panel can follow it; ""
+        when the selection is cleared."""
+        sel = self.selected_columns()
+        if not sel:
+            self.columnSelectionChanged.emit("")
+            return
+        cols = self.model.columns
+        cur = self.table.selectionModel().currentIndex()
+        if cur.isValid() and 0 <= cur.column() < len(cols) and cols[cur.column()] in sel:
+            self.columnSelectionChanged.emit(cols[cur.column()])
+        else:
+            self.columnSelectionChanged.emit(sel[0])
+
+    def clear_selection(self) -> None:
+        """Toolbar 'Reset selection' — drop the column selection."""
+        self.table.clearSelection()
+
+    def column_info(self, name: str) -> dict | None:
+        """Name / rows / dtype / float-ness / sig figs for a column, for the
+        side panel. ``None`` if the column isn't in the current grid."""
+        cols = self.model.columns
+        if name not in cols:
+            return None
+        series = self.model._series[cols.index(name)]
+        rows = len(series)
+        try:
+            nonnull = rows - int(series.null_count())
+        except Exception:  # noqa: BLE001
+            nonnull = rows
+        is_float = bool(series.dtype.is_float())
+        info = {
+            "name": name,
+            "rows": rows,
+            "nonnull": nonnull,
+            "dtype": str(series.dtype),
+            "is_float": is_float,
+            "sigfigs": self.model.sigfigs(name),
+        }
+        info.update(_column_stats(series))
+        return info
+
+    def grid_columns(self) -> list[tuple[str, str, bool]]:
+        """``(name, kind, visible)`` for every column, in the grid's order;
+        ``kind`` is float / int / text / bool / date / other."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        series = self.model._series
+        out = []
+        for visual in range(header.count()):
+            i = header.logicalIndex(visual)
+            if 0 <= i < len(cols):
+                out.append((cols[i], _kind(series[i].dtype),
+                            not header.isSectionHidden(i)))
+        return out
+
+    def grid_sigfigs(self) -> int | None:
+        """The sig figs every decimal column shares (None: they differ)."""
+        values = {self.model.sigfigs(c) for c, k, _v in self.grid_columns()
+                  if k == "float"}
+        return values.pop() if len(values) == 1 else None
+
+    def select_column(self, name: str) -> None:
+        """Select a column (as a header click would) and bring it into view."""
+        cols = self.model.columns
+        if name not in cols:
+            return
+        c = cols.index(name)
+        self.table.selectColumn(c)
+        top = self.table.rowAt(0)
+        self.table.scrollTo(self.model.index(max(top, 0), c))
+
+    def set_column_sigfigs(self, name: str, n: int) -> None:
+        """Set a float column's display significant figures (live)."""
+        self.model.set_sigfigs(name, n)
+
+    def _arm_rename(self) -> None:
+        if self._rename_armed:
+            return
+        self._rename_armed = True
+        # Whole-window I-beam (not just the header), and watch for the click
+        # that lands somewhere other than a header — that cancels rename mode.
+        QApplication.setOverrideCursor(Qt.CursorShape.IBeamCursor)
+        QApplication.instance().installEventFilter(self)
+
+    def _disarm_rename(self) -> None:
+        if not self._rename_armed:
+            return
+        self._rename_armed = False
+        QApplication.restoreOverrideCursor()
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() == QEvent.Type.MouseButtonPress:
+            # Deselect: a press on empty grid space clears the selection.
+            if obj is self.table.viewport():
+                pos = event.position().toPoint()
+                if not self.table.indexAt(pos).isValid():
+                    self.table.clearSelection()
+            # Armed: anything but a header press cancels rename mode (the header
+            # press is handled by sectionClicked, which renames).
+            if self._rename_armed:
+                header = self.table.horizontalHeader()
+                if obj is not header.viewport() and obj is not header:
+                    self._disarm_rename()
+        return False  # never consume — just observe
+
+    def _on_section_clicked(self, logical: int) -> None:
+        if self._rename_armed:
+            self._disarm_rename()
+            self._begin_rename(logical)
+
+    def _begin_rename(self, logical: int) -> None:
+        self._disarm_rename()
+        cols = self.model.columns
+        if not (0 <= logical < len(cols)):
+            return
+        if self._editor is not None:
+            self._finish_rename(False)
+        header = self.table.horizontalHeader()
+        self._editing_old = cols[logical]
+        ed = _HeaderRenameEdit(header)
+        ed.setText(self._editing_old)
+        ed.selectAll()
+        ed.setGeometry(
+            header.sectionViewportPosition(logical), 0,
+            header.sectionSize(logical), header.height())
+        ed.done.connect(self._finish_rename)
+        self._editor = ed
+        ed.show()
+        ed.setFocus()
+
+    def _finish_rename(self, commit: bool) -> None:
+        ed = self._editor
+        if ed is None:
+            return
+        self._editor = None  # guard re-entry (hide() can fire focusOut)
+        new = ed.text().strip()
+        old = self._editing_old
+        ed.hide()
+        ed.deleteLater()
+        if commit and new and new != old:
+            self.renameRequested.emit(old, new)
+
+    def rename_in_layout(self, old: str, new: str) -> None:
+        """Swap a column name in the name-based layout snapshots. Call this just
+        *before* the grid refresh that carries the renamed column: with
+        ``_last_cols`` already holding the new name, the refresh sees an
+        unchanged column set and restores the exact header state (order / hidden
+        / widths) by index — so only the label changes, nothing moves."""
+        self._order_names = [new if c == old else c for c in self._order_names]
+        self._hidden_names = {new if c == old else c for c in self._hidden_names}
+        self._last_cols = [new if c == old else c for c in self._last_cols]
+
+    def set_dataframe(self, df) -> None:
+        """Show a Polars DataFrame; (re)apply the column layout."""
+        first = not self._layout_done
+        new_cols = list(df.columns)
+        cols_changed = (not first) and (new_cols != self._last_cols)
+        # The header resets with the model, still laid out for the old
+        # columns: don't take that for the user's layout (_apply_layout sets
+        # it again by name).
+        self._applying = True
+        try:
+            self.model.set_dataframe(df)
+        finally:
+            self._applying = False
+        self._apply_layout(first, cols_changed)
+        self._last_cols = new_cols
+        # A column added mid-session (e.g. a new derived column, often off-screen
+        # to the right) can leave the view's geometry stale and paint blank until
+        # a reload. Force a re-layout + repaint so it shows immediately.
+        self.table.doItemsLayout()
+        self.table.viewport().update()
+
+    # -- layout / persistence ------------------------------------------
+    def set_persisted_state(self, state: bytes | None, columns=None,
+                            order=None, hidden=None) -> None:
+        """Hand the window's saved header blob + the columns it was saved with.
+
+        ``order``/``hidden`` (column names) let the grid lay out by name when
+        the blob's column set no longer matches (a stale blob would corrupt the
+        header mapping).
+        """
+        self._persisted = state
+        self._persisted_cols = list(columns or [])
+        self._order_names = list(order or [])
+        self._hidden_names = set(hidden or [])
+        self._layout_done = False
+
+    def _apply_layout(self, first: bool, cols_changed: bool = False) -> None:
+        self._applying = True
+        try:
+            header = self.table.horizontalHeader()
+            if first:
+                # Build load: restore the saved blob ONLY when its columns match
+                # the current ones exactly (same logical set + order) — otherwise
+                # the blob's section mapping is stale and would scramble the
+                # header. On a mismatch, lay out by saved name, else defaults.
+                if (self._persisted is not None
+                        and self._persisted_cols == list(self.model.columns)):
+                    header.restoreState(QByteArray(self._persisted))
+                elif self._order_names or self._hidden_names:
+                    self._apply_named_layout()
+                else:
+                    self._apply_defaults()
+            elif cols_changed:
+                # Column added/removed: re-apply the user's order + hidden set
+                # BY NAME (new columns append, visible). Restoring the old blob
+                # here would corrupt the header — its section count is stale.
+                self._apply_named_layout()
+            elif self._last_state is not None:
+                # Same columns (e.g. a layer change): re-assert the exact layout
+                # (order / hidden / widths) so a model reset can't drop it.
+                header.restoreState(QByteArray(self._last_state))
+            self._fit_sections()  # also mends a layout saved broken
+        finally:
+            self._applying = False
+            self._capture_names()
+            self._last_state = bytes(header.saveState())
+            self._layout_done = True
+
+    def _capture_names(self) -> None:
+        """Snapshot the current visual order + hidden set, by column name."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        n = len(cols)
+        self._order_names = [
+            cols[header.logicalIndex(v)] for v in range(n)
+            if 0 <= header.logicalIndex(v) < n
+        ]
+        self._hidden_names = {
+            cols[i] for i in range(n) if header.isSectionHidden(i)
+        }
+        for i in range(min(n, header.count())):
+            size = header.sectionSize(i)
+            if not header.isSectionHidden(i) and size >= _MIN_SHOWN_WIDTH:
+                self._widths[cols[i]] = size
+
+    def _set_sections(self, hidden: set[str]) -> None:
+        """Every column's width (its own, by name) and hidden flag, set from
+        scratch. The header keeps its sections by position when the column
+        set changes, so a slot that held a hidden column can come back on a
+        shown one with no width: shown in the Show / hide menu, invisible in
+        the grid. Showing each section, sizing it, then hiding it again
+        leaves nothing over from the old layout."""
+        header = self.table.horizontalHeader()
+        default = header.defaultSectionSize()
+        for i, name in enumerate(self.model.columns):
+            header.setSectionHidden(i, False)
+            header.resizeSection(i, self._widths.get(name, default))
+            header.setSectionHidden(i, name in hidden)
+
+    def _fit_sections(self) -> None:
+        """Give any shown column left with no width its own width back."""
+        header = self.table.horizontalHeader()
+        default = header.defaultSectionSize()
+        for i, name in enumerate(self.model.columns):
+            if (i < header.count() and not header.isSectionHidden(i)
+                    and header.sectionSize(i) < _MIN_SHOWN_WIDTH):
+                header.resizeSection(i, self._widths.get(name, default))
+
+    def _apply_named_layout(self) -> None:
+        """Reorder + hide by saved column names; new columns go last, visible."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        logical = {name: i for i, name in enumerate(cols)}
+        desired = [n for n in self._order_names if n in logical]
+        desired += [n for n in cols if n not in self._order_names]
+        for target_vis, name in enumerate(desired):
+            cur_vis = header.visualIndex(logical[name])
+            if cur_vis != target_vis:
+                header.moveSection(cur_vis, target_vis)
+        self._set_sections(self._hidden_names)
+
+    def _apply_defaults(self) -> None:
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        logical = {name: i for i, name in enumerate(cols)}
+        # Map the default order/hidden (raw names) through the rename map, so a
+        # renamed column still gets its default position / hidden state.
+        ren = self._renames
+        default_order = [ren.get(n, n) for n in DEFAULT_ORDER]
+        default_hidden = {ren.get(n, n) for n in DEFAULT_HIDDEN}
+        desired = [n for n in default_order if n in logical]
+        desired += [n for n in cols if n not in default_order]
+        for target_vis, name in enumerate(desired):
+            cur_vis = header.visualIndex(logical[name])
+            if cur_vis != target_vis:
+                header.moveSection(cur_vis, target_vis)
+        # Set every column's visibility and width, not just the hidden ones:
+        # the header can carry hidden flags and zero widths from a previous
+        # layout (a rebuilt DataStore reuses this grid), and those stick to a
+        # slot, not a column name.
+        self._set_sections(default_hidden)
+
+    def _on_header_changed(self, *args) -> None:
+        if self._applying:
+            return
+        self._capture_names()  # keep the name snapshot current for column changes
+        self._last_state = bytes(self.table.horizontalHeader().saveState())
+        self.layoutChanged.emit()
+
+    def place_after(self, name: str, after: str) -> None:
+        """Move column ``name`` to directly follow ``after`` in the visual order,
+        and persist it (via the name snapshot). No-op if either is missing."""
+        header = self.table.horizontalHeader()
+        cols = list(self.model.columns)
+        if name not in cols or after not in cols or name == after:
+            return
+        order = [c for c in self._order_names if c in cols]
+        order += [c for c in cols if c not in order]  # fold in any un-snapshotted
+        if name in order:
+            order.remove(name)
+        idx = order.index(after) + 1 if after in order else len(order)
+        order.insert(idx, name)
+        logical = {n: i for i, n in enumerate(cols)}
+        self._applying = True
+        try:
+            for target_vis, n in enumerate(order):
+                cur_vis = header.visualIndex(logical[n])
+                if cur_vis != target_vis:
+                    header.moveSection(cur_vis, target_vis)
+        finally:
+            self._applying = False
+            self._capture_names()
+            self._last_state = bytes(header.saveState())
+        self.layoutChanged.emit()
+
+    def current_state(self) -> bytes:
+        return bytes(self.table.horizontalHeader().saveState())
+
+    def layout_names(self) -> tuple[list, list, list]:
+        """Logical columns, visual order (names), hidden (names) — for persistence."""
+        return (list(self.model.columns), list(self._order_names),
+                sorted(self._hidden_names))
+
+    # -- show / hide ---------------------------------------------------
+    def hidden_columns(self) -> set[str]:
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        return {
+            name for i, name in enumerate(cols) if header.isSectionHidden(i)
+        }
+
+    def set_column_visible(self, name: str, visible: bool) -> None:
+        cols = self.model.columns
+        if name not in cols:
+            return
+        self._applying = True
+        try:
+            self.table.horizontalHeader().setSectionHidden(
+                cols.index(name), not visible)
+            self._fit_sections()
+        finally:
+            self._applying = False
+        self._on_header_changed()
+
+    def clear_column_settings(self) -> None:
+        """Forget per-column display settings (significant figures) — a rebuilt
+        DataStore starts from the defaults."""
+        self.model.clear_sigfigs()
+
+    def apply_hidden(self, hidden: set[str]) -> None:
+        """Hide exactly the named columns (show the rest), without emitting
+        ``layoutChanged`` — used when undo/redo puts a saved view back, where the
+        caller persists once at the end."""
+        header = self.table.horizontalHeader()
+        self._applying = True
+        try:
+            for i, name in enumerate(self.model.columns):
+                header.setSectionHidden(i, name in hidden)
+            self._fit_sections()
+        finally:
+            self._applying = False
+            self._capture_names()
+            self._last_state = bytes(header.saveState())
+
+
+def _kind(dtype) -> str:
+    if dtype.is_float():
+        return "float"
+    if dtype.is_integer():
+        return "int"
+    name = str(dtype)
+    if name in ("String", "Utf8", "Categorical", "Enum") or name.startswith(("Categorical", "Enum")):
+        return "text"
+    if name == "Boolean":
+        return "bool"
+    if dtype.is_temporal():
+        return "date"
+    return "other"
+
+
+def _column_stats(series, bins: int = 40) -> dict:
+    """Summary numbers for the side panel: min / max / mean / std and a
+    histogram for a numeric column, the distinct count otherwise."""
+    import numpy as np
+
+    kind = _kind(series.dtype)
+    try:
+        if kind in ("float", "int"):
+            values = series.drop_nulls()
+            if kind == "float":
+                values = values.filter(values.is_finite())
+            if len(values) == 0:
+                return {}
+            lo, hi = values.min(), values.max()
+            arr = values.to_numpy()
+            counts, _edges = np.histogram(arr, bins=bins if hi != lo else 1)
+            return {"min": lo, "max": hi, "mean": float(values.mean()),
+                    "std": float(values.std() or 0.0), "hist": counts.tolist()}
+        return {"distinct": int(series.n_unique())}
+    except Exception:  # noqa: BLE001 - a summary is never worth an error
+        return {}

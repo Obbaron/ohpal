@@ -10,7 +10,7 @@ Its first focus is **PBF-LB additive-manufacturing post-process monitoring**; pl
 ```
 ohpal/
 ├── apps/
-│   └── ampm_analyzer/        # PyQt6 GUI for exploring AMPM data
+│   └── ampm_viewer/          # PyQt6 GUI for exploring AMPM data
 ├── packages/                 # libraries under the `ohpal.*` namespace
 │   ├── ohpal_ampm/           # AMPM analysis pipeline
 │   └── ohpal_micrographs/    # Microscopy image analysis
@@ -46,7 +46,7 @@ collapses the namespace and breaks imports across packages. Use `just verify` to
 ```bash
 # run at repo root
 uv sync --all-packages        # create .venv and install every member (editable) + dev tools
-uv run ampm-analyzer          # launch the GUI
+uv run ampm-viewer          # launch the GUI
 ```
 
 Or with the task runner:
@@ -54,7 +54,7 @@ Or with the task runner:
 ```bash
 just setup     # uv sync --all-packages
 just verify    # smoke-test the install and the ohpal namespace
-just run       # launch the AMPM Analyzer GUI
+just run       # launch the AMPM Viewer GUI
 ```
 
 ## Tasks
@@ -65,9 +65,11 @@ Run `just` to list available tasks:
 | ------ | -------------- |
 | `setup` | sync the venv and install all workspace members (editable) |
 | `verify` | smoke-test Python version, imports, and the `ohpal` namespace |
-| `run` | launch the AMPM Analyzer GUI |
-| `test` | run the pipeline test suite |
-| `build` | compile the standalone binary from `apps/ampm_analyzer/app.spec` |
+| `run` | launch the AMPM Viewer GUI |
+| `test` | run the library tests (`ohpal_core`, `ohpal_samples`, `ohpal_ampm`) |
+| `test-app` | run the app's GUI scenarios on a build folder: `just test-app "C:\builds\JR299"` (see [apps/ampm_viewer/tests](apps/ampm_viewer/tests/README.md)) |
+| `test-all` | `test`, then `test-app` |
+| `build` | compile the standalone binary from `apps/ampm_viewer/app.spec` |
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |
 
@@ -83,13 +85,13 @@ just wants to use or build them. For development without uv, the workspace wirin
 (`[tool.uv.sources]`) isn't read by pip, so install the members editable by hand instead:
 
 ```bash
-pip install -e packages/ohpal_ampm -e apps/ampm_analyzer
+pip install -e packages/ohpal_ampm -e apps/ampm_viewer
 ```
 
 ## Components
 
 - [`packages/ohpal_ampm`](packages/ohpal_ampm/README.md): the AMPM analysis pipeline (`ohpal.ampm`)
-- [`apps/ampm_analyzer`](apps/ampm_analyzer/README.md): the GUI application
+- [`apps/ampm_viewer`](apps/ampm_viewer/README.md): the GUI application
 
 ## License
 

@@ -7,17 +7,18 @@ else
 	SHELL := /bin/sh
 endif
 
-APP_DIR  := apps/ampm_analyzer
+APP_DIR  := apps/ampm_viewer
 PKG_AMPM := packages/ohpal_ampm
 
 .DEFAULT_GOAL := help
-.PHONY: help setup verify run test build rebuild clean
+.PHONY: help setup verify run test test-app build rebuild clean
 
 help:
 	@echo "  setup    - sync venv and install all packages (editable)"
 	@echo "  verify   - checks Python version, imports, and namespace"
 	@echo "  run      - launch the AMPM GUI"
-	@echo "  test     - run the pipeline test suite"
+	@echo "  test     - run the library tests (every package under packages/)"
+	@echo "  test-app - run the app's GUI scenarios: make test-app BUILD=<build folder>"
 	@echo "  build    - compile  binary from $(APP_DIR)/app.spec"
 	@echo "  clean    - remove caches and build artifacts"
 	@echo "  rebuild  - clean then build"
@@ -27,13 +28,19 @@ setup:
 
 verify:
 	uv run --no-sync python -c "import sys,struct; assert sys.version_info[:2]==(3,11) and struct.calcsize('P')*8==64, 'Need Python 3.11 64-bit; found '+sys.version.split()[0]"
-	uv run --no-sync python -c "import ohpal.ampm, ampm_analyzer.main; import ohpal; assert type(ohpal.__path__).__name__=='_NamespacePath', 'ohpal collapsed to a regular package - check for a stray src/ohpal/__init__.py'; print('verify OK -', list(ohpal.__path__))"
+	uv run --no-sync python -c "import ohpal.ampm, ampm_viewer.shell.app; import ohpal; assert type(ohpal.__path__).__name__=='_NamespacePath', 'ohpal collapsed to a regular package - check for a stray src/ohpal/__init__.py'; print('verify OK -', list(ohpal.__path__))"
 
 run:
-	uv run --no-sync ampm-analyzer
+	uv run --no-sync ampm-viewer
 
 test:
+	uv --directory packages/ohpal_core run --no-sync python -m pytest
+	uv --directory packages/ohpal_samples run --no-sync python -m pytest
 	uv --directory $(PKG_AMPM) run --no-sync python -m pytest
+
+# BUILD (or the AMPM_TEST_BUILD variable): the build the scenarios run on.
+test-app:
+	uv --directory $(APP_DIR) run --no-sync python -m pytest -n auto --dist worksteal "--build=$(BUILD)"
 
 build:
 	uv --directory $(APP_DIR) run pyinstaller app.spec

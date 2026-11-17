@@ -35,7 +35,6 @@ from typing import Iterable
 import numpy as np
 import polars as pl
 import shapely
-import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
@@ -52,6 +51,7 @@ def build_mask(
     buffer_mm: float = 0.0,
     cache_path: str | Path | None = None,
     force: bool = False,
+    verbose: bool = True,
 ) -> Mask:
     """
     Slice ``stl_path`` at ``layer_n * layer_thickness`` for each layer and
@@ -78,6 +78,9 @@ def build_mask(
         when any of those change.
     force
         If True, ignore any existing cache and rebuild.
+    verbose
+        Print the slicer's progress (``[stl_stream] ...``). False keeps it
+        quiet, for a caller that reports progress its own way.
 
     Returns
     -------
@@ -106,7 +109,8 @@ def build_mask(
 
     raw_mask: Mask | None = None
     try:
-        raw_mask = _slice_streaming(stl_path, layer_list, layer_thickness)
+        raw_mask = _slice_streaming(stl_path, layer_list, layer_thickness,
+                                    verbose=verbose)
 
     except ValueError:
         raw_mask = None  # ASCII or malformed binary -> use trimesh
@@ -145,6 +149,8 @@ def _slice_trimesh(
     stl_path: Path, layer_list: list[int], layer_thickness: float
 ) -> Mask:
     """In-memory slicing via trimesh."""
+    import trimesh
+
     mesh = trimesh.load_mesh(stl_path)
 
     if not isinstance(mesh, trimesh.Trimesh):
@@ -191,7 +197,8 @@ def _slice_trimesh(
 
 
 def _slice_streaming(
-    stl_path: Path, layer_list: list[int], layer_thickness: float
+    stl_path: Path, layer_list: list[int], layer_thickness: float,
+    *, verbose: bool = True,
 ) -> Mask:
     """Constant-memory slicing for huge STL files (e.g. lattice builds)."""
     try:
@@ -199,7 +206,8 @@ def _slice_streaming(
     except ImportError:  # running as a plain module outside the package
         from stl_stream import slice_stl_streaming
 
-    return slice_stl_streaming(stl_path, layer_list, layer_thickness)
+    return slice_stl_streaming(stl_path, layer_list, layer_thickness,
+                               verbose=verbose)
 
 
 def apply_mask(
@@ -345,3 +353,13 @@ def _load_cache(path: Path) -> dict | None:
             return pickle.load(f)
     except Exception:
         return None
+
+
+def __getattr__(name: str):
+    # trimesh (half a second to import) is only the fallback slicer, so it is
+    # imported when first used; ``masking.trimesh`` still reaches it.
+    if name == "trimesh":
+        import trimesh
+
+        return trimesh
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

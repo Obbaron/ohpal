@@ -98,6 +98,16 @@ class DataStore:
 
         self._source_files: dict[int, Path] = self._discover_source_files()
 
+        # Optional part assignment. When set, ``query`` attaches a ``part_id``
+        # column — either by bounding-box containment (``"bbox"``, e.g. from a
+        # .dhxml) or by nearest part centre (``"nearest"``, e.g. from a QuantAM
+        # parts CSV) on (Demand X, Demand Y); see ``set_part_assignment``. Kept
+        # out of the Parquet cache so switching the method never invalidates the
+        # raw per-layer cache.
+        self._parts_table: pl.DataFrame | None = None
+        self._parts_method: str = "bbox"
+        self._parts_max_dist: float | None = None
+
     def _discover_source_files(self) -> dict[int, Path]:
         """Find all matching .txt files in source_dir and map layer -> path."""
         out: dict[int, Path] = {}
@@ -124,6 +134,19 @@ class DataStore:
         """Return the Parquet path for a given layer."""
         return self.cache_dir / f"layer={layer:05d}.parquet"
 
+    def cached_layers(self) -> set[int]:
+        """The layers whose Parquet is in the cache (present, not checked for
+        being up to date). One directory read, however many layers."""
+        import os
+
+        try:
+            present = {e.name for e in os.scandir(self.cache_dir)
+                       if e.name.endswith(".parquet")}
+        except OSError:
+            return set()
+        return {L for L in self._source_files
+                if self._cache_path(L).name in present}
+
     @property
     def layers(self) -> list[int]:
         """Sorted list of layer numbers discovered in source_dir."""
@@ -131,8 +154,43 @@ class DataStore:
 
     @property
     def columns(self) -> list[str]:
-        """Available data columns: the 17 source columns + 'layer' + 'Z'."""
-        return [*EXPECTED_COLUMNS, "layer", "Z"]
+        """Available data columns: the 17 source columns + 'layer' + 'Z'.
+
+        When a part assignment is active, ``part_id`` is appended — it is
+        computed per query rather than stored in the cache.
+        """
+        base = [*EXPECTED_COLUMNS, "layer", "Z"]
+        if self._parts_table is not None:
+            base.append("part_id")
+        return base
+
+    def set_part_assignment(
+        self,
+        parts_table: pl.DataFrame | None,
+        *,
+        method: str = "bbox",
+        max_distance_mm: float | None = None,
+    ) -> None:
+        """Enable (or clear) a part assignment.
+
+        ``parts_table`` is a one-row-per-part table. With ``method="bbox"`` it
+        carries ``part_id`` and the box corners (``x_min`` … ``y_max``), e.g.
+        from ``BuildStartedDHXML(...).parts_table()``, and rows are assigned by
+        containment (null outside every box). With ``method="nearest"`` it
+        carries ``part_id`` and part centres (``x_center``/``y_center``), e.g.
+        from ``QuantAMParts(...).parent_parts()``, and each row takes its
+        nearest part's id; ``max_distance_mm`` (if given) nulls rows farther
+        than that from any part. Pass ``None`` to disable.
+
+        With ``method="labels"`` the table is not one row per part but one row
+        per labelled *point* — ``layer``, ``Start time``, ``part_id`` (e.g. the
+        outcome of a DBSCAN clustering) — and each queried row takes the id
+        recorded for its own (layer, Start time); points without a label get
+        null. The keys must be unique.
+        """
+        self._parts_table = parts_table
+        self._parts_method = (method or "bbox").lower()
+        self._parts_max_dist = max_distance_mm
 
     def _needs_rebuild(self, layer: int) -> bool:
         """
@@ -251,6 +309,7 @@ class DataStore:
         x_range: tuple[float, float] | None = None,
         y_range: tuple[float, float] | None = None,
         filters: dict[str, tuple[float, float]] | None = None,
+        sample_to: int | None = None,
     ) -> pl.DataFrame:
         """
         Query a slice of the dataset.
@@ -270,6 +329,13 @@ class DataStore:
             Inclusive ``(min, max)`` filters on Demand X / Demand Y.
         filters
             Additional ``{column_name: (min, max)}`` inclusive filters.
+        sample_to
+            If set and the (filtered) result would exceed this many rows,
+            downsample to roughly this many by taking an even stride during the
+            scan — so the full result is never materialized. Deterministic and
+            evenly spread across the selected layers. ``None`` returns every
+            row. Used for plots (a scatter only draws ~150k points anyway); the
+            grid never samples.
 
         Returns
         -------
@@ -284,6 +350,11 @@ class DataStore:
         paths = [str(self._cache_path(L)) for L in sorted(layer_set)]
         lf = pl.scan_parquet(paths, glob=False)
 
+        # ``part_id`` is virtual (computed post-collect), not a Parquet column.
+        want_part = self._parts_table is not None and (
+            columns is None or "part_id" in columns
+        )
+
         predicates: list[pl.Expr] = []
         if x_range is not None:
             lo, hi = x_range
@@ -293,7 +364,7 @@ class DataStore:
             predicates.append(pl.col("Demand Y").is_between(lo, hi))
         if filters:
             for col, (lo, hi) in filters.items():
-                if col not in self.columns:
+                if col not in self.columns or col == "part_id":
                     raise KeyError(f"Unknown column in filters: {col!r}")
                 predicates.append(pl.col(col).is_between(lo, hi))
 
@@ -310,9 +381,57 @@ class DataStore:
             keep = list(
                 dict.fromkeys([*columns, "layer", "Z"])
             )  # de-dupe, preserve order
-            lf = lf.select(keep)
+            # Scan the real columns only; part_id is attached after collect and
+            # needs the coordinates present even when the caller didn't ask for
+            # them.
+            scan = [c for c in keep if c != "part_id"]
+            if want_part:
+                needs = (["Start time"] if self._parts_method == "labels"
+                         else ["Demand X", "Demand Y"])
+                scan = list(dict.fromkeys([*scan, *needs]))
+            lf = lf.select(scan)
 
-        return lf.collect()
+        # Bound memory before collect: count cheaply, then take an even stride
+        # so at most ~sample_to rows are ever materialized (the full build can
+        # be tens of millions of rows; a scatter only draws ~150k).
+        if sample_to is not None and sample_to > 0:
+            n = lf.select(pl.len()).collect().item()
+            if n > sample_to:
+                step = -(-n // sample_to)  # ceil(n / sample_to), >= 2 here
+                lf = lf.gather_every(step)
+
+        df = lf.collect()
+
+        if want_part:
+            if self._parts_method == "labels":
+                keys = ["layer", "Start time"]
+                labels = self._parts_table.select([*keys, "part_id"])
+                # Only this query's layers, and keys typed like the data's.
+                labels = labels.filter(
+                    pl.col("layer").is_in(df["layer"].unique().to_list()))
+                labels = labels.with_columns(
+                    *[pl.col(k).cast(df.schema[k]) for k in keys],
+                    pl.col("part_id").cast(pl.Utf8))
+                df = df.join(labels, on=keys, how="left", maintain_order="left")
+            elif self._parts_method == "nearest":
+                from ohpal.ampm.parts import assign_nearest_part
+
+                df = assign_nearest_part(
+                    df, self._parts_table,
+                    max_distance_mm=self._parts_max_dist,
+                    noise_label=None, verbose=False,
+                )
+            else:
+                from ohpal.ampm.parts import assign_bounding_box_part
+
+                df = assign_bounding_box_part(
+                    df, self._parts_table, noise_label=None, verbose=False
+                )
+            if columns is not None:
+                keep = list(dict.fromkeys([*columns, "layer", "Z"]))
+                df = df.select([c for c in keep if c in df.columns])
+
+        return df
 
     def _resolve_layers(
         self,

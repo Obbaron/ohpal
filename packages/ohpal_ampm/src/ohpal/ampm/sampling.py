@@ -1,7 +1,7 @@
 """
 Downsamplers for AMPM data prior to plotting.
 
-Plotly's Scatter3d gets sluggish above ~500k points and unresponsive above ~1M.
+Interactive plots get sluggish above ~500k points and unresponsive above ~1M.
 These functions reduce a DataFrame to a target row count using one of three
 strategies:
 

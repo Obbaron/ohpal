@@ -24,7 +24,6 @@ from typing import ClassVar
 import polars as pl
 
 from ohpal.samples.analysis import (
-    STATS,
     VALUE_STATS,
     canonical_stat,
     find_reading_columns,

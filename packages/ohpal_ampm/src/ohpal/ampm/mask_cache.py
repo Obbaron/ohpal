@@ -32,13 +32,14 @@ from typing import Callable
 
 import numpy as np
 import polars as pl
-import pyarrow.parquet as pq
 
 CACHE_FORMAT_VERSION = 1
 _KEY_COLUMNS: tuple[str, str] = ("layer", "Start time")
 
-_META_VERSION_KEY = b"ampm_mask_cache_version"
-_META_PARAMS_KEY = b"ampm_mask_cache_params"
+# Parquet key-value metadata (strings; files written by the earlier pyarrow
+# writer carry the same keys and read the same).
+_META_VERSION_KEY = "ampm_mask_cache_version"
+_META_PARAMS_KEY = "ampm_mask_cache_params"
 
 CHUNK_ROWS = 8_000_000  # Rows per chunk for streaming cache writer.
 
@@ -54,8 +55,8 @@ def save_mask_keep(
     """
     Persist the keys of the rows that survived masking.
 
-    The cache file is written incrementally in ``chunk_rows`` slices, so
-    saving never loads the full table into memory.
+    The keys are checked in ``chunk_rows`` slices and streamed to the cache
+    file, so saving never builds a second copy of the table in memory.
 
     Parameters
     ----------
@@ -159,8 +160,8 @@ def _write_keys_streaming(
         if c not in df.columns:
             raise KeyError(f"Column {c!r} required for mask cache; missing from input.")
 
-    metadata: dict[bytes, bytes] = {
-        _META_VERSION_KEY: str(CACHE_FORMAT_VERSION).encode(),
+    metadata: dict[str, str] = {
+        _META_VERSION_KEY: str(CACHE_FORMAT_VERSION),
     }
     if params is not None:
         try:
@@ -168,7 +169,7 @@ def _write_keys_streaming(
                 params,
                 sort_keys=True,
                 default=str,
-            ).encode()
+            )
         except TypeError as e:
             raise TypeError(
                 f"params must be JSON-serializable (got error: {e}). "
@@ -179,9 +180,9 @@ def _write_keys_streaming(
     tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
 
     checker = _KeyUniquenessChecker()
-    writer: pq.ParquetWriter | None = None
     n_written = 0
     try:
+        # Check the keys chunk by chunk (slices are views, not copies) ...
         for start in range(0, df.height, chunk_rows):
             sub = df.slice(start, chunk_rows).select(list(_KEY_COLUMNS))
             if keep is not None:
@@ -192,24 +193,18 @@ def _write_keys_streaming(
             if sub.is_empty():  # pragma: no cover
                 continue
             checker.update(sub)
-            table = sub.to_arrow()
-            if writer is None:
-                schema = table.schema.with_metadata(
-                    {**(table.schema.metadata or {}), **metadata}
-                )
-                writer = pq.ParquetWriter(tmp_path, schema, compression="zstd")
-            writer.write_table(table)
             n_written += sub.height
-        if writer is not None:
-            writer.close()
-            writer = None
         if n_written == 0:  # pragma: no cover
             raise ValueError("ERROR: Mask empty.")
+        # ... then stream them to the file (never the whole table at once).
+        keys = df.lazy().select(list(_KEY_COLUMNS))
+        if keep is not None:
+            keys = (keys.with_columns(pl.Series("_keep", keep))
+                    .filter(pl.col("_keep")).drop("_keep"))
+        keys.sink_parquet(tmp_path, compression="zstd", metadata=metadata)
         checker.finalize(n_written, tmp_path)
         _atomic_replace(tmp_path, cache_path)
     except BaseException:  # pragma: no cover
-        if writer is not None:
-            writer.close()
         tmp_path.unlink(missing_ok=True)
         raise
 
@@ -337,14 +332,12 @@ def load_mask_keep(
         if c not in df_full.columns:
             raise KeyError(f"Column {c!r} required to load mask cache.")
 
-    pf = pq.ParquetFile(cache_path)
-    raw_meta = pf.schema_arrow.metadata or {}
-    _num_rows = pf.metadata.num_rows
-    _empty_schema = pf.schema_arrow.empty_table()
-    del pf  # stops WinError 5
+    raw_meta = pl.read_parquet_metadata(cache_path)
+    cached_schema = pl.read_parquet_schema(cache_path)
+    _num_rows = pl.scan_parquet(cache_path, glob=False).select(pl.len()).collect().item()
 
-    version_bytes = raw_meta.get(_META_VERSION_KEY)
-    if version_bytes is None:
+    version_text = raw_meta.get(_META_VERSION_KEY)
+    if version_text is None:
         msg = (
             f"Cache file {cache_path} has no version metadata; refusing to "
             f"load (likely produced by a different tool)."
@@ -354,7 +347,7 @@ def load_mask_keep(
         if verbose:
             print(f"  [mask_cache] {msg}")
         raise FileNotFoundError(msg)
-    version = int(version_bytes.decode())
+    version = int(version_text)
     if version != CACHE_FORMAT_VERSION:
         msg = (
             f"Cache format version {version} != expected "
@@ -367,8 +360,8 @@ def load_mask_keep(
         raise FileNotFoundError(msg)
 
     if expect_params is not None:
-        params_bytes = raw_meta.get(_META_PARAMS_KEY)
-        cached_params = json.loads(params_bytes.decode()) if params_bytes else None
+        params_text = raw_meta.get(_META_PARAMS_KEY)
+        cached_params = json.loads(params_text) if params_text else None
         normalized_expected = json.loads(
             json.dumps(expect_params, sort_keys=True, default=str)
         )
@@ -390,11 +383,10 @@ def load_mask_keep(
         raise FileNotFoundError(msg)
 
     # Align dtypes to cache schema without loading data
-    cached_schema = pl.from_arrow(_empty_schema)
     cast_exprs = []
 
     for k in _KEY_COLUMNS:
-        target_dtype = cached_schema[k].dtype
+        target_dtype = cached_schema[k]
         if df_full[k].dtype != target_dtype:
             cast_exprs.append(pl.col(k).cast(target_dtype))
 
@@ -463,13 +455,16 @@ def _keep_from_cached_keys(df: pl.DataFrame, cache_path: Path) -> np.ndarray:
         for a, b in runs:
             keep[a:b] = times.slice(a, b - a).is_in(keys.implode()).to_numpy()
 
-    pf = pq.ParquetFile(cache_path)
+    cached = pl.scan_parquet(cache_path, glob=False).select(list(_KEY_COLUMNS))
+    n_cached = cached.select(pl.len()).collect().item()
+    batch_rows = 2_000_000
     cur_layer: int | None = None
     pieces: list[pl.Series] = []
     ascending = True
-    for batch in pf.iter_batches(columns=list(_KEY_COLUMNS), batch_size=2_000_000):
-        b_layers = batch.column(0).to_numpy(zero_copy_only=False)
-        b_times = pl.Series(time_col, batch.column(1))
+    for offset in range(0, n_cached, batch_rows):
+        batch = cached.slice(offset, batch_rows).collect()
+        b_layers = batch[layer_col].to_numpy()
+        b_times = batch[time_col]
         b_bounds = np.concatenate(
             [[0], np.flatnonzero(b_layers[1:] != b_layers[:-1]) + 1, [len(b_layers)]]
         )

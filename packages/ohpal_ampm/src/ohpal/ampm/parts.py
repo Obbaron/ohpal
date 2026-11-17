@@ -49,7 +49,6 @@ from typing import Iterator
 
 import numpy as np
 import polars as pl
-import pyarrow as pa
 from scipy.spatial import KDTree
 
 from ohpal.core.build import BuildParts
@@ -268,14 +267,14 @@ class QuantAMParts:
     def parent_parts(self) -> pl.DataFrame:
         """
         Return the top-level "Parent Parts" table with normalized column
-        names matching the AMPM analyzer's convention:
+        names matching the AMPM Viewer's convention:
 
         Columns
         -------
-        Part ID         : str  ("Part(1)", "Part(2)", ...)
+        part_id         : str  ("Part(1)", "Part(2)", ...; QuantAM's "Source Index")
         Layer Thickness : float
-        X Position      : float
-        Y Position      : float
+        x_center        : float  (QuantAM's "X Position")
+        y_center        : float  (QuantAM's "Y Position")
         Layers Count    : int
 
         Each row is one physical part *instance* on the build plate.
@@ -284,7 +283,7 @@ class QuantAMParts:
         -------------------
         QuantAM lists each placed copy of a part as its own row, all sharing
         the same "Source Index" (e.g. fifteen rows of ``Part(1)`` in a
-        parameter-study build). To keep ``Part ID`` unique, duplicated names
+        parameter-study build). To keep ``part_id`` unique, duplicated names
         are suffixed with their QuantAM instance number (the "Sr. No." column):
         ``Part(1)#1``, ``Part(1)#4``, etc.
         """
@@ -326,6 +325,19 @@ class QuantAMParts:
             .otherwise(pl.col("part_id"))
             .alias("part_id")
         )
+
+    def part_ids_by_instance(self) -> pl.DataFrame:
+        """
+        The ``part_id`` of every placed instance, keyed by its QuantAM instance
+        number: columns ``Sr. No.`` (Int64) and ``part_id``.
+
+        ``part_id`` is exactly what ``parent_parts()`` reports — the bare name
+        for a part placed once, ``Name#<instance>`` for each copy of a name
+        placed several times. Use it to key any per-instance row of another
+        section (whose ``Sr. No.`` is ``"<instance>.<variant>"``) so it lines
+        up with the ids part assignment puts on the data.
+        """
+        return self._parent_with_instances().select(["Sr. No.", "part_id"])
 
     def volume_parameters(self, *, variant: str = "1") -> pl.DataFrame:
         """
@@ -695,7 +707,7 @@ def assign_nearest_part(
 
     A simpler alternative to DBSCAN clustering + ``compute_part_id_map`` when
     parts are well-separated (typical for builds with few, large parts).
-    Each row gets the Part ID of the closest part by 2D Euclidean distance
+    Each row gets the part_id of the closest part by 2D Euclidean distance
     in the (x_col, y_col) plane. Z is ignored.
 
     Parameters
@@ -787,7 +799,7 @@ def assign_nearest_part(
         xc = x[start:stop]
         yc = y[start:stop]
 
-        _, nearest = tree.query(np.column_stack((xc, yc)), k=1, workers=1)
+        _, nearest = tree.query(np.column_stack((xc, yc)), k=1, workers=-1)
         nearest = np.asarray(nearest, dtype=np.int64).reshape(-1)
 
         dxp = xc - px[nearest]
@@ -820,7 +832,7 @@ def assign_nearest_part(
 
         codes[start:stop] = chunk_codes
 
-        if keep_idx.size:
+        if verbose and keep_idx.size:  # the per-part summary printed below
             counts += np.bincount(keep_idx, minlength=n_parts)
             dist_sums += np.bincount(keep_idx, weights=keep_d, minlength=n_parts)
             np.maximum.at(dist_maxs, keep_idx, keep_d.astype(np.float32))
@@ -836,9 +848,10 @@ def assign_nearest_part(
             f"part → labelled {noise_label!r}"
         )
 
-    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
-    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
-        pl.Enum(categories)
+    # The codes index the categories: gather them as an Enum (much faster
+    # than going through an Arrow dictionary array and a cast).
+    part_series = pl.Series(part_id_col, categories, dtype=pl.Enum(categories)).gather(
+        codes
     )
 
     if null_far is not None and n_too_far > 0:
@@ -1024,9 +1037,10 @@ def assign_bounding_box_part(
             f"\u2192 labelled {noise_label!r}"
         )
 
-    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
-    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
-        pl.Enum(categories)
+    # The codes index the categories: gather them as an Enum (much faster
+    # than going through an Arrow dictionary array and a cast).
+    part_series = pl.Series(part_id_col, categories, dtype=pl.Enum(categories)).gather(
+        codes
     )
 
     if noise_label is None and n_unassigned > 0:

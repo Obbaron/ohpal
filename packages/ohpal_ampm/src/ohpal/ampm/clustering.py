@@ -18,33 +18,25 @@ Key design choices:
 Usage
 -----
     from ampm.clustering import k_distance_curve, cluster_dbscan
-    from ampm.plotting import scatter2d, scatter3d
 
-    # 1. Tune eps_xy by inspecting the k-distance plot
+    # 1. Tune eps_xy by inspecting the k-distance curve (rank vs distance;
+    #    AMPM Viewer draws it as its K-Distance Curve plot)
     kdc = k_distance_curve(df, k=10, mode="3d", eps_xy=1.0, eps_z=0.1)
-    fig = scatter2d(kdc, x="Rank", y="k-distance (mm)", equal_aspect=False,
-                    title="k-distance (find the elbow)")
-    fig.show()
 
-    # 2. Cluster
+    # 2. Cluster: a 'cluster' column per row (-1 = noise)
     clustered = cluster_dbscan(
         df, eps_xy=2.0, eps_z=0.1, min_samples=10, mode="3d",
     )
-
-    # 3. Plot
-    fig = scatter3d(clustered, x="Demand X", y="Demand Y", z="Z",
-                    color="cluster", colorscale="Turbo")
-    fig.show()
 """
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import numpy as np
 import polars as pl
-from sklearn.cluster import DBSCAN
-from sklearn.neighbors import BallTree, NearestNeighbors
+# scikit-learn is imported where it is used: it takes about a second to
+# import, and opening a build (which imports this package) never needs it.
 
 Mode = Literal["2d", "3d"]
 DEFAULT_COLUMNS: tuple[str, str, str] = ("Demand X", "Demand Y", "Z")
@@ -184,6 +176,8 @@ def k_distance_curve(
     )
     coords = _to_scaled_array(sampled, x_col, y_col, z_col, eps_xy, eps_z)
 
+    from sklearn.neighbors import NearestNeighbors
+
     nn = NearestNeighbors(n_neighbors=k + 1, algorithm="ball_tree")
     nn.fit(coords)
     distances, _ = nn.kneighbors(coords)
@@ -255,6 +249,8 @@ def cluster_dbscan(
 
     rep_coords = _to_scaled_array(rep, x_col, y_col, z_col, eps_xy, eps_z)
 
+    from sklearn.cluster import DBSCAN
+
     db = DBSCAN(eps=eps_xy, min_samples=min_samples, algorithm="ball_tree", n_jobs=-1)
     rep_labels = db.fit_predict(rep_coords)
 
@@ -294,6 +290,8 @@ def _propagate_labels(
     """
     rep_coords = _to_scaled_array(rep, x_col, y_col, z_col, eps_xy, eps_z)
     full_coords = _to_scaled_array(df, x_col, y_col, z_col, eps_xy, eps_z)
+
+    from sklearn.neighbors import BallTree
 
     tree = BallTree(rep_coords)
     _, idx = tree.query(full_coords, k=1)
@@ -398,6 +396,7 @@ def cluster_dbscan_chunked(
     layer_col: str = "layer",
     stable_labels: bool = True,
     verbose: bool = True,
+    progress: Callable[[int, int], None] | None = None,
 ) -> pl.DataFrame:
     """
     DBSCAN over the FULL data using layer-wise chunking with overlap merging.
@@ -442,6 +441,9 @@ def cluster_dbscan_chunked(
         Relabel by centroid order so labels are deterministic. Default True.
     verbose
         Print per-chunk progress. Default True.
+    progress
+        Optional ``progress(chunk, n_chunks)`` called before each chunk is
+        clustered (``chunk`` counts from 1), e.g. to drive a progress bar.
 
     Returns
     -------
@@ -500,6 +502,8 @@ def cluster_dbscan_chunked(
     row_chunk = np.full(n, -1, dtype=np.int32)
     row_local = np.full(n, -1, dtype=np.int32)
 
+    from sklearn.cluster import DBSCAN
+
     layer_arr = df[layer_col].to_numpy()
     uf = _UnionFind()
 
@@ -508,6 +512,8 @@ def cluster_dbscan_chunked(
         chunk_indices = np.flatnonzero(in_chunk)
         if chunk_indices.size == 0:
             continue
+        if progress is not None:
+            progress(chunk_id + 1, len(chunks))
         chunk_df = df[chunk_indices]
         coords = _to_scaled_array(chunk_df, x_col, y_col, z_col, eps_xy, eps_z)
 
