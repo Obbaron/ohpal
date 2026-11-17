@@ -2819,6 +2819,10 @@ class PlotTab(QWidget):
             "has_points": self._has_points(),
             "cmin": cmin if cmin is not None else 0,
             "cmax": cmax if cmax is not None else 100,
+            # For the panel's range labels and its "By <column>" line.
+            "full_range": (tuple(float(v) for v in self._full_range)
+                           if has_color else None),
+            "color_by": self.spec.color if has_color else "",
         }
 
     def appearance(self) -> dict:

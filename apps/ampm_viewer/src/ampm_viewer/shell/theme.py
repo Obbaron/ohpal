@@ -150,10 +150,29 @@ QHeaderView::section { background: palette(window); padding: 5px 8px; border: no
 #FilterBar .FilterChip QToolButton { border: none; background: transparent; padding: 2px 8px 2px 3px; }
 #FilterBar .FilterChip QPushButton:hover, #FilterBar .FilterChip QToolButton:hover { color: palette(highlight); }
 
-#SidePanel { background: palette(base); border-left: 1px solid palette(mid); }
+#SidePanel { background: palette(alternate-base); border-left: 1px solid palette(mid); }
 #PanelHeader { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
-#DockBody { background: palette(base); }
+#DockBody { background: palette(alternate-base); }
 .PanelHeading { font-weight: 600; color: palette(placeholder-text); }
+.PanelScroll, .PanelPage { background: transparent; }
+.PanelCard { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }
+.CardCaption { color: palette(placeholder-text); font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+.PanelTitle { font-size: 15px; font-weight: 600; }
+.FieldValue { color: palette(placeholder-text); }
+.FieldNote { color: palette(placeholder-text); font-size: 12px; }
+.PanelBadge { background: palette(highlight); color: palette(highlighted-text); border-radius: 4px; font-size: 11px; font-weight: 600; padding: 1px 6px; }
+.StatTile { background: palette(alternate-base); border-radius: 6px; }
+.StatName { color: palette(placeholder-text); font-size: 11px; }
+.StatValue { font-size: 15px; font-weight: 600; }
+.Segmented { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 6px; }
+.Segmented QToolButton { border: none; border-radius: 4px; padding: 0 6px; background: transparent; }
+.Segmented QToolButton:hover { background: palette(base); }
+.Segmented QToolButton:checked { background: palette(highlight); color: palette(highlighted-text); }
+.FilterRow { background: palette(alternate-base); border-radius: 6px; }
+.FilterText, .ColumnLink { border: none; background: transparent; text-align: left; padding: 3px 2px; }
+.FilterText:hover, .ColumnLink:hover { color: palette(highlight); }
+.KindTag { color: palette(placeholder-text); background: palette(alternate-base); border-radius: 3px; font-size: 10px; font-weight: 600; padding: 1px 0; }
+.PanelBack { padding: 2px 6px; }
 
 /* --- Status bar --- */
 QStatusBar { background: palette(base); border-top: 1px solid palette(mid); }
@@ -161,6 +180,17 @@ QStatusBar::item { border: none; }
 #StatusLog { color: palette(placeholder-text); }
 .StatChip { color: palette(placeholder-text); padding: 0 8px; border-left: 1px solid palette(mid); }
 """
+
+
+# Per-scheme additions. Dark: inputs are drawn on palette(base), so a side
+# panel card on base would hide their edges; the cards sit on palette(window)
+# there instead, with the tiles and joined buttons on base.
+_SCHEME_QSS = {
+    "dark": """
+.PanelCard { background: palette(window); }
+.StatTile, .Segmented, .FilterRow { background: palette(base); }
+""",
+}
 
 
 def icon_color(app) -> str:
@@ -186,7 +216,7 @@ def apply_theme(app, scheme: str = "light") -> None:
     # the new palette; re-setting the identical string alone can be a no-op, so
     # the palette(...) references wouldn't pick up the new colours.
     app.setStyleSheet("")
-    app.setStyleSheet(STYLESHEET)
+    app.setStyleSheet(STYLESHEET + _SCHEME_QSS.get(scheme, ""))
     # Repolish existing widgets so a runtime switch repaints cleanly.
     for widget in app.allWidgets():
         widget.style().unpolish(widget)

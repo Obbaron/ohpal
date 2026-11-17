@@ -92,7 +92,7 @@ assert not t2._cbar.visible and t2.control_value("legend") is False
 button(w.toolbar, "Legend").trigger(); drain(); assert t2._cbar.visible
 ps = t2.panel_state(); w.panel.sync_plot(ps)
 assert ps["has_points"] and not w.panel.points_box.isHidden() and not w.panel.colour_box.isHidden()
-assert not w.panel.min_slider.isHidden() and w.panel.plot_note.isHidden()
+assert not w.panel.range_bar.isHidden() and w.panel.plot_note.isHidden()
 
 # 2D scatter in one colour: no legend at all
 t1 = w._open_plot(PlotSpec(kind=SCATTER_2D, x="Demand X", y="Demand Y", color=None), ALL); drain()
@@ -110,7 +110,7 @@ assert names[:3] == ["Part(1)", "Part(2)", "Part(3)"], names          # in natur
 assert tc._legend_auto == "part_id"
 ps = tc.panel_state(); assert ps["map_only"] and not ps["has_color"]
 w.panel.sync_plot(ps)
-assert not w.panel.colour_box.isHidden() and w.panel.min_slider.isHidden()
+assert not w.panel.colour_box.isHidden() and w.panel.range_bar.isHidden()
 before = tc._last_colors.copy(); tc.set_colormap("viridis"); drain()
 assert not np.allclose(before, tc._last_colors), "the map recolours many categories"
 print("2D scatters: legend only when there is one (colour bar or categories); equal axes lock")
@@ -165,8 +165,8 @@ th.set_control("bins", 37); drain()       # an off-list count shows up in the me
 assert "37" in [a.text() for a in button(w.toolbar, "Bins").menu().actions()]
 w.panel.sync_plot(th.panel_state())
 assert w.panel.points_box.isHidden() and not w.panel.colour_box.isHidden()
-from PyQt6.QtWidgets import QGroupBox
-assert "Selected part" not in [g.title() for g in w.panel.findChildren(QGroupBox)]
+from ampm_viewer.shell.panel_widgets import Card
+assert "SELECTED PART" not in [g.title() for g in w.panel.findChildren(Card)]
 from ampm_viewer.shell import icons
 assert icons.UI["view3d"] == "camera" and icons.UI["screenshot"] == "image"
 assert not icons.ui("view3d", "#000").isNull() and not icons.ui("screenshot", "#000").isNull()

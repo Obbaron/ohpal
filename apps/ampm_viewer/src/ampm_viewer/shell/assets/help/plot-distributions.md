@@ -25,7 +25,7 @@ shows how common each value is. The area under each curve is 1.
 
 Each curve has its own colour, and a legend beside the plot names them (with
 very many groups, every second or third name is shown; hover a curve to
-identify it). The side panel's **Map** changes the colours. Hover a curve to
+identify it). The side panel's **Colour map** changes the colours. Hover a curve to
 read the group, the value, the density there and how many rows the curve is
 built from.
 

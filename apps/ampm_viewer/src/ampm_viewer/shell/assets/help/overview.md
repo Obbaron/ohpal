@@ -30,7 +30,7 @@ A typical session looks like this:
 | **Title bar** | The top row. It holds the tabs, then Undo, Redo, Help and Settings, then the minimise, maximise and close buttons. Drag its empty part to move the window; double-click it to maximise. Drag any edge or corner of the window to resize it. |
 | **Tabs** | *File* (open and set up builds), *Data* (the table), then one tab per plot. |
 | **Toolbar** | Under the tabs. Its buttons change with the tab you are on. Hover a button to see its name. |
-| **Side panel** | On the left. Shows a column's details on the Data tab and the appearance controls on a plot. Toggle it with the first toolbar button. |
+| **Side panel** | On the left. Shows the whole grid, or a column's details, on the Data tab, and the appearance controls on a plot. Toggle it with the first toolbar button. |
 | **Status bar** | At the bottom: the latest message, progress, and **Show log**, which opens the [log](help:settings-log). |
 
 ## Getting help

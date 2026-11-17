@@ -337,7 +337,7 @@ class DataTab(QWidget):
         except Exception:  # noqa: BLE001
             nonnull = rows
         is_float = bool(series.dtype.is_float())
-        return {
+        info = {
             "name": name,
             "rows": rows,
             "nonnull": nonnull,
@@ -345,6 +345,38 @@ class DataTab(QWidget):
             "is_float": is_float,
             "sigfigs": self.model.sigfigs(name),
         }
+        info.update(_column_stats(series))
+        return info
+
+    def grid_columns(self) -> list[tuple[str, str, bool]]:
+        """``(name, kind, visible)`` for every column, in the grid's order;
+        ``kind`` is float / int / text / bool / date / other."""
+        header = self.table.horizontalHeader()
+        cols = self.model.columns
+        series = self.model._series
+        out = []
+        for visual in range(header.count()):
+            i = header.logicalIndex(visual)
+            if 0 <= i < len(cols):
+                out.append((cols[i], _kind(series[i].dtype),
+                            not header.isSectionHidden(i)))
+        return out
+
+    def grid_sigfigs(self) -> int | None:
+        """The sig figs every decimal column shares (None: they differ)."""
+        values = {self.model.sigfigs(c) for c, k, _v in self.grid_columns()
+                  if k == "float"}
+        return values.pop() if len(values) == 1 else None
+
+    def select_column(self, name: str) -> None:
+        """Select a column (as a header click would) and bring it into view."""
+        cols = self.model.columns
+        if name not in cols:
+            return
+        c = cols.index(name)
+        self.table.selectColumn(c)
+        top = self.table.rowAt(0)
+        self.table.scrollTo(self.model.index(max(top, 0), c))
 
     def set_column_sigfigs(self, name: str, n: int) -> None:
         """Set a float column's display significant figures (live)."""
@@ -651,3 +683,41 @@ class DataTab(QWidget):
             self._applying = False
             self._capture_names()
             self._last_state = bytes(header.saveState())
+
+
+def _kind(dtype) -> str:
+    if dtype.is_float():
+        return "float"
+    if dtype.is_integer():
+        return "int"
+    name = str(dtype)
+    if name in ("String", "Utf8", "Categorical", "Enum") or name.startswith(("Categorical", "Enum")):
+        return "text"
+    if name == "Boolean":
+        return "bool"
+    if dtype.is_temporal():
+        return "date"
+    return "other"
+
+
+def _column_stats(series, bins: int = 40) -> dict:
+    """Summary numbers for the side panel: min / max / mean / std and a
+    histogram for a numeric column, the distinct count otherwise."""
+    import numpy as np
+
+    kind = _kind(series.dtype)
+    try:
+        if kind in ("float", "int"):
+            values = series.drop_nulls()
+            if kind == "float":
+                values = values.filter(values.is_finite())
+            if len(values) == 0:
+                return {}
+            lo, hi = values.min(), values.max()
+            arr = values.to_numpy()
+            counts, _edges = np.histogram(arr, bins=bins if hi != lo else 1)
+            return {"min": lo, "max": hi, "mean": float(values.mean()),
+                    "std": float(values.std() or 0.0), "hist": counts.tolist()}
+        return {"distinct": int(series.n_unique())}
+    except Exception:  # noqa: BLE001 - a summary is never worth an error
+        return {}

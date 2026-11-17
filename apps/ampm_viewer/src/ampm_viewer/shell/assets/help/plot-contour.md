@@ -55,7 +55,7 @@ exist, leaves the rest blank and does not draw the level lines.
 ## Colours
 
 A contour plot starts on the **viridis** colour map. Change the map in the
-side panel, and narrow **Min** and **Max** to spend the bands on the part of
+side panel, and narrow the **Range** handles to spend the bands on the part of
 the range you care about: the levels are recalculated to fit.
 
 ## See also

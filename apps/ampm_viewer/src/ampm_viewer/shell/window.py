@@ -181,6 +181,16 @@ class MainWindow(QMainWindow):
         self.panel.closed.connect(self._close_panel)
         self.panel.columnRenamed.connect(self._rename_column_from_panel)
         self.panel.sigFigsChanged.connect(self._set_column_sigfigs)
+        self.panel.columnClosed.connect(self._close_column_panel)
+        self.panel.columnPicked.connect(self._pick_column)
+        self.panel.columnVisibilityChanged.connect(
+            lambda n, v: self._run("set_visible", name=n, visible=v))
+        self.panel.filterAddRequested.connect(self._on_filter)
+        self.panel.filterEditRequested.connect(self._edit_filter_at)
+        self.panel.filterRemoveRequested.connect(self._remove_filter_at)
+        self.panel.filtersClearRequested.connect(self._on_reset_filters)
+        self.panel.gridSigFigsChanged.connect(self._set_grid_sigfigs)
+        self._grid_counts = (0, 0)  # the grid's rows: (shown, total)
         self._wire_panel_controls()
         self.panel.setVisible(False)  # hidden by default; opens when relevant
         # The Data tab keeps its own panel-open preference, so a plot tab
@@ -194,7 +204,7 @@ class MainWindow(QMainWindow):
         content.setStretchFactor(1, 1)
         content.setCollapsible(0, True)
         content.setCollapsible(1, False)
-        content.setSizes([260, 1040])
+        content.setSizes([290, 1010])
         root.addWidget(content, 1)
 
         self._init_statusbar()
@@ -326,6 +336,7 @@ class MainWindow(QMainWindow):
             self._data_tab.set_persisted_state(
                 self._pending_grid_state, *self._pending_grid_layout)
             self._data_tab.layoutChanged.connect(self._save_ui)
+            self._data_tab.layoutChanged.connect(self._refresh_grid_panel)
             self._data_tab.renameRequested.connect(self._rename_column)
             self._data_tab.columnActivated.connect(self._open_column_panel)
             self._data_tab.columnSelectionChanged.connect(self._on_column_selection)
@@ -478,6 +489,8 @@ class MainWindow(QMainWindow):
             self.controller.filters(), result.shown_rows, result.total_rows,
             self._remove_filter_at, self._edit_filter_at,
         )
+        self._grid_counts = (result.shown_rows, result.total_rows)
+        self._refresh_grid_panel()
         if not self._quiet_refresh:
             self._select_widget(self._data_tab)
         # A changed column set (new derived column, or a rebuild with a
@@ -1103,7 +1116,59 @@ class MainWindow(QMainWindow):
         if widget is None or widget.property("tabkind") != "data":
             return
         info = self._data_tab.column_info(col) if col else None
-        self.panel.show_column_info(info)
+        if info is None:
+            self.panel.show_grid_info(self._grid_panel_info())
+        else:
+            self.panel.show_column_info(info)
+
+    # -- the whole grid in the side panel (no column selected) -----------
+    def _grid_panel_info(self) -> dict:
+        dt = self._data_tab
+        if dt is None:
+            return {}
+        shown, total = self._grid_counts
+        return {
+            "rows": shown, "total": total,
+            "layer": self.session.current_layer,
+            "layers": len(self.controller.available_layers() or []),
+            "columns": dt.grid_columns(),
+            "filters": self.controller.filters(),
+            "sigfigs": dt.grid_sigfigs(),
+        }
+
+    def _refresh_grid_panel(self, *_a) -> None:
+        """Keep the panel's grid page current while it is showing."""
+        if (self._data_tab is None or not self.panel.isVisible()
+                or not self.panel.showing_grid()):
+            return
+        widget = self.stack.currentWidget()
+        if widget is None or widget.property("tabkind") != "data":
+            return
+        self.panel.show_grid_info(self._grid_panel_info())
+
+    def _close_column_panel(self) -> None:
+        """The column page's back button: the whole grid again."""
+        if self._data_tab is not None:
+            self._data_tab.clear_selection()
+        self.panel.show_grid_info(self._grid_panel_info())
+
+    def _pick_column(self, name: str) -> None:
+        """A column picked from the grid page: select it and show it."""
+        if self._data_tab is None:
+            return
+        self._data_tab.select_column(name)
+        info = self._data_tab.column_info(name)
+        if info is not None:
+            self.panel.show_column_info(info)
+
+    def _set_grid_sigfigs(self, n: int) -> None:
+        """Every decimal column to ``n`` significant figures."""
+        dt = self._data_tab
+        if dt is None:
+            return
+        for name, kind, _visible in dt.grid_columns():
+            if kind == "float":
+                dt.set_column_sigfigs(name, n)
 
     def _reset_selection(self) -> None:
         if self._data_tab is not None:
@@ -1418,6 +1483,7 @@ class MainWindow(QMainWindow):
         for key, btn in self._global_btns.items():
             btn.setIcon(icons.ui(key, color))
         self._win_btns.retint(color)
+        self.panel.retint()
         self._sync_toolbar(self.tabbar.currentIndex())  # rebuild with new colour
         self.backstage.apply_icons(color)
 
@@ -1458,6 +1524,7 @@ class MainWindow(QMainWindow):
             self.panel.setVisible(self._panel_data_open)
             if self._panel_data_open:
                 self.panel.show_for(kind)
+                self._show_selection_in_panel(kind)
 
         self.toolbar.clear()
         if kind == "file":
@@ -2223,8 +2290,11 @@ class MainWindow(QMainWindow):
         plot's element (else its controls)."""
         if kind == "data" and self._data_tab is not None:
             cols = self._data_tab.selected_columns()
-            self.panel.show_column_info(
-                self._data_tab.column_info(cols[0]) if cols else None)
+            info = self._data_tab.column_info(cols[0]) if cols else None
+            if info is None:
+                self.panel.show_grid_info(self._grid_panel_info())
+            else:
+                self.panel.show_column_info(info)
         elif kind == "plot" and self._active_plot is not None:
             key = self._active_plot.selected_element()
             if key:

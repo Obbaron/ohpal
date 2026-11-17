@@ -133,7 +133,7 @@ tk.set_colormap("viridis"); assert tk._dist_data is cached, "a recolour reuses t
 assert tk._curve_data.colors.shape == (20, 4)
 w.tabbar.setCurrentIndex(w.stack.indexOf(tk)); app.processEvents()
 w.panel.sync_plot(tk.panel_state())
-assert not w.panel.colour_box.isHidden() and not w.panel.map_combo.isHidden() and w.panel.min_slider.isHidden() and w.panel.points_box.isHidden()
+assert not w.panel.colour_box.isHidden() and not w.panel.map_combo.isHidden() and w.panel.range_bar.isHidden() and w.panel.points_box.isHidden()
 tv = w._open_plot(PlotSpec(kind=VIOLIN, x="part_id", y=MP), ("all", None, None)); drain()
 assert tv._violin_data.n == 20 and tv._violin_marks is not None and len(tv._categories[1]) == 20
 assert tv._xaxis.visible and tv._categories is not None and tv.panel_state()["has_color"] and not tv.panel_state()["map_only"]

@@ -56,7 +56,18 @@ Plotly figure builders, which the app replaces.
   min samples, layers per chunk and chunk overlap) are on the setup page, start
   from `config.toml` and are kept per build. It runs in the background as a separate process: the status bar shows
   which chunk it is on, and **Cancel** (or closing the app) stops it at once.
-- **Data tab.** A virtualised table of one layer; column info in the side panel;
+- **Side panel** in cards on a tinted background. On the Data tab with no
+  column selected it shows the whole grid: rows (and how many the filters
+  leave), columns, layer and filters at a glance; the filters, to edit, remove
+  or clear; significant figures for every decimal column at once; and every
+  column, to find, show or hide, or open. A column shows its type, a
+  histogram, rows, empty cells, min, max, mean and standard deviation (distinct
+  values for text) and its significant figures with an example. On a plot:
+  marker buttons, size and opacity with their values, a gallery of colour
+  maps, and the colour range as two handles on the colour bar, labelled with
+  the values they sit at. An element's editor groups its properties in cards,
+  with font and size on one row and bold, italic and alignment as buttons.
+- **Data tab.** A virtualised table of one layer; column details in the side panel;
   rename, hide, remove and restore columns; calculated columns (a formula language
   with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
   if / elif / else rules; filters; a column from Excel; export to Excel.

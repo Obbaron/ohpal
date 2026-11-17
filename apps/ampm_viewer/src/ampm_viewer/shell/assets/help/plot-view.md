@@ -2,7 +2,7 @@
 title: Viewing and styling a plot
 section: Plots
 order: 70
-keywords: zoom, pan, rotate, reset view, axes, grid, bbox, legend, colour bar, title, screenshot, image, save, marker, size, opacity, colormap, colour map, scale, log, min, max, panel, toolbar, options, equal axes, aspect, 3d view, top, front, side, iso, bins, sort, bandwidth, fill
+keywords: zoom, pan, rotate, reset view, axes, grid, bbox, legend, colour bar, title, screenshot, image, save, marker, size, opacity, colormap, colour map, scale, log, min, max, range, panel, toolbar, options, equal axes, aspect, 3d view, top, front, side, iso, bins, sort, bandwidth, fill
 ---
 # Viewing and styling a plot
 
@@ -61,7 +61,7 @@ later changes to these options.
 The panel holds the controls you adjust by eye. Changes apply immediately.
 Like the toolbar, it shows only what applies: **Points** on plots drawn as
 points (scatter and layer plots), **Colour** when something on the plot
-follows a colour map.
+follows a colour map (it names the column the colours come from).
 
 ### Points
 
@@ -73,13 +73,15 @@ follows a colour map.
 
 Shown when the plot is coloured by a numeric column, or by a map alone.
 
-- **Map**: the colour map.
+- **Colour map**: click one of the maps.
 - **Scale**: **Linear** or **Log**.
-- **Min** and **Max**: narrow the colour range to bring out differences.
-  They are percentages of the column's full range: values below Min take the
-  first colour, values above Max the last.
+- **Range**: drag the two handles on the colour bar to narrow the range and
+  bring out differences. The values under the bar are where the handles sit,
+  and the percentages above are their share of the column's full range:
+  values below the low handle take the first colour, values above the high one
+  the last.
 
-Only **Map** is shown where the colours mark groups rather than values: the
+Only **Colour map** is shown where the colours mark groups rather than values: the
 curves of a KDE, and a scatter plot coloured by a text column with more
 than eight categories. Up to eight categories use a fixed set of distinct
 colours, and the Colour group is not shown.

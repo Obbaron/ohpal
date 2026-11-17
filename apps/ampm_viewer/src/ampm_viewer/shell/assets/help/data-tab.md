@@ -2,7 +2,7 @@
 title: The Data tab
 section: Data
 order: 10
-keywords: data, grid, table, layer, columns, header, select, reorder, resize, panel, sig figs, significant figures, column info, hide, show
+keywords: data, grid, table, layer, columns, header, select, reorder, resize, panel, sig figs, significant figures, column info, hide, show, histogram, statistics, filters, find a column
 context: data
 ---
 # The Data tab
@@ -36,15 +36,35 @@ filters, renames) apply to every layer and to every plot.
 
 Order, widths and hidden columns are remembered for each build.
 
+## The side panel
+
+Open it with the toolbar's first button. With no column selected it shows the
+whole grid:
+
+- **Grid**: how many rows show (out of how many, when filters hide some), how
+  many columns show, the layer and the number of filters.
+- **Filters**: each filter; click one to edit it, or its cross to remove it.
+  **Add filter** and **Clear all** do what the toolbar's filter buttons do.
+- **Display**: **Significant figures** for every decimal column at once.
+- **Columns**: every column, with a box to show or hide it. Type in **Find a
+  column** to narrow the list, click a name to open that column, or press
+  **Show all**.
+
 ## Column details
 
-Double-click any cell to open that column in the side panel. It shows the
-column's name (editable), how many rows it has and how many are empty, and its
-type. For decimal columns, **Sig figs** sets how many significant figures the
-table displays; it changes the display only, never the values.
+Double-click any cell, or click a name in the panel's column list, to open
+that column in the side panel. It shows:
 
-While the panel is open it follows the column you select, and opening it
-(the toolbar's panel button) shows the selected column.
+- **Column**: its name (edit it to rename the column) and its type.
+- **Values**: a histogram of a numeric column, with its rows, empty cells,
+  min, max, mean and standard deviation; for text, the number of distinct
+  values.
+- **Display**: for decimal columns, **Significant figures** sets how many the
+  table displays, with an example of how values will look. It changes the
+  display only, never the values.
+
+While the panel is open it follows the column you select. **All columns**
+at the top goes back to the whole grid.
 
 ## What else you can do here
 
