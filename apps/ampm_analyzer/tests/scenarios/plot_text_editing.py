@@ -139,10 +139,10 @@ t3.set_element("zaxis3d", "text", "Height"); t3.set_element("zaxis3d", "size", 1
 assert t3._axis_labels[2].text == "Height" and t3._axis_labels[2].font_size == 16
 t3.set_dataframe(t3._df); assert t3._axis_labels[2].text == "Height" and t3._axis_labels[2].font_size == 16, "styling survives a re-render"
 tb = w._open_plot(PlotSpec(kind="Bar", x="layer", y=MP, agg="mean"), ("all", None, None)); drain()
-assert tb._bar_labels and tb.element_auto_text("yaxis") == tb._bar_data.value_name == tb._yaxis.axis.axis_label
+assert tb._categories and tb.element_auto_text("yaxis") == tb._bar_data.value_name == tb._yaxis.axis.axis_label
 tb.set_element("categories", "size", 12); tb.set_element("categories", "bold", True)
-assert all(t.font_size == 12 and t.bold for t in tb._bar_labels)
-tb.set_dataframe(tb._df); assert all(t.font_size == 12 and t.bold for t in tb._bar_labels)
+cat = tb._xaxis.axis._text; assert cat.font_size == 12 and cat.bold, "the names are the x axis labels"
+tb.set_dataframe(tb._df); assert cat.font_size == 12 and cat.bold
 tb.elementActivated.emit("cbar"); assert panel.el_heading.text() == "Colour bar" and ctl("text").placeholderText() == tb._cbar_auto
 ctl("num_size").setValue(9); assert all(t.font_size == 9 for t in tb._cbar.ticks)
 print("3D axis labels, category labels and the colour bar are editable and survive re-renders")

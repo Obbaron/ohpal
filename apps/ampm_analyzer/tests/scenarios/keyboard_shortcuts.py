@@ -33,4 +33,8 @@ n = len(w.actions.history._undo)
 w._run("set_visible", name="k1", visible=False); assert len(w.actions.history._undo) == n + 1
 QTest.keyClick(w, Qt.Key.Key_Z, C) if False else w._undo()
 assert "k1" not in w._data_tab.hidden_columns()
-print("SHORTCUT CHECKS PASS"); w.controller.shutdown()
+w.controller.shutdown(); w.close(); app.processEvents()
+print("SHORTCUT CHECKS PASS", flush=True)
+# Leave without Python tearing Qt down object by object: under a loaded
+# machine that teardown has crashed (after every check passed).
+os._exit(0)

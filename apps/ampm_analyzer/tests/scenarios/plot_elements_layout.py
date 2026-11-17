@@ -200,6 +200,45 @@ assert tk.element_keys()[-2:] == ["legend", "data_curves"]
 tk.set_element("data_curves", "line_width", 5); assert all(float(l.width) == 5.0 for l in tk._curve_lines)
 print("bars: width, outline; histogram bins touch; curves: line width")
 
+# --- crowded labels: turned, thinned, never overlapping ----------------------------------------------
+w._select_widget(tb); app.processEvents()
+tb.elementActivated.emit("categories")
+assert "angle" in panel._el_controls and ctl("angle").currentData() == "auto"
+settle = lambda t: [(t._canvas.update(), app.processEvents(), time.sleep(0.02)) for _ in range(15)]
+settle(tb); tb._xaxis.axis.ticker._get_tick_frac_labels()
+names = tb._categories[1]; assert len(names) == 20
+angle, nth, depth = tb._cat_layout
+fm = tb._label_metrics(tb._el_style["categories"])
+slot = float(tb._view.size[0]) / float(tb._view.camera.rect.width)
+widest = max(fm.horizontalAdvance(n) for n in names)
+assert (angle == 0) == (widest + 6 <= slot), (angle, widest, slot)   # turned only if they'd touch
+assert tb._xaxis.axis._text.rotation == -angle
+ctl("angle").setCurrentIndex(ctl("angle").findData("0"))
+labels = tb._xaxis.axis.ticker._get_tick_frac_labels()[2]
+shown = [l for l in labels if l]
+assert tb._cat_layout[0] == 0 and (len(shown) == len(labels) or len(shown) * (widest + 6) <= slot * len(labels) + widest), \
+    "flat names are thinned to fit"
+flat_nth = tb._cat_layout[1]; assert flat_nth == max(1, int(np.ceil((widest + 6) / slot)))
+ctl("angle").setCurrentIndex(ctl("angle").findData("90"))
+tb._xaxis.axis.ticker._get_tick_frac_labels(); settle(tb)
+assert tb._cat_layout[0] == 90 and tb._xaxis.axis._text.rotation == -90
+assert tb._xaxis.height_max > 42, "the strip deepens for turned names"
+print(f"category names: {angle} degrees automatically ({slot:.0f} px each); flat ones thinned to every {flat_nth}")
+# numbers: a big font and many ticks leave every 2nd... blank, never overlapping
+t2 = w._open_plot(PlotSpec(kind="2D Scatter", x=X, y=Y, color=MP), ALL); drain()
+t2.set_element("xaxis", "ticks", 12); t2.set_element("xaxis", "format", "sci"); t2.set_element("xaxis", "tick_size", 16)
+settle(t2)
+fr, _, lab = t2._xaxis.axis.ticker._get_tick_frac_labels()
+fm = t2._label_metrics(t2._el_style["xaxis"], "tick_")
+xs = [f * float(t2._view.size[0]) for f, l in zip(fr, lab) if l]
+ws = [fm.horizontalAdvance(l) for l in lab if l]
+assert len(xs) < len(lab), "some numbers left out"
+assert all(b - a >= (wa + wb) / 2 for a, b, wa, wb in zip(xs, xs[1:], ws, ws[1:])), "the rest don't overlap"
+t2.set_element("cbar", "num_ticks", 12); t2.set_element("cbar", "num_size", 20)
+settle(t2); t2._place_cbar_ticks()
+assert t2._cbar_extra and not all(x.visible for x in t2._cbar_extra), "colour bar numbers too"
+print("numbers: thinned on axes and the colour bar when they'd overlap")
+
 # --- pop out keeps it all ------------------------------------------------------------------------
 w.tabbar.setCurrentIndex(w.stack.indexOf(tl)); app.processEvents()
 tl.set_element("title", "align", "left")

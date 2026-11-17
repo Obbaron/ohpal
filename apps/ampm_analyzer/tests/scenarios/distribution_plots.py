@@ -135,8 +135,8 @@ w.tabbar.setCurrentIndex(w.stack.indexOf(tk)); app.processEvents()
 w.panel.sync_plot(tk.panel_state())
 assert not w.panel.colour_box.isHidden() and not w.panel.map_combo.isHidden() and w.panel.min_slider.isHidden() and w.panel.points_box.isHidden()
 tv = w._open_plot(PlotSpec(kind=VIOLIN, x="part_id", y=MP), ("all", None, None)); drain()
-assert tv._violin_data.n == 20 and tv._violin_marks is not None and len(tv._bar_labels) == 20
-assert not tv._xaxis.visible and tv.panel_state()["has_color"] and not tv.panel_state()["map_only"]
+assert tv._violin_data.n == 20 and tv._violin_marks is not None and len(tv._categories[1]) == 20
+assert tv._xaxis.visible and tv._categories is not None and tv.panel_state()["has_color"] and not tv.panel_state()["map_only"]
 assert "categories" in tv.element_keys()
 cached = tv._dist_data; tv.set_color_min(30); assert tv._dist_data is cached and tv.crange[0] > tv._full_range[0]
 td = w._open_plot(default_spec(KDIST, cols, s.renames, dbscan=c.dbscan_params()), ("all", None, None)); drain()

@@ -50,7 +50,9 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   plot, gap, thickness), a framed **legend box** for groups (beside the plot or
   inside a corner) and the data itself (marker, bar width and outline, line
   widths, fill opacity, level lines, colour map). Hiding the title, axes or
-  legend gives their room to the plot.
+  legend gives their room to the plot. Labels never overlap: category names
+  turn (automatically, or at a chosen angle) and thin out when crowded, and
+  axis and colour-bar numbers thin out the same way.
 - **Plots are kept with their build.** A build's plots (with their styling and
   filters) reopen when the build is opened again, drawn from its current data.
   Opening another build closes them; rebuilding the DataStore clears them.

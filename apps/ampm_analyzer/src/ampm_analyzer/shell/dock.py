@@ -379,9 +379,9 @@ class SidePanel(QWidget):
         self.el_reset_btn.setMenu(menu)
         buttons.addWidget(self.el_reset_btn)
         buttons.addStretch(1)
-        lay.addLayout(buttons)
-
+        # At the foot of the panel, out of the way of the properties.
         lay.addStretch(1)
+        lay.addLayout(buttons)
         return w
 
     def element_key(self) -> str | None:

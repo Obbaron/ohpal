@@ -352,8 +352,12 @@ class PlotTab(QWidget):
 
         # Bar plot visuals (a quad mesh + a baseline x-axis + category labels).
         self._bars = None
-        self._bar_axis = None   # horizontal baseline (the x axis) under the bars
-        self._bar_labels: list = []
+        # A category x axis (bars, CoV, violins): the x axis's ticks sit on
+        # the categories and are labelled with their names, turned and
+        # thinned so they never overlap (see _category_fracs).
+        self._categories = None   # (centers, names), or None
+        self._cat_layout = (0, 1, 0.0)   # (angle, every nth, depth px) in use
+        self._cat_depth = None           # the depth the x strip is sized for
         self._bar_data = None
 
         # Distribution plots. Curves (KDE, k-distance): one line each over a
@@ -769,45 +773,112 @@ class PlotTab(QWidget):
         self._bar_outline.order = 1
 
     def _draw_category_axis(self, centers, labels, ymin, ymax, xlo, xhi) -> float:
-        """A category x axis: a rule just below ``ymin`` and the category
-        labels hanging under it (so they read as tick labels, not as text in
-        the plot). Returns the lowest y the view should frame."""
-        from vispy import scene
-
-        for t in self._bar_labels:
-            t.parent = None
-        self._bar_labels = []
-        gap = 0.045 * (ymax - ymin)
-        axis_y = ymin - 0.35 * gap
-        label_y = ymin - gap
-        # The labels hang from just under the rule, so a bigger font grows
-        # downwards, away from the data. (VisPy's "bottom" anchor is the
-        # text's top edge in a y-up view.)
-        hang_y = ymin - 0.45 * gap
-        for i, label in enumerate(labels):
-            t = scene.visuals.Text(
-                label, pos=(float(centers[i]), hang_y), color=_AXIS_TEXT,
-                anchor_x="center", anchor_y="bottom", font_size=9,
-                parent=self._view.scene)
-            self._bar_labels.append(t)
-        axis_pos = np.array([[xlo, axis_y], [xhi, axis_y]], "float32")
-        if self._bar_axis is None:
-            self._bar_axis = scene.visuals.Line(
-                pos=axis_pos, color=_AXIS_TICK, width=1.0,
-                parent=self._view.scene)
-        else:
-            self._bar_axis.set_data(pos=axis_pos)
-            if self._bar_axis.parent is None:
-                self._bar_axis.parent = self._view.scene
-        self._bar_axis.visible = self._show_axes
-        return label_y  # frame the labels in (reset_view adds glyph room)
+        """A category x axis: the x axis's ticks on the categories, labelled
+        with their names (laid out as they fit: _category_fracs). Returns the
+        lowest y the view should frame."""
+        self._categories = (np.asarray(centers, dtype="float64"),
+                            [str(n) for n in labels])
+        self._cat_depth = None  # size the strip for these names
+        if self._xaxis is not None:
+            self._xaxis.axis._need_update = True
+            self._xaxis.axis.update()
+        return ymin
 
     def _clear_category_axis(self) -> None:
-        for t in self._bar_labels:
-            t.parent = None
-        self._bar_labels = []
-        if self._bar_axis is not None:
-            self._bar_axis.parent = None
+        self._categories = None
+        if self._xaxis is not None:
+            self._xaxis.axis._text.rotation = 0
+            self._xaxis.axis.ticker._anchors = None
+
+    def _label_metrics(self, st: dict, prefix: str = "") -> QFontMetricsF:
+        font = QFont(st.get(prefix + "font") or pe.DEFAULT_FONT)
+        font.setPixelSize(max(1, int(round(self._px(st.get(prefix + "size", 9))))))
+        font.setBold(bool(st.get(prefix + "bold", False)))
+        font.setItalic(bool(st.get(prefix + "italic", False)))
+        return QFontMetricsF(font)
+
+    def _category_layout(self) -> tuple[int, int, float]:
+        """How the category names fit under the plot right now: (angle in
+        degrees, show every nth, depth in px). Automatic turns them only as
+        far as they need (0, 45, then 90 degrees); names still too close are
+        thinned to every 2nd, 3rd..."""
+        centers, names = self._categories
+        st = self._el_style["categories"]
+        fm = self._label_metrics(st)
+        w = max((fm.horizontalAdvance(n) for n in names), default=0.0)
+        h = fm.height()
+        step = float(np.median(np.diff(np.sort(centers)))) if len(centers) > 1 else 1.0
+        try:
+            slot = abs(step) * float(self._view.size[0]) / float(
+                self._view.camera.rect.width)
+        except Exception:  # noqa: BLE001
+            slot = 0.0
+        if not np.isfinite(slot) or slot <= 0:
+            slot = 1e9  # not laid out yet: no thinning
+        gap = 6.0
+
+        def every(angle: int) -> int:
+            need = (w if angle == 0 else h * 1.414 if angle == 45 else h) + gap
+            return max(1, int(np.ceil(need / slot)))
+
+        choice = st.get("angle", "auto")
+        if choice == "auto":
+            angle = next((a for a in (0, 45, 90) if every(a) == 1), 90)
+        else:
+            angle = int(choice)
+        depth = h if angle == 0 else 0.707 * (w + h) if angle == 45 else w
+        return angle, every(angle), depth
+
+    def _category_fracs(self, axis):
+        """The x axis's ticks for a category axis: one per category in view,
+        labelled with its name (every nth when they'd crowd), turned as the
+        layout says."""
+        centers, names = self._categories
+        angle, nth, depth = self._category_layout()
+        self._cat_layout = (angle, nth, depth)
+        lo, hi = (float(v) for v in axis.domain)
+        flip = hi < lo
+        if flip:
+            lo, hi = hi, lo
+        span = (hi - lo) or 1.0
+        inside = [i for i, c in enumerate(centers) if lo - 1e-9 <= c <= hi + 1e-9]
+        frac = np.array([(centers[i] - lo) / span for i in inside], "float64")
+        if flip:
+            frac = 1.0 - frac
+        # By category number, so the names shown don't change as you pan.
+        labels = [names[i] if i % nth == 0 else "" for i in inside]
+        text = axis._text
+        if float(np.asarray(text.rotation).reshape(-1)[0]) != -angle:
+            text.rotation = -angle   # counter-clockwise: reads upwards
+        axis.ticker._anchors = None if angle == 0 else ("right", "middle")
+        if self._cat_depth is None or abs(depth - self._cat_depth) > 1.0:
+            QTimer.singleShot(0, lambda: self._apply_element("xaxis"))
+        return frac, np.zeros(0), labels
+
+    def _thin_labels(self, key: str, axis, fracs, labels):
+        """Blank every 2nd, 3rd... number when they would overlap (a large
+        font, a long format, many ticks): the ticks stay."""
+        widget = self._xaxis if key == "xaxis" else self._yaxis
+        fracs = np.asarray(fracs, "float64")
+        if widget is None or len(labels) < 2 or fracs.size != len(labels):
+            return labels
+        st = self._el_style.get(key, {})
+        fm = self._label_metrics(st, "tick_")
+        try:
+            length = float(self._view.size[0 if key == "xaxis" else 1])
+        except Exception:  # noqa: BLE001
+            return labels
+        step = float(np.min(np.abs(np.diff(fracs)))) * length if fracs.size > 1 else 0.0
+        if step <= 0:
+            return labels
+        if key == "xaxis":
+            need = max(fm.horizontalAdvance(str(t)) for t in labels) + 8.0
+        else:
+            need = fm.height() + 2.0
+        nth = max(1, int(np.ceil(need / step)))
+        if nth == 1:
+            return labels
+        return [t if i % nth == 0 else "" for i, t in enumerate(labels)]
 
     # -- distribution plots: KDE, k-distance, violins ------------------
     def _chart_view(self) -> None:
@@ -1559,13 +1630,25 @@ class PlotTab(QWidget):
                 return
             p0 = np.asarray(low.pos, dtype="float64").reshape(-1)[:2]
             p1 = np.asarray(high.pos, dtype="float64").reshape(-1)[:2]
+            # Numbers that would overlap a neighbour (a short bar, a big
+            # font, many ticks) are left out; the two ends always show.
+            fm = self._label_metrics(self._el_style["cbar"], "num_")
+            across = self._cbar_orient == "bottom"
+            size = ((lambda t: fm.horizontalAdvance(str(t))) if across
+                    else (lambda t: fm.height()))
+            length = float(np.linalg.norm(p1 - p0))
+            kept = [(0.0, size(low.text)), (length, size(high.text))]
             for label, frac in zip(self._cbar_extra, self._cbar_extra_at):
                 pos = p0 + (p1 - p0) * frac
                 old = np.asarray(label.pos, dtype="float64").reshape(-1)[:2]
                 if not np.allclose(old, pos, atol=0.25):
                     label.pos = (float(pos[0]), float(pos[1]))
                 label.anchors = low.anchors
-                label.visible = bool(self._cbar.visible)
+                at, ext = frac * length, size(label.text)
+                fits = all(abs(at - a) >= (ext + e) / 2 + 3 for a, e in kept)
+                if fits:
+                    kept.append((at, ext))
+                label.visible = bool(self._cbar.visible) and fits
         except Exception:  # noqa: BLE001 - labels are cosmetic
             pass
 
@@ -1736,10 +1819,8 @@ class PlotTab(QWidget):
         if self._yaxis is not None:
             self._yaxis.visible = self._show_axes
         if self._xaxis is not None:
-            # Category bars use text labels, not the numeric x axis; histograms
-            # keep the numeric x axis.
-            self._xaxis.visible = self._show_axes and not (
-                self.spec.is_bar or self.spec.is_cov or self.spec.is_violin)
+            # (A category axis is the x axis too, labelled with the names.)
+            self._xaxis.visible = self._show_axes
         if self._gridlines is not None:
             self._gridlines.visible = self._show_grid
         if self._floor is not None:
@@ -1747,10 +1828,6 @@ class PlotTab(QWidget):
         if self._bbox is not None:
             self._bbox.visible = self._show_bbox
         for t in self._axis_labels:
-            t.visible = self._show_axes
-        if self._bar_axis is not None:
-            self._bar_axis.visible = self._show_axes
-        for t in self._bar_labels:
             t.visible = self._show_axes
         legend = self._show_legend and self._has_legend
         box = legend and self._legend_items is not None
@@ -1998,7 +2075,8 @@ class PlotTab(QWidget):
             return (self._show_axes
                     and _AXIS3D_KEYS.index(key) < len(self._axis_labels))
         if key == "categories":
-            return self._show_axes and bool(self._bar_labels)
+            return (self._categories is not None and self._xaxis is not None
+                    and bool(self._xaxis.visible))
         if key == "cbar":
             return self._cbar is not None and bool(self._cbar.visible)
         if key == "legend":
@@ -2154,9 +2232,8 @@ class PlotTab(QWidget):
                     label = self._axis_labels[i]
                     label.text = st.get("text") or self._auto_text(key)
                     _style_text(label, st)
-            elif key == "categories":
-                for label in self._bar_labels:
-                    _style_text(label, st)
+            elif key == "categories":  # the x axis's labels
+                self._apply_axis("xaxis", self._el_style["xaxis"])
             elif key == "cbar":
                 self._apply_cbar(st)
             elif key == "legend":
@@ -2238,7 +2315,11 @@ class PlotTab(QWidget):
         axis = widget.axis
         axis.axis_label = st.get("text") or self._auto_text(key)
         _style_text(axis._axis_label_vis, st)
-        _style_text(axis._text, st, "tick_")
+        category = key == "xaxis" and self._categories is not None
+        if category:  # its labels are the category names: their own style
+            _style_text(axis._text, self._el_style["categories"])
+        else:
+            _style_text(axis._text, st, "tick_")
         line = st.get("line_color", _AXIS_TICK) if st.get("line") else _AXIS_LINE
         if str(axis.axis_color) != str(line):
             axis.axis_color = line
@@ -2250,7 +2331,9 @@ class PlotTab(QWidget):
                 self._grid_rgba = want
                 self._gridlines._grid_color_fn["color"] = want
                 self._gridlines.update()
-        sig = (st.get("ticks"), st.get("format"), st.get("decimals"))
+        sig = (st.get("ticks"), st.get("format"), st.get("decimals"),
+               tuple(sorted(self._el_style.get("categories", {}).items()))
+               if category else None)
         if self._tick_sig.get(key) != sig:  # new ticks: lay out again
             self._tick_sig[key] = sig
             axis._need_update = True
@@ -2258,6 +2341,11 @@ class PlotTab(QWidget):
         # Bigger fonts need a deeper strip and the title pushed further out.
         d_title = self._px(st["size"]) - self._px(9)
         d_tick = self._px(st["tick_size"]) - self._px(8)
+        if category:
+            # The names may be turned: the strip is as deep as they reach.
+            depth = self._category_layout()[2]
+            self._cat_depth = depth
+            d_tick = depth - 1.25 * self._px(8)
         if key == "xaxis":  # tick labels stack above the title
             axis.axis_label_margin = max(
                 16.0, _AXIS_LABEL_MARGIN + d_tick + 0.5 * d_title)
@@ -2276,6 +2364,12 @@ class PlotTab(QWidget):
             lambda k=key, own=own, axis=axis: self._tick_fracs(k, own, axis))
 
     def _tick_fracs(self, key: str, own, axis):
+        if key == "xaxis" and self._categories is not None:
+            return self._category_fracs(axis)
+        major, minor, labels = self._tick_values(key, own, axis)
+        return major, minor, self._thin_labels(key, axis, major, labels)
+
+    def _tick_values(self, key: str, own, axis):
         st = self._el_style.get(key, {})
         count = int(st.get("ticks") or 0)
         fmt, dec = st.get("format", "auto"), st.get("decimals", 2)
@@ -2415,6 +2509,8 @@ class PlotTab(QWidget):
                 st.get("text") or self._auto_text(key), st,
                 strip.center().x(), strip.top() + below)
             canvas = QRectF(0, 0, *(float(v) for v in self._canvas.size))
+            if self._categories is not None:  # the names are "categories"
+                return title.intersected(canvas)
             return strip.united(title).intersected(canvas)
         if key == "yaxis":
             return self._widget_rect(self._yaxis)
@@ -2434,14 +2530,13 @@ class PlotTab(QWidget):
                 return None
             text = st.get("text") or self._auto_text(key)
             return self._text_box(text, st, *pts[0])
-        if key == "categories":
-            rect = None
-            for label in self._bar_labels:
-                for x, y in self._scene_points(label, label.pos):
-                    box = self._text_box(str(label.text), st, x, y, top=True)
-                    rect = box if rect is None else rect.united(box)
-            view = self._widget_rect(self._view)
-            return rect.intersected(view) if rect is not None else None
+        if key == "categories":  # the band of names under the x axis
+            strip = self._widget_rect(self._xaxis)
+            axis = self._xaxis.axis
+            top = strip.top() + float(axis.major_tick_length)
+            depth = self._cat_layout[2] + float(axis.tick_label_margin)
+            return QRectF(strip.left(), top - 2, strip.width(),
+                          depth + 6).intersected(strip)
         return None
 
     def _element_at(self, pos, probe: bool = True) -> str | None:
@@ -2948,8 +3043,7 @@ class PlotTab(QWidget):
         self._title_label = None
         self._last_pos = self._last_colors = None
         self._bars = None
-        self._bar_axis = None
-        self._bar_labels = []
+        self._categories = None
         self._bar_data = None
         self._curve_data = None
         self._curve_lines = []

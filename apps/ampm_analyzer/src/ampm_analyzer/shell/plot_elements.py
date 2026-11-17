@@ -214,6 +214,9 @@ def nice_ticks(lo: float, hi: float, count: int) -> list[float]:
 
 
 _GRID = "#000000"
+# Category label angles: Automatic turns them only as far as they need.
+ANGLES = (("auto", "Automatic"), ("0", "Horizontal"), ("45", "45\u00b0"),
+          ("90", "Vertical"))
 _PLACES = (("outside", "Outside, right"), ("top_right", "Inside, top right"),
            ("top_left", "Inside, top left"),
            ("bottom_right", "Inside, bottom right"),
@@ -339,8 +342,13 @@ ELEMENTS: dict[str, Element] = {e.key: e for e in (
     _axis3d("xaxis3d", "X axis label", _AXIS3D[0]),
     _axis3d("yaxis3d", "Y axis label", _AXIS3D[1]),
     _axis3d("zaxis3d", "Z axis label", _AXIS3D[2]),
-    Element("categories", "Category labels", _text_fields(text=False),
-            _text_defaults(9, _AXIS_TEXT, text=False)),
+    # The names under a bar / CoV / violin chart, on its x axis. Too many to
+    # sit side by side: turned (Automatic) and, if still too many, only every
+    # 2nd, 3rd... is shown.
+    Element("categories", "Category labels",
+            (*_text_fields(text=False),
+             Field("angle", "Angle", "choice", "Layout", options=ANGLES)),
+            {**_text_defaults(9, _AXIS_TEXT, text=False), "angle": "auto"}),
     Element("cbar", "Colour bar",
             (*_text_fields("Label"),
              Field("num_font", "Font", "font", "Numbers"),
@@ -432,8 +440,11 @@ def _clean(key: str, style: dict) -> dict:
 
 # Built-in looks that differ for one kind of plot. A contour plot's colour bar
 # is labelled along its whole length, so its numbers start smaller.
+# A category axis shows its rule (a numeric one blends into the background).
+_CATEGORY_AXIS = {"xaxis": {"line": True, "line_color": "#8a94a6"}}
 KIND_DEFAULTS: dict[str, dict[str, dict]] = {
     "Contour": {"cbar": {"num_size": 9}},
+    "Bar": _CATEGORY_AXIS, "CoV Summary": _CATEGORY_AXIS, "Violin": _CATEGORY_AXIS,
     "Histogram": {"data_bars": {"bar_width": 100}},   # bins touch
 }
 

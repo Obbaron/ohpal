@@ -30,7 +30,7 @@ anywhere on a filled contour).
 | **Title** | Text, font, size, bold / italic, colour, and alignment (left, centre or right). The title's text is the plot's name, so it also renames the tab. |
 | **X axis, Y axis** | The axis title (text, font, size, style, colour); the tick labels (font, size, colour); the number of ticks and their format; the axis line; the gridlines. |
 | **3D axis labels** | Text, font, size, style, colour for each of X, Y and Z. |
-| **Category labels** | Font, size, style, colour of the names under a bar chart. |
+| **Category labels** | Font, size, style, colour and angle of the names under a bar, CoV or violin chart. |
 | **Colour bar** | The label; the numbers (font, size, colour, how many, format); where it sits (right of the plot or below it), its gap to the plot and its thickness. |
 | **Legend** | The title; the names (font, size, colour); where it sits (beside the plot or inside a corner of it); the frame and its colour. |
 | **The data** | Depends on the plot, see below. |
@@ -46,6 +46,18 @@ it then follows the column if you rename it.
   how many) or **Scientific** (1.23e+03).
 - The colour bar takes the same settings for its numbers. On a filled
   contour the bar is labelled at its levels; only the format applies.
+
+## Crowded labels
+
+Labels never overlap. Category names that don't fit side by side are turned
+(**Angle: Automatic** turns them only as far as needed: 45 degrees, then
+vertical), and if they are still too close only every 2nd, 3rd... is shown;
+zooming in brings the rest back. Choose **Horizontal**, **45°** or
+**Vertical** to fix the angle. The strip under the chart deepens to fit
+turned names.
+
+Axis numbers and colour-bar numbers that would overlap (a big font, many
+ticks, a long format) are thinned the same way; the ticks stay.
 
 ## Axis line and gridlines
 
