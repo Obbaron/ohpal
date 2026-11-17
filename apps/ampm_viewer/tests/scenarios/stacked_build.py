@@ -91,6 +91,9 @@ assert not f._part_option_enabled(2), "no DBSCAN across steps"
 assert f._part_option_enabled(0), "Direct: every step has a parts CSV"
 assert {"step", "Build time"} <= set(f.columns()), "step and Build time come by default"
 assert f.chk_mask.isEnabled() and f.chk_mask.isChecked()
+assert not any(b.isEnabled() for b in f.browse_buttons.values()), "inputs are each step's own"
+pn = c.part_names("direct")
+assert pn[0].startswith("S1 ") and any(p.startswith("S2 ") for p in pn), pn[:3]
 f.cmb_parts.setCurrentText("Direct")
 wait(s.queryReady, w._on_build_requested); drain()
 print("setup: steps listed, thickness per step, no DBSCAN, step + Build time ticked")

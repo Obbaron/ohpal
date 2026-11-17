@@ -2,7 +2,7 @@
 title: Setting up the DataStore
 section: Getting started
 order: 30
-keywords: datastore, build, rebuild, setup, layers, thickness, columns, rename, mask, masking, correction, part assignment, direct, dhxml, dbscan, eps, radius, min samples, cancel, stop, cache, required
+keywords: datastore, build, rebuild, setup, layers, thickness, columns, rename, mask, masking, correction, part assignment, direct, dhxml, dbscan, eps, radius, min samples, chunk, overlap, max distance, part filter, browse, inputs, cancel, stop, cache, required
 context: file.datastore
 ---
 # Setting up the DataStore
@@ -11,20 +11,25 @@ The DataStore is a fast, per-layer copy of the build's packet data. You build
 it once; after that the build opens in seconds. The setup page decides what
 goes into it and how the data is prepared.
 
-Reach it with **New**, or with the **DataStore** button on the File tab once a
-build is loaded.
+Reach it with **New ▸ Single build**, or with the **DataStore** button on the
+File tab once a build is loaded. Click a group's title (**Build inputs**,
+**Layers**, **Columns**, **Processing**) to fold it away; they start open.
 
 ## Build inputs
 
-The top box shows what was found in the build folder: the packet source, the
-DHXML, the STL and the parts CSV. Anything shown as *not found* switches off
-the options that depend on it.
+What was found in the build folder: the packet source, the DHXML, the STL and
+the parts CSV. Anything shown as *not found* switches off the options that
+depend on it. **Browse...** beside an input picks it yourself; the choice is
+saved in the build's `config.toml`, so it stays. A new packet source reloads
+the build, since its layers and columns come from the packets. (A stacked
+build's inputs are each step's own, so they are chosen in the step's build.)
 
 ## Layers
 
-- **Range**: the layers to convert. It starts at the build's full extent.
-- **Thickness**: the layer thickness in mm, detected from the build and
+- **Thickness (mm)**: the layer thickness, detected from the build and
   editable. The **Z** column is the layer number times this value.
+- **All layers**: converts every layer (the default). Untick it to choose a
+  range with **From** and **To**; **Available** shows the layers the build has.
 
 ## Columns
 
@@ -32,6 +37,10 @@ Tick the columns you want to load, and type a new name on the right of any you
 want renamed. A new build starts with a default set already ticked and
 renamed (for example *MeltVIEW melt pool (mean)* becomes *Meltpool*).
 [About the data](help:about-data) explains what each column is.
+
+- **All** / **None** tick every column, or only the required ones.
+- **Default** goes back to the default set and renames.
+- **Clear renames** removes every rename.
 
 The columns at the bottom of the list are **required** and always load:
 position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
@@ -45,7 +54,9 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
 - **Assign parts**: adds a `part_id` column saying which part each point
   belongs to. Choose how:
   - **Direct**: each point goes to the nearest part centre in the parts CSV.
-    Fast; the usual choice.
+    Fast; the usual choice. **Max distance (mm)** leaves a point without a
+    part when it is further than this from every part centre (*No limit*:
+    every point joins its nearest part).
   - **DHXML**: each point goes to the part whose bounding box contains it.
   - **DBSCAN**: clusters the points themselves and matches each cluster to a
     part. It is computationally expensive and takes a while on a full build.
@@ -53,25 +64,35 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
     and the part column appears when it finishes. The status bar shows how far
     it has got, with **Cancel** to stop it. The result is saved, so reopening
     the build is instant. Its settings appear when you choose it:
-    - **XY radius (eps)**: how close points must be in the plane to count as
-      neighbours, in mm.
-    - **Z radius**: the same between layers.
+    - **XY radius (mm)**: how close points must be in the plane to count as
+      neighbours (DBSCAN's *eps*).
+    - **Z radius (mm)**: the same between layers.
     - **Min samples**: how many neighbours a point needs within the radius to
       start or grow a cluster.
+    - **Layers per chunk**: the build is clustered a chunk of layers at a
+      time. Fewer layers use less memory; more run faster.
+    - **Overlap chunks**: how many layers each chunk shares with the next, so
+      clusters join up across chunks. *Auto* shares just enough for the Z
+      radius.
 
     They start from the build's `config.toml` and are kept with the build.
-    Changing them means a rebuild. To choose them, plot a
-    [K-distance curve](help:plot-kdistance).
+    Changing them means a rebuild. A
+    [K-distance curve](help:plot-kdistance) helps choose the radius.
+  - **Part filter** (fold it open): the parts to keep in the DataStore, all
+    ticked to start with. Untick a part, or use **All** / **None**, and its
+    points are left out of the data; points with no part stay. The choice is
+    kept with the build.
 - **Apply correction**: removes the position-dependent bias of the MeltVIEW
   melt-pool signal. It is calibrated for the **MAIN** machine and the
-  *MeltVIEW melt pool (mean)* column only. Write the result to a **New column**
-  (give it a name) or **Override** the original.
+  *MeltVIEW melt pool (mean)* column only. **Output**: **Override column**
+  writes over the original; **New column** writes the result beside it, under
+  the name you type.
 
 ## Build, rebuild, cancel
 
 **Build DataStore** converts the chosen layers; progress shows in the status
-bar. **Cancel** on this page returns to the Start page without changing
-anything.
+bar. **Cancel** on this page (or **Close** in the sidebar) returns to the File
+tab's landing page without changing anything.
 
 To stop a build that is running, press **Cancel** beside the progress bar. It
 stops after the layer it is on and brings you back here with your choices as

@@ -40,6 +40,7 @@ from .controller import AppController
 from .data_tab import DataTab
 from .dock import SidePanel
 from .plot_tab import PlotTab
+from .recents import RecentStore
 from .state import BuildSession
 
 APP_TITLE = "AMPM Viewer"
@@ -237,6 +238,10 @@ class MainWindow(QMainWindow):
         self.backstage.libraryBrowseRequested.connect(
             lambda: self._open_from_library(None))
         self.backstage.libraryFolderRequested.connect(self._open_plot_library_folder)
+        self.backstage.infoRequested.connect(self._show_build_info)
+        self.backstage.revealRequested.connect(self._reveal_folder)
+        self.backstage.ds_form.browseRequested.connect(self._browse_input)
+        self.backstage.ds_form.part_lister = self.controller.part_names
         self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
 
@@ -784,8 +789,31 @@ class MainWindow(QMainWindow):
         tab.apply_appearance(info.get("appearance") or {})
         self._add_plot_tab(tab)
         self._feed_plot(tab, df)
+        try:  # a library plot is a recent file too
+            RecentStore().record(path, has_cache=True, name=tab.title)
+            self.backstage.refresh_recents()
+        except Exception:  # noqa: BLE001 - never stop a plot opening
+            pass
         self.set_status(f"Opened '{tab.title}', frozen from "
                         f"{info.get('build') or 'another build'}.")
+
+    # -- File tab: build info and inputs ------------------------------------
+    def _show_build_info(self) -> None:
+        title, sections, folder = self.controller.build_info()
+        self.backstage.show_info(title, sections, folder)
+
+    def _reveal_folder(self, folder: str) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _browse_input(self, key: str) -> None:
+        """Browse... beside a build input on the setup page."""
+        config = self.controller.browse_input(key)
+        if config is not None:
+            self.backstage.ds_form.set_inputs(config)
+            self.set_status("Build input updated in config.toml.")
 
     def _show_plot_library(self) -> None:
         self.backstage.show_library_page()
@@ -1271,8 +1299,8 @@ class MainWindow(QMainWindow):
         kind = widget.property("tabkind") if widget is not None else "file"
         if kind == "file":
             page = self.backstage.main_stack.currentIndex()
-            return [{1: "file.datastore", 2: "file.library"}.get(page, "file.start"),
-                    "file"]
+            return [{1: "file.datastore", 2: "file.library",
+                     3: "file.info"}.get(page, "file.start"), "file"]
         if kind == "data":
             # Recording is a mode the user is in; anything else is the tab.
             return (["data.macros"] if self.recorder.active else []) + ["data"]

@@ -1,14 +1,15 @@
 ---
-title: Create Excel from AMPM
+title: Excel template
 section: Getting started
 order: 40
 keywords: excel, template, samples, workbook, exports, xlsx, create
 ---
-# Create Excel from AMPM
+# Excel template
 
 Makes the samples-template workbook for one build, without opening the build.
 
-1. On the File tab, choose **Create Excel from AMPM**.
+1. On the File tab, choose **New ▸ Excel template** (or the **Excel template**
+   tile).
 2. Pick the build's folder.
 3. The workbook is written to an `exports` folder inside the build, named
    after the build: `<build>/exports/<build name>.xlsx`. If one is already

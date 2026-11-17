@@ -23,22 +23,32 @@ Plotly figure builders, which the app replaces.
 - **New interface.** A frameless window whose tab row doubles as the title bar
   (File, Data, one tab per plot), a toolbar that changes with the tab, a side
   panel, light and dark themes, and frameless, draggable dialogs throughout.
-- **File tab.** Open or create a build, recent builds, and **Create Excel from
-  AMPM** for one build, written to `<build>/exports/`.
-- **Stacked builds.** **New stacked build** reads a stepped build (separate
+- **File tab.** **New** makes a single build, a stacked build or an **Excel
+  template** (one build's samples workbook, written to `<build>/exports/`);
+  **Open** and **Plot library** sit beside it. The landing page lists recent
+  builds and library plots with their type, status and when they were opened,
+  in columns, with Favourites and search. Once a build is loaded, **Info** shows
+  its properties (type, folder, layers built, size on disk, processing,
+  inputs), and **Close** leads back to the landing page from any other page.
+- **Stacked builds.** **New ▸ Stacked build** reads a stepped build (separate
   jobs printed one on top of another, each its own build folder) as one:
   `layer` and `Z` carry on from step to step, a `step` column says which step a
   row came from, a `Build time` column runs through every layer and step, and
   part ids take the step (`S2 Part(3)`). Kept in its own folder
   (`stacked.toml`) with its own settings and plots; one setup for every step,
   with each step's own STL, parts CSV and .dhxml.
-- **DataStore setup.** Choose and rename the imported columns, and the load recipe:
-  mask (STL), part assignment (Direct, DHXML, or DBSCAN) and correction. Built off
-  the UI thread with progress and a **Cancel** that stops after the current layer
-  (the layers built are kept); a rebuild starts from a clean slate.
+- **DataStore setup.** Foldable groups: the build's inputs, each with
+  **Browse...** to choose another (saved in `config.toml`); the layer thickness
+  and all layers or a From / To range; the imported columns and their renames
+  (with **All**, **None**, **Default** and **Clear renames**); and the load
+  recipe: mask (STL), part assignment (Direct with a **Max distance**, DHXML, or
+  DBSCAN) with a **Part filter** of the parts to keep, and correction (override
+  the column or write a new one). Built off the UI thread with progress and a
+  **Cancel** that stops after the current layer (the layers built are kept); a
+  rebuild starts from a clean slate.
 - **DBSCAN part assignment** is never the default. Its settings (XY radius, Z radius,
-  min samples) are on the setup page, start from `config.toml` and are kept per
-  build. It runs in the background as a separate process: the status bar shows
+  min samples, layers per chunk and chunk overlap) are on the setup page, start
+  from `config.toml` and are kept per build. It runs in the background as a separate process: the status bar shows
   which chunk it is on, and **Cancel** (or closing the app) stops it at once.
 - **Data tab.** A virtualised table of one layer; column info in the side panel;
   rename, hide, remove and restore columns; calculated columns (a formula language
@@ -131,7 +141,7 @@ Plotly figure builders, which the app replaces.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (579 in all). The app has 28 GUI
+  current API; `just test` runs every package's tests (579 in all). The app has 30 GUI
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).

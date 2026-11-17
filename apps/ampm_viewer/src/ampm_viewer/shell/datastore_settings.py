@@ -1,21 +1,23 @@
 """DataStore setup page (backstage).
 
-Reached via New (always) or Open-with-no-cache. It shows the build's detected
-*config/inputs* (source dir, STL, parts CSV, layer thickness — read-only here,
-flagged when missing) and the **cache scope** (all layers or a range), and
-drives the parquet build via the Build / Rebuild button.
+Reached via New (always) or Open-with-no-cache. Four foldable groups:
 
-This is build-level setup only. The apply-or-not recipe toggles (mask / assign
-parts / correction) live on the Data toolbar, not here; their *availability*
-derives from the inputs shown on this page.
+- **Build inputs**: the packet source, .dhxml, STL and parts CSV found in the
+  build folder, each with Browse... to choose another (``browseRequested``;
+  the controller writes it to config.toml);
+- **Layers**: thickness, and all layers or a From / To range;
+- **Columns**: which source columns load, and a rename for each;
+- **Processing**: masking, part assignment (with its settings and a Part
+  filter of the parts to keep) and the melt-pool correction.
 
-Still inert w.r.t. the pipeline: the controller performs the build; this widget
-only collects scope and emits ``buildRequested``.
+A choice's availability derives from the inputs. The controller performs the
+build; this widget collects the choices (``scope``, ``thickness``,
+``recipe``) and emits ``buildRequested``.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -23,10 +25,11 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -35,11 +38,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .widgets import fix_combo
+from .widgets import CollapsibleGroup, Disclosure, fix_combo
 
 _DEFAULT_THICKNESS = 0.03  # mm — fallback when a build has nothing to detect from
 # DBSCAN defaults when config.toml has none (ohpal's [clustering] defaults).
-_DBSCAN_DEFAULTS = {"eps_xy": 0.3, "eps_z": 0.06, "min_samples": 10}
+# overlap_layers None = enough for the Z radius (worked out per build).
+_DBSCAN_DEFAULTS = {"eps_xy": 0.3, "eps_z": 0.06, "min_samples": 10,
+                    "layers_per_chunk": 11, "overlap_layers": None}
+
+# The build inputs a user can point at themselves (Browse...): config key,
+# label, and whether it's a folder.
+INPUTS = (("SOURCE", "Packet source", True), ("DHXML", "DHXML", False),
+          ("STL", "STL", False), ("PARTS_CSV", "Parts CSV", False))
 
 _MISSING = "— not found —"
 
@@ -126,21 +136,29 @@ def _value_label(text: str) -> QLabel:
 class DataStoreSettings(QWidget):
     buildRequested = pyqtSignal()
     cancelRequested = pyqtSignal()  # leave the setup surface, back to backstage
+    browseRequested = pyqtSignal(str)  # an INPUTS key: choose that input
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Who lists the parts a method assigns, for the Part filter:
+        # ``part_lister(method) -> [part ids]`` (set by the window).
+        self.part_lister = None
+        self._stack = False
+        self._excluded: set[str] = set()
+        self._parts_for = None  # the method the Part filter list was made for
+
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        # Room on the right, so nothing sits against the page's scrollbar.
+        lay.setContentsMargins(0, 0, 18, 0)
         lay.setSpacing(14)
 
-        self.status = QLabel("No DataStore for this build yet.")
-        self.status.setProperty("class", "PanelHeading")
-        lay.addWidget(self.status)
-
-        lay.addWidget(self._config_group())
-        lay.addWidget(self._scope_group())
-        lay.addWidget(self._columns_group())
-        lay.addWidget(self._processing_group())
+        self.grp_inputs = self._config_group()
+        self.grp_layers = self._scope_group()
+        self.grp_columns = self._columns_group()
+        self.grp_processing = self._processing_group()
+        for grp in (self.grp_inputs, self.grp_layers, self.grp_columns,
+                    self.grp_processing):
+            lay.addWidget(grp)
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -155,29 +173,110 @@ class DataStoreSettings(QWidget):
         lay.addStretch(1)
 
     # -- groups --------------------------------------------------------
-    def _config_group(self) -> QGroupBox:
-        box = QGroupBox("Build inputs (detected)")
-        f = QFormLayout(box)
-        self.lbl_source = _value_label(_MISSING)
-        self.lbl_dhxml = _value_label(_MISSING)
-        self.lbl_stl = _value_label(_MISSING)
-        self.lbl_csv = _value_label(_MISSING)
-        self.lbl_source_key = QLabel("Packet source")
-        f.addRow(self.lbl_source_key, self.lbl_source)
-        f.addRow("DHXML", self.lbl_dhxml)
-        f.addRow("STL", self.lbl_stl)
-        f.addRow("Parts CSV", self.lbl_csv)
+    def _config_group(self) -> CollapsibleGroup:
+        box = CollapsibleGroup("Build inputs")
+        grid = QGridLayout(box.body)
+        grid.setHorizontalSpacing(12)
+        grid.setColumnStretch(1, 1)
+        self.input_labels: dict[str, QLabel] = {}
+        self.input_values: dict[str, QLabel] = {}
+        self.browse_buttons: dict[str, QPushButton] = {}
+        for row, (key, label, _folder) in enumerate(INPUTS):
+            name = QLabel(label)
+            value = _value_label(_MISSING)
+            browse = QPushButton("Browse…")
+            browse.clicked.connect(lambda _c, k=key: self.browseRequested.emit(k))
+            grid.addWidget(name, row, 0)
+            grid.addWidget(value, row, 1)
+            grid.addWidget(browse, row, 2)
+            self.input_labels[key] = name
+            self.input_values[key] = value
+            self.browse_buttons[key] = browse
+        self.lbl_source_key = self.input_labels["SOURCE"]
+        self.lbl_source = self.input_values["SOURCE"]
+        self.lbl_dhxml = self.input_values["DHXML"]
+        self.lbl_stl = self.input_values["STL"]
+        self.lbl_csv = self.input_values["PARTS_CSV"]
         return box
 
-    def _columns_group(self) -> QGroupBox:
+    def _scope_group(self) -> CollapsibleGroup:
+        box = CollapsibleGroup("Layers")
+        grid = QGridLayout(box.body)
+        grid.setHorizontalSpacing(8)
+
+        # Thickness (mm): detected, editable (so a build with nothing to
+        # detect from can still be given one).
+        self.thickness_spin = QDoubleSpinBox()
+        self.thickness_spin.setDecimals(3)
+        self.thickness_spin.setRange(0.001, 5.0)
+        self.thickness_spin.setSingleStep(0.005)
+        self.thickness_spin.setValue(_DEFAULT_THICKNESS)
+        self.thickness_spin.setFixedWidth(90)
+        grid.addWidget(QLabel("Thickness (mm)"), 0, 0)
+        grid.addWidget(self.thickness_spin, 0, 1)
+
+        self.chk_all_layers = QCheckBox("All layers")
+        self.chk_all_layers.setChecked(True)
+        self.chk_all_layers.toggled.connect(self._sync_scope_enabled)
+        grid.addWidget(self.chk_all_layers, 1, 0, 1, 2)
+
+        # A range, live once All layers is off.
+        self.layer_min = QSpinBox()
+        self.layer_max = QSpinBox()
+        for s in (self.layer_min, self.layer_max):
+            s.setRange(1, 100_000)
+            s.setFixedWidth(90)
+        rng = QHBoxLayout()
+        rng.setContentsMargins(0, 0, 0, 0)
+        rng.setSpacing(8)
+        self.lbl_from = QLabel("From")
+        self.lbl_to = QLabel("To")
+        for w in (self.lbl_from, self.layer_min, self.lbl_to, self.layer_max):
+            rng.addWidget(w)
+        rng.addSpacing(10)
+        self.lbl_available = QLabel("")
+        self.lbl_available.setStyleSheet("color: palette(placeholder-text);")
+        rng.addWidget(self.lbl_available)
+        rng.addStretch(1)
+        grid.addLayout(rng, 2, 0, 1, 4)
+        grid.setColumnStretch(3, 1)  # keep everything left
+        self._sync_scope_enabled()
+        return box
+
+    def _sync_scope_enabled(self) -> None:
+        on = not self.chk_all_layers.isChecked()
+        for w in (self.lbl_from, self.layer_min, self.lbl_to, self.layer_max):
+            w.setEnabled(on)
+
+    def _columns_group(self) -> CollapsibleGroup:
         """Which columns the store loads, and an optional rename for each. Always-
         required ones are locked on. A fresh build opens with the fixed default
         set + renames already applied (see set_config)."""
-        box = QGroupBox("Columns")
-        v = QVBoxLayout(box)
-        hint = QLabel("Tick to import; rename a column on the right.")
-        hint.setProperty("class", "Hint")
-        v.addWidget(hint)
+        box = CollapsibleGroup("Columns")
+        v = QVBoxLayout(box.body)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+        self.btn_cols_all = QPushButton("All")
+        self.btn_cols_none = QPushButton("None")
+        self.btn_cols_default = QPushButton("Default")
+        self.btn_clear_renames = QPushButton("Clear renames")
+        self.btn_cols_all.setToolTip("Load every column")
+        self.btn_cols_none.setToolTip("Load only the required columns")
+        self.btn_cols_default.setToolTip(
+            "The default columns and renames of a new DataStore")
+        self.btn_clear_renames.setToolTip("Remove every rename")
+        self.btn_cols_all.clicked.connect(lambda: self.select_columns("all"))
+        self.btn_cols_none.clicked.connect(lambda: self.select_columns("none"))
+        self.btn_cols_default.clicked.connect(lambda: self.select_columns("default"))
+        self.btn_clear_renames.clicked.connect(self.clear_renames)
+        buttons.addWidget(self.btn_cols_all)
+        buttons.addWidget(self.btn_cols_none)
+        buttons.addWidget(self.btn_cols_default)
+        buttons.addSpacing(16)
+        buttons.addWidget(self.btn_clear_renames)
+        buttons.addStretch(1)
+        v.addLayout(buttons)
 
         self._col_rows: list[_ColumnRow] = []
         self._cols_area = QScrollArea()
@@ -203,14 +302,34 @@ class DataStoreSettings(QWidget):
         grid.setRowStretch(len(rows), 1)  # rows hug the top
         return host
 
-    def _processing_group(self) -> QGroupBox:
+    def _default_columns(self) -> set[str]:
+        # A stacked build's step and Build time come by default.
+        return (set(_DEFAULT_IMPORT) | set(_ALWAYS)
+                | ({"step", "Build time"} if self._stack else set()))
+
+    def select_columns(self, which: str) -> None:
+        """All / None (locked columns stay on) / Default: the columns and
+        renames a new DataStore starts with."""
+        if which == "default":
+            self._apply_column_state(included=self._default_columns(),
+                                     renames=_DEFAULT_RENAMES)
+            return
+        for r in self._col_rows:
+            if not r.locked:
+                r.chk.setChecked(which == "all")
+
+    def clear_renames(self) -> None:
+        for r in self._col_rows:
+            r.rename.clear()
+
+    def _processing_group(self) -> CollapsibleGroup:
         """Recipe defined with the DataStore: mask / assign parts / correction.
 
         Each control is disabled when its input is missing (reason in tooltip);
         changing these means reconfiguring + rebuilding the store.
         """
-        box = QGroupBox("Processing")
-        f = QFormLayout(box)
+        box = CollapsibleGroup("Processing")
+        f = QFormLayout(box.body)
 
         self.chk_mask = QCheckBox("Apply mask")
         f.addRow("Masking", self.chk_mask)
@@ -227,15 +346,23 @@ class DataStoreSettings(QWidget):
         parts_w = QWidget()
         parts_w.setLayout(parts_row)
         f.addRow("Part assignment", parts_w)
-        # DBSCAN is never preselected; picking it shows what it costs.
-        self.lbl_dbscan_warn = QLabel(
-            "DBSCAN is computationally expensive: it clusters every point of "
-            "the build and will take a while (and a lot of memory) on a full "
-            "build. Parts appear once it finishes.")
-        self.lbl_dbscan_warn.setWordWrap(True)
-        self.lbl_dbscan_warn.setStyleSheet("color: #c77700;")
-        self.lbl_dbscan_warn.setVisible(False)
-        f.addRow("", self.lbl_dbscan_warn)
+
+        # Direct: how far a point may be from a part and still join it.
+        self.direct_detail = QWidget()
+        dr = QFormLayout(self.direct_detail)
+        dr.setContentsMargins(16, 2, 0, 0)
+        self.spin_max_distance = QDoubleSpinBox()
+        self.spin_max_distance.setDecimals(2)
+        self.spin_max_distance.setRange(0.0, 1000.0)
+        self.spin_max_distance.setSingleStep(0.5)
+        self.spin_max_distance.setSpecialValueText("No limit")
+        self.spin_max_distance.setFixedWidth(110)
+        self.spin_max_distance.setToolTip(
+            "A point further than this from every part's centre is left "
+            "without a part. 0: no limit (every point joins its nearest part).")
+        dr.addRow("Max distance (mm)", self.spin_max_distance)
+        self.direct_detail.setVisible(False)
+        f.addRow("", self.direct_detail)
 
         # DBSCAN's settings, revealed with it. They start from config.toml and
         # are kept with the build.
@@ -248,7 +375,13 @@ class DataStoreSettings(QWidget):
             spin.setDecimals(3)
             spin.setRange(0.001, 50.0)
             spin.setSingleStep(0.01)
-            spin.setSuffix(" mm")
+            spin.setFixedWidth(110)
+            spin.setToolTip(tip)
+            return spin
+
+        def count(lo: int, hi: int, tip: str) -> QSpinBox:
+            spin = QSpinBox()
+            spin.setRange(lo, hi)
             spin.setFixedWidth(110)
             spin.setToolTip(tip)
             return spin
@@ -256,23 +389,56 @@ class DataStoreSettings(QWidget):
         self.spin_eps_xy = radius(
             "How close points must be in the plane to count as neighbours "
             "(DBSCAN's eps).")
-        dd.addRow("XY radius (eps)", self.spin_eps_xy)
+        dd.addRow("XY radius (mm)", self.spin_eps_xy)
         self.spin_eps_z = radius(
             "How close points must be between layers to count as neighbours.")
-        dd.addRow("Z radius", self.spin_eps_z)
-        self.spin_min_samples = QSpinBox()
-        self.spin_min_samples.setRange(1, 10000)
-        self.spin_min_samples.setFixedWidth(110)
-        self.spin_min_samples.setToolTip(
+        dd.addRow("Z radius (mm)", self.spin_eps_z)
+        self.spin_min_samples = count(
+            1, 10000,
             "How many neighbours a point needs within the radius to start or "
             "grow a cluster (DBSCAN's min_samples).")
         dd.addRow("Min samples", self.spin_min_samples)
-        hint = QLabel("A K-distance curve plot helps choose these.")
-        hint.setStyleSheet("color: palette(placeholder-text);")
-        dd.addRow("", hint)
+        self.spin_layers_per_chunk = count(
+            2, 100000,
+            "Layers clustered at a time. Fewer use less memory; more run "
+            "faster.")
+        dd.addRow("Layers per chunk", self.spin_layers_per_chunk)
+        self.spin_overlap = count(
+            0, 100000,
+            "Layers each chunk shares with the next, so clusters join up "
+            "across chunks. Auto: just enough for the Z radius.")
+        self.spin_overlap.setSpecialValueText("Auto")
+        dd.addRow("Overlap chunks", self.spin_overlap)
         self.dbscan_detail.setVisible(False)
         f.addRow("", self.dbscan_detail)
         self.set_dbscan_values(_DBSCAN_DEFAULTS)
+
+        # Part filter: which parts the DataStore keeps (all, by default).
+        self.part_filter = Disclosure("Part filter", expanded=False)
+        pf = QVBoxLayout(self.part_filter.body)
+        pf.setContentsMargins(16, 0, 0, 0)
+        pf.setSpacing(4)
+        prow = QHBoxLayout()
+        prow.setSpacing(6)
+        self.btn_parts_all = QPushButton("All")
+        self.btn_parts_none = QPushButton("None")
+        self.btn_parts_all.clicked.connect(lambda: self._tick_parts(True))
+        self.btn_parts_none.clicked.connect(lambda: self._tick_parts(False))
+        prow.addWidget(self.btn_parts_all)
+        prow.addWidget(self.btn_parts_none)
+        prow.addSpacing(10)
+        self.lbl_parts_count = QLabel("")
+        self.lbl_parts_count.setStyleSheet("color: palette(placeholder-text);")
+        prow.addWidget(self.lbl_parts_count)
+        prow.addStretch(1)
+        pf.addLayout(prow)
+        self.parts_list = QListWidget()
+        self.parts_list.setFixedHeight(170)
+        self.parts_list.itemChanged.connect(self._on_part_ticked)
+        pf.addWidget(self.parts_list)
+        self.part_filter.expandedChanged.connect(
+            lambda open_: open_ and self.refresh_parts())
+        f.addRow("", self.part_filter)
 
         self.chk_parts.toggled.connect(self._sync_parts_enabled)
         self.cmb_parts.currentIndexChanged.connect(self._sync_parts_enabled)
@@ -297,24 +463,22 @@ class DataStoreSettings(QWidget):
         self.cmb_corr_column.addItems([_CORR_COLUMN])
         cd.addRow("Column", self.cmb_corr_column)
 
-        self.rb_corr_new = QRadioButton("New column")
         self.rb_corr_override = QRadioButton("Override column")
+        self.rb_corr_new = QRadioButton("New column")
         self.rb_corr_new.setChecked(True)
         self._corr_mode = QButtonGroup(self)
-        self._corr_mode.addButton(self.rb_corr_new)
         self._corr_mode.addButton(self.rb_corr_override)
+        self._corr_mode.addButton(self.rb_corr_new)
+        self.txt_corr_name = QLineEdit()
+        self.txt_corr_name.setPlaceholderText("name…")
         mode_row = QHBoxLayout()
         mode_row.setContentsMargins(0, 0, 0, 0)
-        mode_row.addWidget(self.rb_corr_new)
         mode_row.addWidget(self.rb_corr_override)
-        mode_row.addStretch(1)
+        mode_row.addWidget(self.rb_corr_new)
+        mode_row.addWidget(self.txt_corr_name, 1)
         mode_w = QWidget()
         mode_w.setLayout(mode_row)
         cd.addRow("Output", mode_w)
-
-        self.txt_corr_name = QLineEdit()
-        self.txt_corr_name.setPlaceholderText("Corrected column name")
-        cd.addRow("New name", self.txt_corr_name)
 
         f.addRow("", self.corr_detail)
 
@@ -334,22 +498,109 @@ class DataStoreSettings(QWidget):
         """The method dropdown is live only while part assignment is toggled on."""
         on = self.chk_parts.isChecked() and self.chk_parts.isEnabled()
         self.cmb_parts.setEnabled(on)
-        dbscan = on and self.cmb_parts.currentText() == "DBSCAN"
-        self.lbl_dbscan_warn.setVisible(dbscan)
-        self.dbscan_detail.setVisible(dbscan)
+        method = self.cmb_parts.currentText()
+        self.direct_detail.setVisible(on and method == "Direct")
+        self.dbscan_detail.setVisible(on and method == "DBSCAN")
+        self.part_filter.setVisible(on)
+        if on and self.part_filter.is_expanded():
+            self.refresh_parts()
 
+    # -- part filter ---------------------------------------------------
+    def _method(self) -> str:
+        return self.cmb_parts.currentText().lower()
+
+    def refresh_parts(self) -> None:
+        """List the parts the chosen method assigns (once per method), ticked
+        unless filtered out."""
+        method = self._method()
+        if method == self._parts_for:
+            return
+        names: list[str] = []
+        if self.part_lister is not None:
+            try:
+                names = list(self.part_lister(method) or [])
+            except Exception:  # noqa: BLE001 - an empty list, not a crash
+                names = []
+        self._parts_for = method
+        self.parts_list.blockSignals(True)
+        self.parts_list.clear()
+        for name in names:
+            item = QListWidgetItem(str(name), self.parts_list)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if name in self._excluded
+                               else Qt.CheckState.Checked)
+        self.parts_list.blockSignals(False)
+        if not names:
+            self.lbl_parts_count.setText("No parts found for this method")
+        self._count_parts()
+
+    def _tick_parts(self, on: bool) -> None:
+        self.parts_list.blockSignals(True)
+        for i in range(self.parts_list.count()):
+            self.parts_list.item(i).setCheckState(
+                Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+        self.parts_list.blockSignals(False)
+        self._read_parts()
+
+    def _on_part_ticked(self, _item) -> None:
+        self._read_parts()
+
+    def _read_parts(self) -> None:
+        listed = {self.parts_list.item(i).text()
+                  for i in range(self.parts_list.count())}
+        off = {self.parts_list.item(i).text()
+               for i in range(self.parts_list.count())
+               if self.parts_list.item(i).checkState() != Qt.CheckState.Checked}
+        # Parts not listed now (another method's) keep their choice.
+        self._excluded = (self._excluded - listed) | off
+        self._count_parts()
+
+    def _count_parts(self) -> None:
+        n = self.parts_list.count()
+        if not n:
+            return
+        kept = sum(1 for i in range(n) if self.parts_list.item(i).checkState()
+                   == Qt.CheckState.Checked)
+        self.lbl_parts_count.setText(f"{kept} of {n} parts kept")
+
+    def excluded_parts(self) -> list[str]:
+        """The parts left out of the DataStore (of the chosen method's)."""
+        if self._parts_for == self._method():
+            return sorted(self.parts_list.item(i).text()
+                          for i in range(self.parts_list.count())
+                          if self.parts_list.item(i).checkState()
+                          != Qt.CheckState.Checked)
+        return sorted(self._excluded)
+
+    def set_excluded_parts(self, parts) -> None:
+        self._excluded = set(parts or [])
+        self._parts_for = None  # re-tick on the next look
+
+    # -- DBSCAN / Direct values -----------------------------------------
     def set_dbscan_values(self, values: dict) -> None:
-        """Show DBSCAN settings (eps_xy, eps_z, min_samples)."""
+        """Show DBSCAN settings (eps_xy, eps_z, min_samples, layers_per_chunk,
+        overlap_layers; None overlap = Auto)."""
         v = {**_DBSCAN_DEFAULTS, **{k: x for k, x in values.items()
                                     if x is not None}}
         self.spin_eps_xy.setValue(float(v["eps_xy"]))
         self.spin_eps_z.setValue(float(v["eps_z"]))
         self.spin_min_samples.setValue(int(v["min_samples"]))
+        self.spin_layers_per_chunk.setValue(int(v["layers_per_chunk"]))
+        overlap = values.get("overlap_layers")
+        self.spin_overlap.setValue(int(overlap) if overlap else 0)
 
     def dbscan_values(self) -> dict:
+        overlap = int(self.spin_overlap.value())
         return {"eps_xy": round(self.spin_eps_xy.value(), 6),
                 "eps_z": round(self.spin_eps_z.value(), 6),
-                "min_samples": int(self.spin_min_samples.value())}
+                "min_samples": int(self.spin_min_samples.value()),
+                "layers_per_chunk": int(self.spin_layers_per_chunk.value()),
+                "overlap_layers": overlap or None}
+
+    def max_distance(self) -> float | None:
+        """Direct's max distance (mm); None = no limit."""
+        value = round(self.spin_max_distance.value(), 6)
+        return value or None
 
     def _set_part_option_enabled(self, index: int, enabled: bool) -> None:
         """Enable/disable one Part-assignment dropdown item (greys it out)."""
@@ -360,37 +611,6 @@ class DataStoreSettings(QWidget):
     def _part_option_enabled(self, index: int) -> bool:
         item = self.cmb_parts.model().item(index)
         return bool(item is not None and item.isEnabled())
-
-    def _scope_group(self) -> QGroupBox:
-        box = QGroupBox("Layers")
-        grid = QGridLayout(box)
-        grid.setHorizontalSpacing(8)
-
-        # Range — defaults to the full extent, so it effectively *is* all layers.
-        self.layer_min = QSpinBox()
-        self.layer_max = QSpinBox()
-        for s in (self.layer_min, self.layer_max):
-            s.setRange(1, 100_000)
-            s.setFixedWidth(90)
-        grid.addWidget(QLabel("Range"), 0, 0)
-        grid.addWidget(self.layer_min, 0, 1)
-        grid.addWidget(QLabel("to"), 0, 2)
-        grid.addWidget(self.layer_max, 0, 3)
-
-        # Thickness (mm) — autodetected into the value, editable (so a build
-        # with nothing to detect from can still be given a thickness).
-        self.thickness_spin = QDoubleSpinBox()
-        self.thickness_spin.setDecimals(3)
-        self.thickness_spin.setRange(0.001, 5.0)
-        self.thickness_spin.setSingleStep(0.005)
-        self.thickness_spin.setValue(_DEFAULT_THICKNESS)
-        self.thickness_spin.setFixedWidth(90)
-        grid.addWidget(QLabel("Thickness"), 1, 0)
-        grid.addWidget(self.thickness_spin, 1, 1)
-        grid.addWidget(QLabel("mm"), 1, 2)  # units outside the box
-
-        grid.setColumnStretch(4, 1)  # keep everything left
-        return box
 
     # -- state ---------------------------------------------------------
     def set_config(
@@ -410,9 +630,7 @@ class DataStoreSettings(QWidget):
         rename map — reflected in the rows so a rebuild preserves it. When it's
         None (a fresh setup) the fixed default import set + renames is applied.
         """
-        def shown(value) -> str:
-            return str(value) if value else _MISSING
-
+        self._stack = bool(config.get("STACK"))
         # Rebuild the column rows — optional first, the locked always-required
         # ones grouped at the bottom. part_id is assignment output (not a loadable
         # source column), so it's never offered here.
@@ -433,71 +651,37 @@ class DataStoreSettings(QWidget):
                 included=set(included) if included else None, renames=renames)
         else:
             self._apply_column_state(
-                # A stacked build's step and Build time come by default.
-                included=(set(_DEFAULT_IMPORT) | set(_ALWAYS)
-                          | ({"step", "Build time"} if config.get("STACK")
-                             else set())),
-                renames=_DEFAULT_RENAMES)
+                included=self._default_columns(), renames=_DEFAULT_RENAMES)
 
-        # A stacked build: its steps, and per input whether every step has
-        # its own (an input some step lacks isn't used).
-        stack = bool(config.get("STACK"))
-        notes = config.get("STACK_INPUTS") or {}
-        self.lbl_source_key.setText("Steps" if stack else "Packet source")
-        self.lbl_source.setText(shown(config.get("SOURCE")))
-        self.lbl_dhxml.setText(shown(notes.get("DHXML") or config.get("DHXML")))
-        self.lbl_stl.setText(shown(notes.get("STL") or config.get("STL")))
-        self.lbl_csv.setText(shown(notes.get("PARTS_CSV") or config.get("PARTS_CSV")))
         lt = config.get("LAYER_THICKNESS")
         self.thickness_spin.setValue(float(lt) if lt else _DEFAULT_THICKNESS)
         # Each step builds at its own config's thickness.
-        self.thickness_spin.setEnabled(not stack)
+        self.thickness_spin.setEnabled(not self._stack)
         self.thickness_spin.setToolTip(
             "Each step uses the layer thickness in its own config.toml"
-            if stack else "")
+            if self._stack else "")
 
+        self.chk_all_layers.setChecked(True)
         if layers:
             lo, hi = min(layers), max(layers)
             for s in (self.layer_min, self.layer_max):
                 s.setRange(lo, hi)
             self.layer_min.setValue(lo)
             self.layer_max.setValue(hi)
-
-        # Processing availability derives from the detected inputs.
-        has_stl = bool(config.get("STL"))
-        has_parts = bool(config.get("PARTS_CSV"))
-        self.chk_mask.setEnabled(has_stl)
-        self.chk_mask.setChecked(has_stl)
-        self.chk_mask.setToolTip("" if has_stl else "No STL found to mask with")
-
-        # Part assignment: Direct/DBSCAN need the parts CSV; DHXML needs the
-        # dhxml. Gate each method on its own input; the toggle leads (off = None)
-        # and defaults on when assignment is available.
-        has_dhxml = bool(config.get("DHXML"))
-        self._set_part_option_enabled(0, has_parts)   # Direct
-        self._set_part_option_enabled(1, has_dhxml)   # DHXML
-        # DBSCAN clusters one build's points; not offered across steps.
-        self._set_part_option_enabled(2, has_parts and not stack)   # DBSCAN
-        parts_available = has_parts or has_dhxml
-        self.chk_parts.setEnabled(parts_available)
-        self.chk_parts.setChecked(parts_available)
-        self.chk_parts.setToolTip(
-            "" if parts_available else "No parts CSV or DHXML found")
-        if parts_available:
-            method = str(config.get("METHOD", "direct")).lower()
-            if method == "dbscan" and renames is None:
-                method = "direct"  # never the default; only a live build's own choice
-            index = {"direct": 0, "dhxml": 1, "dbscan": 2}.get(method, 0)
-            if not self._part_option_enabled(index):
-                index = 1 if has_dhxml else 0  # fall back to what's available
-            self.cmb_parts.setCurrentIndex(index)
-            self.cmb_parts.setToolTip("")
+            self.lbl_available.setText(
+                f"Available: {lo} - {hi} ({len(layers):,} layers)")
         else:
-            self.cmb_parts.setToolTip("No parts CSV or DHXML found")
+            self.lbl_available.setText("")
+
+        self.set_excluded_parts(config.get("EXCLUDED_PARTS") or [])
+        md = config.get("MAX_DISTANCE_MM")
+        self.spin_max_distance.setValue(float(md) if md else 0.0)
         self.set_dbscan_values({"eps_xy": config.get("EPS_XY"),
                                 "eps_z": config.get("EPS_Z"),
-                                "min_samples": config.get("MIN_SAMPLES")})
-        self._sync_parts_enabled()
+                                "min_samples": config.get("MIN_SAMPLES"),
+                                "layers_per_chunk": config.get("LAYERS_PER_CHUNK"),
+                                "overlap_layers": config.get("OVERLAP_LAYERS")})
+        self.set_inputs(config, fresh=True, live=renames is not None)
 
         # Correction needs both the melt-pool and LaserVIEW signals loaded.
         cols_set = set(cols)
@@ -512,16 +696,77 @@ class DataStoreSettings(QWidget):
             self.txt_corr_name.setText(f"{_CORR_COLUMN} corrected")
         self._sync_correction_enabled()
 
-    def set_exists(self, exists: bool) -> None:
-        if exists:
-            self.status.setText("DataStore exists. Rebuild below if needed.")
-            self.build_btn.setText("Rebuild DataStore")
+    def set_inputs(self, config: dict, *, fresh: bool = False,
+                   live: bool = False) -> None:
+        """Show the build's inputs and offer what they allow. ``fresh``: a
+        new setup, so each choice starts at its default; otherwise (an input
+        just chosen with Browse...) the choices made stay, and one the new
+        input makes possible is switched on."""
+        def shown(value) -> str:
+            return str(value) if value else _MISSING
+
+        # A stacked build: its steps, and per input whether every step has
+        # its own (an input some step lacks isn't used). Each step's inputs
+        # are its own build's, so they're chosen there.
+        notes = config.get("STACK_INPUTS") or {}
+        self.lbl_source_key.setText("Steps" if self._stack else "Packet source")
+        for key, _label, _folder in INPUTS:
+            value = (config.get(key) if key == "SOURCE"
+                     else notes.get(key) or config.get(key))
+            self.input_values[key].setText(shown(value))
+            btn = self.browse_buttons[key]
+            btn.setEnabled(not self._stack)
+            btn.setToolTip("Each step's inputs are chosen in its own build"
+                           if self._stack else "")
+
+        # Processing availability derives from the inputs.
+        has_stl = bool(config.get("STL"))
+        has_parts = bool(config.get("PARTS_CSV"))
+        has_dhxml = bool(config.get("DHXML"))
+        was_mask = self.chk_mask.isEnabled()
+        self.chk_mask.setEnabled(has_stl)
+        if fresh or not was_mask:
+            self.chk_mask.setChecked(has_stl)
+        self.chk_mask.setToolTip("" if has_stl else "No STL found to mask with")
+
+        # Part assignment: Direct/DBSCAN need the parts CSV; DHXML needs the
+        # dhxml. Gate each method on its own input; the toggle leads (off = None)
+        # and defaults on when assignment is available.
+        was_parts = self.chk_parts.isEnabled()
+        self._set_part_option_enabled(0, has_parts)   # Direct
+        self._set_part_option_enabled(1, has_dhxml)   # DHXML
+        # DBSCAN clusters one build's points; not offered across steps.
+        self._set_part_option_enabled(2, has_parts and not self._stack)
+        parts_available = has_parts or has_dhxml
+        self.chk_parts.setEnabled(parts_available)
+        if fresh or not was_parts:
+            self.chk_parts.setChecked(parts_available)
+        self.chk_parts.setToolTip(
+            "" if parts_available else "No parts CSV or DHXML found")
+        if parts_available:
+            if fresh:
+                method = str(config.get("METHOD", "direct")).lower()
+                if method == "dbscan" and not live:
+                    method = "direct"  # never the default; only a live build's own
+                index = {"direct": 0, "dhxml": 1, "dbscan": 2}.get(method, 0)
+            else:
+                index = self.cmb_parts.currentIndex()
+            if not self._part_option_enabled(index):
+                index = 1 if has_dhxml and not has_parts else 0
+            self.cmb_parts.setCurrentIndex(index)
+            self.cmb_parts.setToolTip("")
         else:
-            self.status.setText("No DataStore for this build yet.")
-            self.build_btn.setText("Build DataStore")
+            self.cmb_parts.setToolTip("No parts CSV or DHXML found")
+        self._parts_for = None  # the parts may differ with the new inputs
+        self._sync_parts_enabled()
+
+    def set_exists(self, exists: bool) -> None:
+        self.build_btn.setText("Rebuild DataStore" if exists else "Build DataStore")
 
     def scope(self) -> tuple[int, int]:
-        """Selected layer range (inclusive); defaults to the full extent."""
+        """Selected layer range (inclusive): all layers, or From / To."""
+        if self.chk_all_layers.isChecked():
+            return (self.layer_min.minimum(), self.layer_max.maximum())
         lo, hi = self.layer_min.value(), self.layer_max.value()
         return (lo, hi) if lo <= hi else (hi, lo)
 
@@ -550,18 +795,16 @@ class DataStoreSettings(QWidget):
 
     def recipe(self) -> dict:
         """Selected processing recipe (used when the store applies it later)."""
-        method = (self.cmb_parts.currentText().lower()
-                  if self.chk_parts.isChecked() and self.chk_parts.isEnabled()
-                  else "none")
+        parts_on = self.chk_parts.isChecked() and self.chk_parts.isEnabled()
+        method = self._method() if parts_on else "none"
         return {
             "dbscan": self.dbscan_values() if method == "dbscan" else None,
+            "max_distance": self.max_distance() if method == "direct" else None,
+            "excluded_parts": self.excluded_parts() if parts_on else [],
             "columns": self.columns(),
             "renames": self.renames_map(),
             "apply_mask": self.chk_mask.isEnabled() and self.chk_mask.isChecked(),
-            "part_method": (
-                self.cmb_parts.currentText().lower()
-                if self.chk_parts.isChecked() and self.chk_parts.isEnabled()
-                else "none"),
+            "part_method": method,
             "apply_correction": (
                 self.chk_correction.isEnabled()
                 and self.chk_correction.isChecked()),

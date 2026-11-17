@@ -48,17 +48,17 @@ assert all(r.locked for r in form._col_rows[first_locked:]) and names.index(LV) 
 assert form.chk_correction.isEnabled(), "Correction is available with the default columns now"
 print("LaserVIEW required: locked, grouped at the bottom, loads on old builds; Correction available")
 
-# --- DBSCAN is never the default, and warns when picked -----------------------
+# --- DBSCAN is never the default; its settings show when picked --------------
 form.show(); app.processEvents()
 assert form.cmb_parts.currentText() == "Direct", form.cmb_parts.currentText()
-assert not form.lbl_dbscan_warn.isVisible()
+assert not form.dbscan_detail.isVisible() and form.direct_detail.isVisible()
 form.cmb_parts.setCurrentText("DBSCAN"); app.processEvents()
-assert form.lbl_dbscan_warn.isVisible() and "expensive" in form.lbl_dbscan_warn.text()
+assert form.dbscan_detail.isVisible() and not form.direct_detail.isVisible()
 assert form.recipe()["part_method"] == "dbscan"
-form.chk_parts.setChecked(False); app.processEvents(); assert not form.lbl_dbscan_warn.isVisible()
+form.chk_parts.setChecked(False); app.processEvents(); assert not form.dbscan_detail.isVisible()
 form.set_config({"SOURCE": "/x", "PARTS_CSV": "/p.csv", "METHOD": "dbscan"}, [1, 2, 3], cols, {})   # a live DBSCAN build
 assert form.cmb_parts.currentText() == "DBSCAN"
-print("DBSCAN: not preselected on a fresh setup; warning shown when chosen")
+print("DBSCAN: not preselected on a fresh setup; its settings shown when chosen")
 
 # --- rebuild closes live plots; rebuild WITH DBSCAN ---------------------------
 w._open_plot(PlotSpec(kind="2D Scatter", x="Demand X", y="Demand Y"), ("all", None, None)); drain()

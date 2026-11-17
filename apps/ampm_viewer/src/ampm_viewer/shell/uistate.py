@@ -29,7 +29,7 @@ def _empty() -> dict:
         "grid_header": None, "derivations": [], "removed": [], "filters": [],
         "grid_columns": [], "grid_order": [], "grid_hidden": [],
         "part_method": "", "apply_mask": False, "correction": {}, "renames": {},
-        "load_columns": [], "dbscan": {},
+        "load_columns": [], "dbscan": {}, "parts": {},
     }
 
 
@@ -70,6 +70,9 @@ def load_state(cache_dir: Path) -> dict:
             # DBSCAN settings chosen on the setup page (eps_xy, eps_z,
             # min_samples); {} = the build's config.toml values.
             "dbscan": data.get("dbscan") or {},
+            # Part assignment's other choices: Direct's max_distance (mm,
+            # None = config.toml's) and the parts the Part filter leaves out.
+            "parts": data.get("parts") or {},
         }
     except (OSError, ValueError, KeyError):
         return _empty()
@@ -99,14 +102,19 @@ def save_state(
     load_columns: list | None = None,
     renames: dict | None = None,
     dbscan: dict | None = None,
+    parts: dict | None = None,
 ) -> None:
     """Write the full UI state. Best-effort: never blocks on failure.
-    ``dbscan=None`` keeps the saved DBSCAN settings (they change only at
-    build time, through ``set_dbscan``)."""
+    ``dbscan=None`` / ``parts=None`` keep the saved DBSCAN and part settings
+    (they change only at build time, through ``set_dbscan`` / ``set_parts``)."""
     try:
         cache_dir = Path(cache_dir)
-        if dbscan is None:
-            dbscan = load_state(cache_dir).get("dbscan") or {}
+        if dbscan is None or parts is None:
+            saved = load_state(cache_dir)
+            if dbscan is None:
+                dbscan = saved.get("dbscan") or {}
+            if parts is None:
+                parts = saved.get("parts") or {}
         cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": _VERSION,
@@ -127,6 +135,7 @@ def save_state(
             "load_columns": list(load_columns or []),
             "renames": dict(renames or {}),
             "dbscan": dict(dbscan or {}),
+            "parts": dict(parts or {}),
         }
         _path(cache_dir).write_text(json.dumps(payload), encoding="utf-8")
     except OSError:
@@ -157,6 +166,7 @@ def _save_merged(cache_dir: Path, **overrides) -> None:
         load_columns=st["load_columns"],
         renames=st["renames"],
         dbscan=st["dbscan"],
+        parts=st["parts"],
     )
 
 
@@ -188,3 +198,8 @@ def set_correction(cache_dir: Path, correction: dict) -> None:
 def set_dbscan(cache_dir: Path, settings: dict) -> None:
     """Persist just the DBSCAN settings (eps_xy, eps_z, min_samples)."""
     _save_merged(cache_dir, dbscan=dict(settings or {}))
+
+
+def set_parts(cache_dir: Path, settings: dict) -> None:
+    """Persist just the part settings (max_distance, excluded)."""
+    _save_merged(cache_dir, parts=dict(settings or {}))

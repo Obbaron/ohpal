@@ -8,7 +8,7 @@ so they can also be read here.
 
 | Section | Articles |
 | --- | --- |
-| Getting started | Welcome to AMPM Viewer; About the data; Opening a build; Setting up the DataStore; Create Excel from AMPM |
+| Getting started | Welcome to AMPM Viewer; About the data; Opening a build; Setting up the DataStore; Excel template; Stacked builds |
 | Data | The Data tab; Calculated columns; Label columns; Adding a column from Excel; Renaming, removing and restoring columns; Parts; Filters; Exporting to Excel; Undo and redo; Macros |
 | Plots | Creating a plot; Scatter plots; Layer plots; Bar charts and histograms; CoV summary; KDE and violin plots; Contour plots; K-distance curve; Viewing and styling a plot; Editing plot text; Plot windows |
 | Reference | Settings, status bar and log; Keyboard and mouse; When something goes wrong |

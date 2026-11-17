@@ -53,7 +53,8 @@ f.chk_mask.setChecked(False); f.chk_parts.setChecked(True); f.cmb_parts.setCurre
 assert f.dbscan_detail.isHidden() and f.recipe()["dbscan"] is None
 f.cmb_parts.setCurrentText("DBSCAN"); app.processEvents()
 assert not f.dbscan_detail.isHidden()
-assert f.dbscan_values() == {"eps_xy": 0.3, "eps_z": 0.06, "min_samples": 10}, f.dbscan_values()
+assert f.dbscan_values() == {"eps_xy": 0.3, "eps_z": 0.06, "min_samples": 10,
+                            "layers_per_chunk": 11, "overlap_layers": None}, f.dbscan_values()
 assert f.recipe()["dbscan"] == f.dbscan_values()
 print("setup page: XY radius / Z radius / Min samples with DBSCAN, from config.toml")
 
@@ -67,7 +68,7 @@ def job(text, on_cancel=None):
     orig_job(text, on_cancel)
 w.set_background_job = job
 wait_ready(w._on_build_requested)                       # the build lands; DBSCAN starts behind it
-assert c.dbscan_params() == (0.35, 0.06, 12) and uistate.load_state(cache)["dbscan"] == {"eps_xy": 0.35, "eps_z": 0.06, "min_samples": 12}
+assert c.dbscan_params() == (0.35, 0.06, 12) and uistate.load_state(cache)["dbscan"] == {"eps_xy": 0.35, "eps_z": 0.06, "min_samples": 12, "layers_per_chunk": 11, "overlap_layers": None}
 pump(lambda: any(t and "clustering chunk" in t for t in notes))
 assert not w._job_cancel_btn.isHidden() and w._job_cancel is not None
 proc = c._dbscan_worker._process; assert proc is not None and proc.poll() is None and proc.pid != os.getpid()
@@ -97,7 +98,8 @@ print("DBSCAN to the end in its process: 20 parts; settings recorded with the sa
 wait_ready(lambda: c.open_recent(BUILD)); pump(idle)
 assert c.dbscan_params() == (0.35, 0.06, 12) and c.has_part_assignment()
 w.backstage.set_datastore_config(c.current_config(), list(s.store.layers), list(s.store.columns), {})
-assert f.dbscan_values() == {"eps_xy": 0.35, "eps_z": 0.06, "min_samples": 12}
+assert f.dbscan_values() == {"eps_xy": 0.35, "eps_z": 0.06, "min_samples": 12,
+                            "layers_per_chunk": 11, "overlap_layers": None}
 from ampm_viewer.shell.plotspec import KDIST, default_spec
 sp = default_spec(KDIST, list(s.result.df.columns), s.renames, dbscan=c.dbscan_params())
 assert (sp.eps_xy, sp.k) == (0.35, 12), "the K-distance plot starts from them too"

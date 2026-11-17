@@ -78,6 +78,9 @@ class AppController(QObject):
         # part_ids the active part assignment can put on the data (None = no
         # assignment) — lets an import report how many parts it matched.
         self._part_ids: set[str] | None = None
+        # Parts the setup page's Part filter leaves out of the DataStore.
+        self._excluded_parts: set[str] = set()
+        self._build_root: Path | None = None
         # A one-off background job (Create Excel, DBSCAN part assignment) — kept
         # separate from the query thread so neither blocks the other.
         self._side_thread: QThread | None = None
@@ -162,9 +165,10 @@ class AppController(QObject):
         self._side_thread = None
         self._side_worker = None
 
-    # -- Create Excel from AMPM ----------------------------------------
+    # -- Excel template (New ▸ Excel template) ---------------------------
     _DBSCAN_KEYS = (("eps_xy", "EPS_XY", float), ("eps_z", "EPS_Z", float),
-                    ("min_samples", "MIN_SAMPLES", int))
+                    ("min_samples", "MIN_SAMPLES", int),
+                    ("layers_per_chunk", "LAYERS_PER_CHUNK", int))
 
     def _set_dbscan_config(self, settings: dict) -> None:
         """Put DBSCAN settings (from the setup page, or saved with the build)
@@ -178,6 +182,9 @@ class AppController(QObject):
                     self._config[conf] = kind(settings[key])
                 except (TypeError, ValueError):
                     pass
+        if "overlap_layers" in settings:  # None = Auto
+            value = settings["overlap_layers"]
+            self._config["OVERLAP_LAYERS"] = int(value) if value else None
 
     def dbscan_params(self) -> tuple[float, float, int]:
         """The build's DBSCAN settings (eps_xy, eps_z, min_samples), as the
@@ -195,7 +202,7 @@ class AppController(QObject):
             self._window.set_status("Still working on the previous job…")
             return
         chosen = QFileDialog.getExistingDirectory(
-            self._window, "Create Excel from a build", self._recents.start_dir())
+            self._window, "Excel template: choose a build", self._recents.start_dir())
         if not chosen:
             return
         self._recents.set_last_browse_dir(str(Path(chosen).parent))
@@ -275,6 +282,7 @@ class AppController(QObject):
         session state, then decide whether to query the cache or go to setup."""
         config, store, source_dir, thickness, _elapsed = result
         self._config = config
+        self._build_root = Path(build_root)
         self._columns = None  # all, unless this build saved a selection (below)
         self._filter = []     # a fresh build starts unfiltered
         # Overlay the part-assignment method the user chose at build time
@@ -287,6 +295,12 @@ class AppController(QObject):
             self._config["METHOD"] = saved_method
         # DBSCAN settings chosen on the setup page (else config.toml's).
         self._set_dbscan_config(saved_state.get("dbscan") or {})
+        # Direct's max distance and the Part filter, likewise.
+        parts = saved_state.get("parts") or {}
+        if parts.get("max_distance") is not None:
+            self._config["MAX_DISTANCE_MM"] = parts["max_distance"] or None
+        self._excluded_parts = set(parts.get("excluded") or [])
+        self._config["EXCLUDED_PARTS"] = sorted(self._excluded_parts)
         # Restore the Apply-mask choice (also not in config.toml).
         self._apply_mask = bool(saved_state.get("apply_mask"))
         self._correction = dict(saved_state.get("correction") or {})
@@ -378,6 +392,15 @@ class AppController(QObject):
         if dbscan:  # the setup page's DBSCAN settings, kept with this build
             self._set_dbscan_config(dbscan)
             uistate.set_dbscan(store.cache_dir, dbscan)
+        # Direct's max distance (0 / None: no limit) and the Part filter.
+        parts = dict(uistate.load_state(store.cache_dir).get("parts") or {})
+        if (method or "").lower() == "direct" and recipe is not None:
+            self._config["MAX_DISTANCE_MM"] = recipe.get("max_distance")
+            parts["max_distance"] = recipe.get("max_distance") or 0
+        self._excluded_parts = set((recipe or {}).get("excluded_parts") or [])
+        self._config["EXCLUDED_PARTS"] = sorted(self._excluded_parts)
+        parts["excluded"] = sorted(self._excluded_parts)
+        uistate.set_parts(store.cache_dir, parts)
         self._apply_part_assignment(store, method)
         if self._dbscan_wanted:
             self._dbscan_wanted = "force"  # a (re)build clusters afresh
@@ -514,6 +537,9 @@ class AppController(QObject):
                 store.set_step_part_assignment(step.index, None)
                 continue
             table, options = found
+            if method == "direct":  # the stack's one setting, if one was chosen
+                options["max_distance_mm"] = (self._config or {}).get(
+                    "MAX_DISTANCE_MM", options.get("max_distance_mm"))
             store.set_step_part_assignment(step.index, table, **options)
             ids |= {derive.norm_key(f"{step.label} {v}")
                     for v in table["part_id"].to_list() if v is not None}
@@ -521,6 +547,162 @@ class AppController(QObject):
             self.session.fail("Could not load the parts of "
                               + "; ".join(failed))
         self._part_ids = ids or None
+
+    def part_names(self, method: str) -> list[str]:
+        """The parts ``method`` assigns, for the setup page's Part filter, as
+        the data will name them (a stacked build's with their step). DBSCAN
+        matches its clusters to the parts CSV's parts."""
+        m = (method or "").lower()
+        store = self.session.store
+        names: list[str] = []
+        if store is not None and stackbuild.is_stack(store):
+            for step in store.steps:
+                found = stackbuild.step_part_table(
+                    step.config, "direct" if m == "dbscan" else m)
+                if found is not None:
+                    names += [f"{step.label} {v}"
+                              for v in found[0]["part_id"].to_list()
+                              if v is not None]
+        else:
+            cfg = self._config or {}
+            if m == "dhxml" and cfg.get("DHXML"):
+                from ohpal.ampm.parts import BuildStartedDHXML
+
+                table = BuildStartedDHXML.from_dhxml(cfg["DHXML"]).parts_table()
+            elif m in ("direct", "dbscan") and cfg.get("PARTS_CSV"):
+                from ohpal.ampm.parts import QuantAMParts
+
+                table = QuantAMParts.from_path(cfg["PARTS_CSV"]).parent_parts()
+            else:
+                return []
+            names = [str(v) for v in table["part_id"].to_list() if v is not None]
+        return list(dict.fromkeys(names))  # in order, once each
+
+    # -- build inputs ------------------------------------------------------
+    _INPUT_FILES = {
+        "DHXML": ("Choose the build's .dhxml", "Build layout (*.dhxml)"),
+        "STL": ("Choose the build's STL", "STL files (*.stl)"),
+        "PARTS_CSV": ("Choose the QuantAM parts CSV", "Parts CSV (*.csv)"),
+    }
+
+    def browse_input(self, key: str) -> dict | None:
+        """Let the user choose one of the build's inputs (``key``: SOURCE,
+        DHXML, STL or PARTS_CSV) and keep it in the build's config.toml.
+        Returns the updated config for the setup page; None if nothing was
+        chosen, or for a new packet source, which reloads the build (its
+        layers and columns come from the packets)."""
+        root, store = self._build_root, self.session.store
+        if root is None or store is None or self._busy:
+            return None
+        if stackbuild.is_stack(store):
+            return None  # each step's inputs are its own build's
+        current = (self._config or {}).get(key)
+        if key == "SOURCE":
+            chosen = QFileDialog.getExistingDirectory(
+                self._window, "Choose the packet source folder",
+                str(current or root))
+        else:
+            title, kind = self._INPUT_FILES[key]
+            start = Path(current).parent if current else root
+            chosen, _ = QFileDialog.getOpenFileName(
+                self._window, title, str(start), f"{kind};;All files (*)")
+        if not chosen:
+            return None
+        path = Path(chosen)
+        try:
+            write_config_path(root, key, path)
+        except OSError as exc:
+            self.session.fail(f"Could not update config.toml: {exc}")
+            return None
+        if key == "SOURCE":
+            self._load(root, "new")
+            return None
+        self._config[key] = path
+        if key == "STL":
+            self._mask_geom = None  # sliced again from the new STL
+            self._mask_key = None
+        return self._config
+
+    # -- info ----------------------------------------------------------------
+    def build_info(self) -> tuple[str, list, str]:
+        """The loaded build's properties for the Info page: ``(name,
+        [(heading, [(label, value), ...]), ...], folder)``."""
+        import os
+        from datetime import datetime
+
+        store = self.session.store
+        if store is None:
+            return "", [], ""
+        cfg = self._config or {}
+        stack = stackbuild.is_stack(store)
+        root = self._build_root
+        layers = list(store.layers)
+        built = store.cached_layers()
+
+        about = [("Type", "Stacked build" if stack else "Single build"),
+                 ("Location", str(root) if root else "")]
+        if stack:
+            about.append(("Steps", stackbuild.step_summary(store)))
+
+        dirs = [Path(store.cache_dir)]
+        if stack:
+            dirs += [Path(s.store.cache_dir) for s in store.steps]
+        size, newest = 0, 0.0
+        for d in dirs:
+            try:
+                for e in os.scandir(d):
+                    if e.is_file():
+                        st = e.stat()
+                        size += st.st_size
+                        if e.name.endswith(".parquet"):
+                            newest = max(newest, st.st_mtime)
+            except OSError:
+                continue
+        n = len(layers)
+        span = f"{min(layers)} - {max(layers)} ({n:,} layers)" if layers else "none"
+        thick = ("each step's own" if stack
+                 else f"{self.session.layer_thickness:g} mm")
+        loaded = len(self._columns) if self._columns else len(store.columns)
+        datastore = [
+            ("Layers", span),
+            ("Built", f"{len(built):,} of {n:,} layers"),
+            ("Size on disk", _size_text(size)),
+            ("Last built", datetime.fromtimestamp(newest).strftime(
+                "%Y-%m-%d %H:%M") if newest else "never"),
+            ("Layer thickness", thick),
+            ("Columns", f"{loaded} of {len(store.columns)} loaded"),
+        ]
+
+        method = str(cfg.get("METHOD") or "none").lower()
+        parts = {"direct": "Direct", "dhxml": "DHXML", "dbscan": "DBSCAN"}.get(
+            method, "Off")
+        if method == "direct":
+            md = cfg.get("MAX_DISTANCE_MM")
+            parts += f" (max distance {md:g} mm)" if md else " (no distance limit)"
+        if self._excluded_parts and parts != "Off":
+            parts += f"; {len(self._excluded_parts)} parts filtered out"
+        corr = self._correction or {}
+        processing = [
+            ("Masking", "On" if self._apply_mask else "Off"),
+            ("Part assignment", parts),
+            ("Correction", ("On, " + ("overriding the column"
+                                      if corr.get("mode") == "override"
+                                      else f"as '{corr.get('output')}'"))
+             if corr.get("on") else "Off"),
+        ]
+
+        notes = cfg.get("STACK_INPUTS") or {}
+        inputs = [("Packet source" if not stack else "Steps' packets",
+                   str(cfg.get("SOURCE") or "") if not stack
+                   else f"{len(store.steps)} steps")]
+        for key, label in (("STL", "STL"), ("PARTS_CSV", "Parts CSV"),
+                           ("DHXML", "DHXML")):
+            value = notes.get(key) if stack else cfg.get(key)
+            inputs.append((label, str(value) if value else "not found"))
+
+        sections = [("About", about), ("DataStore", datastore),
+                    ("Processing", processing), ("Inputs", inputs)]
+        return self.session.build_name, sections, str(root) if root else ""
 
     def _note_part_ids(self, table) -> None:
         try:
@@ -1254,6 +1436,13 @@ class AppController(QObject):
         # Masking first: drop points outside the STL layer polygons, using the
         # raw source columns ("Demand X"/"Demand Y"/"layer") before any rename.
         df = self._mask(df)
+        # The Part filter: parts left out of the DataStore (points with no
+        # part stay).
+        if self._excluded_parts and "part_id" in df.columns:
+            import polars as pl
+
+            df = df.filter(~pl.col("part_id").is_in(sorted(self._excluded_parts))
+                           | pl.col("part_id").is_null())
         # Correction next (still on raw column names): add/override the corrected
         # melt-pool column before rename remaps anything.
         df = self._correct(df)
@@ -1540,3 +1729,50 @@ class AppController(QObject):
                     self._dbscan_thread.wait(2000)
         except RuntimeError:
             pass
+
+
+def _size_text(size: int) -> str:
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:,.0f} {unit}" if unit == "bytes" else f"{size:,.1f} {unit}"
+        size /= 1024
+    return f"{size:,.1f} TB"
+
+
+_CONFIG_KEYS = {"SOURCE": "source", "STL": "stl", "PARTS_CSV": "parts_csv",
+                "DHXML": "dhxml"}
+
+
+def write_config_path(build_root, key: str, path) -> None:
+    """Set one ``[paths]`` entry of the build's config.toml (``key``: SOURCE,
+    STL, PARTS_CSV or DHXML), leaving the rest of the file as it is. A path
+    inside the build folder is written relative to it, as create_config does."""
+    import json
+
+    root = Path(build_root)
+    toml = root / "config.toml"
+    name = _CONFIG_KEYS[key]
+    path = Path(path)
+    try:
+        value = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        value = path.resolve().as_posix()
+    line = f"{name} = {json.dumps(value)}"
+    lines = toml.read_text(encoding="utf-8").splitlines() if toml.exists() else []
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.strip() == "[paths]"), None)
+    if start is None:
+        lines += ["", "[paths]", line]
+    else:
+        end = next((i for i in range(start + 1, len(lines))
+                    if lines[i].lstrip().startswith("[")), len(lines))
+        pattern = re.compile(rf"^\s*{name}\s*=")
+        at = next((i for i in range(start + 1, end)
+                   if pattern.match(lines[i])), None)
+        if at is not None:
+            lines[at] = line
+        else:
+            last = max((i for i in range(start + 1, end) if lines[i].strip()),
+                       default=start)
+            lines.insert(last + 1, line)
+    toml.write_text("\n".join(lines) + "\n", encoding="utf-8")

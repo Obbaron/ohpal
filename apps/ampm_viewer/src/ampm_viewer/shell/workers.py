@@ -161,7 +161,7 @@ def find_build_inputs(build_root: Path) -> tuple[Path | None, Path | None]:
 
 
 class TemplateWorker(QObject):
-    """Writes one build's samples-template workbook ("Create Excel from AMPM").
+    """Writes one build's samples-template workbook (New ▸ Excel template).
 
     With a BuildStarted .dhxml the template is the full one (part bounds, plus
     QuantAM process parameters when a parts CSV is there too); with only a

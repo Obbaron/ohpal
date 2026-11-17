@@ -1,29 +1,31 @@
 """File tab — the backstage, modelled on PowerPoint's File view.
 
-Full-window takeover (no per-tab toolbar). Left sidebar of file actions; a main
-area that stacks a Start page (primary tiles + Recent/Favourites/Search), a
-DataStore page and the Plot library (frozen plots, openable with or without a
-build). The DataStore entry appears dynamically once a build is loaded
-— the backstage is where the parquet-cache definition (columns, ranges, bounds,
-pipeline) is created and rebuilt.
+Full-window takeover (no per-tab toolbar). Left sidebar: **New** (a menu: a
+single build, a stacked build or an Excel template), **Open** and **Plot
+library**, then, while a build is loaded, **DataStore** and **Info**, and
+**Close** (back to the landing page) on any other page. The main area stacks
+the landing page (New tiles + Recent / Favourites / Search), the DataStore
+setup page, the Plot library (frozen plots, openable with or without a build)
+and the build's Info page.
 
-Inert except for *structural* navigation signals the main window uses:
-``loadRequested``, ``createExcelRequested``, and ``datastoreCreateRequested``.
+Inert except for navigation signals the main window acts on.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -35,6 +37,14 @@ from PyQt6.QtWidgets import (
 from . import icons, plot_library
 from .datastore_settings import DataStoreSettings
 from .recents import RecentStore
+
+# Main-area pages.
+START, DATASTORE, LIBRARY, INFO = range(4)
+
+# Recent list columns (fixed widths, so every row's lines up).
+_KIND_W, _STATUS_W, _WHEN_W = 130, 90, 80
+_KIND_TEXT = {"build": "Single build", "stack": "Stacked build",
+              "plot": "Library plot"}
 
 
 def _humanize(iso: str) -> str:
@@ -63,7 +73,7 @@ def _humanize(iso: str) -> str:
 def _tile(title: str, subtitle: str) -> QPushButton:
     btn = QPushButton()
     btn.setProperty("class", "Tile")
-    btn.setMinimumSize(220, 120)
+    btn.setMinimumSize(250, 120)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     lay = QVBoxLayout(btn)
     lay.setContentsMargins(18, 16, 18, 16)
@@ -85,6 +95,8 @@ class Backstage(QWidget):
     createExcelRequested = pyqtSignal()
     datastoreBuildRequested = pyqtSignal()  # Build/Rebuild on the setup page
     openRecentRequested = pyqtSignal(str)   # open a build chosen from Recent
+    infoRequested = pyqtSignal()            # show the loaded build's Info
+    revealRequested = pyqtSignal(str)       # show a folder (the Info page)
     libraryOpenRequested = pyqtSignal(str)  # open a frozen plot (its file)
     libraryBrowseRequested = pyqtSignal()   # open one from anywhere
     libraryFolderRequested = pyqtSignal()   # show the library folder
@@ -124,25 +136,39 @@ class Backstage(QWidget):
 
         self.btn_new = add("New", primary=True)
         self.btn_open = add("Open", primary=True)
-        self.btn_stack = add("New stacked build", primary=True)
-        self.btn_excel = add("Create Excel from AMPM", primary=True)
         self.btn_library = add("Plot library", primary=True)
         lay.addSpacing(8)
-        # Appears only once a build is loaded.
+        # These two appear only once a build is loaded.
         self.btn_datastore = add("DataStore")
         self.btn_datastore.setVisible(False)
-        self.btn_export = add("Export")
         self.btn_info = add("Info")
+        self.btn_info.setVisible(False)
         lay.addStretch(1)
+        # Back to the landing page, from any other page.
         self.btn_close = add("Close")
+        self.btn_close.setVisible(False)
 
-        self.btn_new.clicked.connect(self.newRequested)
+        # New: what to make.
+        self.new_menu = QMenu(self)
+        self.act_new_single = self.new_menu.addAction("Single build")
+        self.act_new_stack = self.new_menu.addAction("Stacked build")
+        self.act_new_excel = self.new_menu.addAction("Excel template")
+        self.act_new_single.triggered.connect(self.newRequested)
+        self.act_new_stack.triggered.connect(self.stackRequested)
+        self.act_new_excel.triggered.connect(self.createExcelRequested)
+        self.btn_new.clicked.connect(self._show_new_menu)
+
         self.btn_open.clicked.connect(self.openRequested)
-        self.btn_stack.clicked.connect(self.stackRequested)
-        self.btn_excel.clicked.connect(self.createExcelRequested)
         self.btn_library.clicked.connect(self.show_library_page)
         self.btn_datastore.clicked.connect(self.show_datastore_page)
+        self.btn_info.clicked.connect(self.infoRequested)
+        self.btn_close.clicked.connect(self.show_start_page)
         return bar
+
+    def _show_new_menu(self) -> None:
+        """New's menu, opening beside the button."""
+        b = self.btn_new
+        self.new_menu.popup(b.mapToGlobal(QPoint(b.width(), 0)))
 
     # -- main area (stacked: Start / DataStore) ------------------------
     def _build_main(self) -> QWidget:
@@ -151,10 +177,22 @@ class Backstage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         self.main_stack = QStackedWidget()
         outer.addWidget(self.main_stack)
-        self.main_stack.addWidget(self._start_page())       # index 0
-        self.main_stack.addWidget(self._datastore_page())   # index 1
-        self.main_stack.addWidget(self._library_page())     # index 2
+        self.main_stack.addWidget(self._start_page())       # START
+        self.main_stack.addWidget(self._datastore_page())   # DATASTORE
+        self.main_stack.addWidget(self._library_page())     # LIBRARY
+        self.main_stack.addWidget(self._info_page())        # INFO
+        self.main_stack.currentChanged.connect(self._on_page_changed)
         return container
+
+    def _on_page_changed(self, index: int) -> None:
+        # Close leads back to the landing page from anywhere else; the page
+        # shown is marked in the sidebar.
+        self.btn_close.setVisible(index != START)
+        for button, page in ((self.btn_datastore, DATASTORE),
+                             (self.btn_library, LIBRARY), (self.btn_info, INFO)):
+            button.setProperty("current", "true" if index == page else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _start_page(self) -> QWidget:
         page = QWidget()
@@ -162,33 +200,26 @@ class Backstage(QWidget):
         lay.setContentsMargins(32, 28, 32, 28)
         lay.setSpacing(18)
 
-        heading = QLabel("Start")
+        heading = QLabel("New")
         heading.setProperty("class", "SectionHeading")
         lay.addWidget(heading)
 
-        # Primary tiles (where PowerPoint puts templates).
+        # What New makes (where PowerPoint puts templates).
         tiles = QHBoxLayout()
         tiles.setSpacing(16)
         self.tile_new = _tile(
-            "New", "Prepare a fresh build: detect inputs and build its DataStore."
-        )
-        self.tile_open = _tile(
-            "Open", "Open a build that already has a DataStore and explore it."
-        )
+            "Single build",
+            "Prepare a build: detect its inputs and build its DataStore.")
         self.tile_stack = _tile(
             "Stacked build",
-            "Read stepped builds as one: layers, Z and time carry on.",
-        )
+            "Read stepped builds as one: layers, Z and time carry on.")
         self.tile_excel = _tile(
-            "Create Excel from AMPM",
-            "Generate samples-template workbooks from a build directory.",
-        )
+            "Excel template",
+            "Generate samples-template workbooks from a build directory.")
         self.tile_new.clicked.connect(self.newRequested)
-        self.tile_open.clicked.connect(self.openRequested)
         self.tile_stack.clicked.connect(self.stackRequested)
         self.tile_excel.clicked.connect(self.createExcelRequested)
         tiles.addWidget(self.tile_new)
-        tiles.addWidget(self.tile_open)
         tiles.addWidget(self.tile_stack)
         tiles.addWidget(self.tile_excel)
         tiles.addStretch(1)
@@ -219,9 +250,29 @@ class Backstage(QWidget):
         strip.addWidget(self.search)
         lay.addLayout(strip)
 
+        # Column headings over the list, at the rows' widths.
+        head = QWidget()
+        hh = QHBoxLayout(head)
+        hh.setContentsMargins(12, 0, 12, 0)
+        hh.setSpacing(8)
+        for text, width in (("Name", None), ("Type", _KIND_W),
+                            ("Status", _STATUS_W), ("Opened", _WHEN_W)):
+            lab = QLabel(text)
+            lab.setProperty("class", "TileSub")
+            if width is None:
+                hh.addWidget(lab, 1)
+            else:
+                lab.setFixedWidth(width)
+                hh.addWidget(lab)
+        hh.addSpacing(30)  # over the favourite stars
+        listing = QVBoxLayout()
+        listing.setSpacing(4)
+        listing.addWidget(head)
+
         self.recent = QListWidget()
         self.recent.itemDoubleClicked.connect(self._on_recent_activated)
-        lay.addWidget(self.recent, 1)
+        listing.addWidget(self.recent, 1)
+        lay.addLayout(listing, 1)
         return page
 
     # -- recents -------------------------------------------------------
@@ -240,22 +291,34 @@ class Backstage(QWidget):
                 continue
             if self._recent_filter == "shared":
                 continue  # not wired yet
-            if query and query not in e.name.lower():
+            kind = _KIND_TEXT.get(e.what(), "")
+            if query and query not in f"{e.name} {kind}".lower():
                 continue
             self._add_recent_row(e)
 
     def _add_recent_row(self, entry) -> None:
         item = QListWidgetItem(self.recent)
         item.setData(Qt.ItemDataRole.UserRole, entry.path)
+        what = entry.what()
+        item.setData(Qt.ItemDataRole.UserRole + 1, what)
 
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(10, 4, 8, 4)
         h.setSpacing(8)
-        status = "ready" if entry.has_cache else "needs build"
-        label = QLabel(f"{entry.name}  ·  {status}  ·  {_humanize(entry.last_opened)}")
-        label.setToolTip(entry.path)
-        h.addWidget(label, 1)
+        name = QLabel(entry.name)
+        name.setToolTip(entry.path)
+        h.addWidget(name, 1)
+        dim = "color: palette(placeholder-text);"
+        status = ("" if what == "plot"
+                  else "ready" if entry.has_cache else "needs build")
+        for text, width in ((_KIND_TEXT.get(what, ""), _KIND_W),
+                            (status, _STATUS_W),
+                            (_humanize(entry.last_opened), _WHEN_W)):
+            cell = QLabel(text)
+            cell.setFixedWidth(width)
+            cell.setStyleSheet(dim)
+            h.addWidget(cell)
 
         star = QToolButton()
         star.setCheckable(True)
@@ -275,7 +338,11 @@ class Backstage(QWidget):
 
     def _on_recent_activated(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.ItemDataRole.UserRole)
-        if path:
+        if not path:
+            return
+        if item.data(Qt.ItemDataRole.UserRole + 1) == "plot":
+            self.libraryOpenRequested.emit(path)
+        else:
             self.openRecentRequested.emit(path)
 
     def _on_star_toggled(self, path: str, favourite: bool) -> None:
@@ -291,13 +358,6 @@ class Backstage(QWidget):
         heading = QLabel("DataStore")
         heading.setProperty("class", "SectionHeading")
         lay.addWidget(heading)
-        sub = QLabel(
-            "Load this build into a dataset you can sort, shape, and plot. "
-            "Set the layer range, thickness, and columns, then build."
-        )
-        sub.setProperty("class", "TileSub")
-        sub.setWordWrap(True)
-        lay.addWidget(sub)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -397,7 +457,74 @@ class Backstage(QWidget):
 
     def show_library_page(self) -> None:
         self.refresh_library()
-        self.main_stack.setCurrentIndex(2)
+        self.main_stack.setCurrentIndex(LIBRARY)
+
+    # -- info ------------------------------------------------------------
+    def _info_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setSpacing(10)
+        head = QHBoxLayout()
+        heading = QLabel("Info")
+        heading.setProperty("class", "SectionHeading")
+        head.addWidget(heading)
+        head.addStretch(1)
+        self.info_reveal = QPushButton("Open build folder")
+        self.info_reveal.clicked.connect(
+            lambda: self._info_folder and self.revealRequested.emit(self._info_folder))
+        head.addWidget(self.info_reveal)
+        lay.addLayout(head)
+        self.info_title = QLabel("")
+        self.info_title.setStyleSheet("font-size: 13pt; font-weight: 600;")
+        self.info_title.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self.info_title)
+        self._info_folder = ""
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.info_body = QWidget()
+        self._info_grid = QGridLayout(self.info_body)
+        self._info_grid.setContentsMargins(0, 0, 18, 0)
+        self._info_grid.setHorizontalSpacing(24)
+        self._info_grid.setVerticalSpacing(6)
+        scroll.setWidget(self.info_body)
+        lay.addWidget(scroll, 1)
+        return page
+
+    def show_info(self, title: str, sections, folder: str = "") -> None:
+        """Show the loaded build's properties: ``sections`` is
+        ``[(heading, [(label, value), ...]), ...]``."""
+        self.info_title.setText(title)
+        self._info_folder = folder or ""
+        self.info_reveal.setVisible(bool(folder))
+        grid = self._info_grid
+        while grid.count():
+            w = grid.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        row = 0
+        for heading, rows in sections:
+            h = QLabel(heading)
+            h.setStyleSheet("font-weight: 600; margin-top: 10px;")
+            grid.addWidget(h, row, 0, 1, 2)
+            row += 1
+            for label, value in rows:
+                k = QLabel(label)
+                k.setStyleSheet("color: palette(placeholder-text);")
+                k.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+                v = QLabel(str(value))
+                v.setWordWrap(True)
+                v.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse)
+                grid.addWidget(k, row, 0)
+                grid.addWidget(v, row, 1)
+                row += 1
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(row, 1)
+        self.main_stack.setCurrentIndex(INFO)
 
     def _divider(self) -> QFrame:
         line = QFrame()
@@ -408,14 +535,15 @@ class Backstage(QWidget):
     # -- state / navigation --------------------------------------------
     def set_build_loaded(self, loaded: bool) -> None:
         self.btn_datastore.setVisible(loaded)
+        self.btn_info.setVisible(loaded)
         if not loaded:
             self.show_start_page()
 
     def show_datastore_page(self) -> None:
-        self.main_stack.setCurrentIndex(1)
+        self.main_stack.setCurrentIndex(DATASTORE)
 
     def show_start_page(self) -> None:
-        self.main_stack.setCurrentIndex(0)
+        self.main_stack.setCurrentIndex(START)
 
     def set_datastore_exists(self, exists: bool) -> None:
         self.ds_form.set_exists(exists)
@@ -432,8 +560,7 @@ class Backstage(QWidget):
 
     def set_loading(self, loading: bool) -> None:
         """Disable the load entry points while a load is in flight."""
-        for w in (self.btn_new, self.btn_open, self.btn_stack,
-                  self.tile_new, self.tile_open, self.tile_stack):
+        for w in (self.btn_new, self.btn_open, self.tile_new, self.tile_stack):
             w.setEnabled(not loading)
 
     def apply_icons(self, color: str) -> None:
@@ -441,13 +568,14 @@ class Backstage(QWidget):
         mapping = {
             self.btn_new: "load_packet",
             self.btn_open: "open",
-            self.btn_stack: "stacked_build",
-            self.btn_excel: "create_excel",
             self.btn_library: "plot_library",
             self.btn_datastore: "datastore",
-            self.btn_export: "export",
             self.btn_info: "info",
             self.btn_close: "close",
         }
         for button, name in mapping.items():
             button.setIcon(icons.ui(name, color))
+        for action, name in ((self.act_new_single, "load_packet"),
+                             (self.act_new_stack, "stacked_build"),
+                             (self.act_new_excel, "create_excel")):
+            action.setIcon(icons.ui(name, color))

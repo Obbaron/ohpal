@@ -44,4 +44,4 @@ An export is recorded as *what* to write, never *where*. When the macro runs
 it asks where to save each file before it starts. See [Macros](help:macros).
 
 To create the samples-template workbook for a build instead, see
-[Create Excel from AMPM](help:create-excel).
+[Excel template](help:create-excel).

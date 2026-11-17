@@ -49,9 +49,10 @@ keywords: shortcut, keyboard, mouse, keys, ctrl, f1, double-click, hotkey
 | Click empty space (plot or toolbar) | Deselects |
 | Drag the slider (Layer Viewer) | Moves through the layers |
 
-## Start page
+## File tab
 
 | Action | Does |
 | --- | --- |
-| Double-click a recent build | Opens it |
-| Click a build's star | Adds it to or removes it from Favourites |
+| Double-click a recent build or plot | Opens it |
+| Click a row's star | Adds it to or removes it from Favourites |
+| Click a setup page group's title | Folds or unfolds it |

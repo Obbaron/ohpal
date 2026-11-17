@@ -13,7 +13,8 @@ steps together as one continuous build. The step folders are not changed.
 
 ## Making one
 
-1. On the File tab, choose **New stacked build**.
+1. On the File tab, choose **New ▸ Stacked build** (or the **Stacked build**
+   tile).
 2. **Add step...** for each step's build folder, bottom step first. The list
    shows each step's own layers and where they land in the stack
    (`layers 1-4  ->  401-404`). **Move up** / **Move down** fix the order.

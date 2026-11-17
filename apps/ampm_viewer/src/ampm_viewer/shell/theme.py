@@ -128,6 +128,7 @@ QToolBar QLabel { color: palette(placeholder-text); padding: 0 2px 0 6px; }
 #BackstageSidebar QPushButton { text-align: left; padding: 9px 16px; border: none; border-radius: 0; color: palette(window-text); }
 #BackstageSidebar QPushButton:hover { background: palette(base); }
 #BackstageSidebar QPushButton[primary="true"] { font-weight: 600; }
+#BackstageSidebar QPushButton[current="true"] { background: palette(base); }
 .Tile { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }
 .Tile:hover { border-color: palette(highlight); }
 .TileTitle { font-size: 15px; font-weight: 600; }

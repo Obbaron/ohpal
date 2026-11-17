@@ -24,7 +24,7 @@ cmod._tell = lambda parent, title, text, **k: told.append((title, text))
 cmod._ask = lambda parent, title, text, **k: (asked.append(title), True)[1]
 def run(d):
     QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: str(d))
-    told.clear(); w.backstage.btn_excel.click()
+    told.clear(); w.backstage.act_new_excel.trigger()
     t0 = time.time()
     while c._side_thread is not None and time.time() - t0 < 120: app.processEvents(); time.sleep(0.01)
     for _ in range(20): app.processEvents()

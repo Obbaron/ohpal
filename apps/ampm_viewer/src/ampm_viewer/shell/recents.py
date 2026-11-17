@@ -1,4 +1,5 @@
-"""Recent builds — a small persisted list, plus the dialog start-dir policy.
+"""Recent builds and library plots: a small persisted list, plus the dialog
+start-dir policy.
 
 Backed by the app's settings store (``settings.app_settings``; the
 same one that holds window geometry), so it needs no extra file. Entries are a
@@ -33,13 +34,35 @@ class RecentEntry:
     last_opened: str            # ISO 8601 (UTC)
     has_cache: bool = False
     favourite: bool = False
+    kind: str = ""              # "build" | "stack" | "plot" ("" = work it out)
 
     @property
     def exists(self) -> bool:
         try:
-            return Path(self.path).is_dir()
+            p = Path(self.path)
+            return p.is_file() if self.what() == "plot" else p.is_dir()
         except OSError:
             return False
+
+    def what(self) -> str:
+        """What this is: a single build, a stacked build or a library plot."""
+        if self.kind:
+            return self.kind
+        return kind_of(self.path)
+
+
+def kind_of(path) -> str:
+    """"plot" for a plot library file, "stack" for a stacked build's folder,
+    else "build"."""
+    p = Path(path)
+    if p.suffix.lower() == ".ampmplot":
+        return "plot"
+    try:
+        if (p / "stacked.toml").is_file():
+            return "stack"
+    except OSError:
+        pass
+    return "build"
 
 
 class RecentStore:
@@ -92,8 +115,11 @@ class RecentStore:
             entries = kept
         return entries
 
-    def record(self, path: str | Path, *, has_cache: bool) -> None:
-        """Upsert ``path`` to the top, carrying over its favourite flag."""
+    def record(self, path: str | Path, *, has_cache: bool,
+               name: str | None = None) -> None:
+        """Upsert ``path`` (a build folder, or a library plot's file) to the
+        top, carrying over its favourite flag. ``name``: shown instead of the
+        folder or file name (a plot's title)."""
         p = str(Path(path).resolve())
         entries = self._read()
         fav = next((e.favourite for e in entries if e.path == p), False)
@@ -102,10 +128,11 @@ class RecentStore:
             0,
             RecentEntry(
                 path=p,
-                name=Path(p).name,
+                name=name or Path(p).name,
                 last_opened=datetime.now(timezone.utc).isoformat(),
                 has_cache=has_cache,
                 favourite=fav,
+                kind=kind_of(p),
             ),
         )
         self._write(self._trim(entries))
@@ -126,8 +153,8 @@ class RecentStore:
         self._s.remove(_ENTRIES_KEY)
 
     def most_recent(self) -> RecentEntry | None:
-        existing = self.load()  # pruned
-        return existing[0] if existing else None
+        """The most recently opened build (not a library plot)."""
+        return next((e for e in self.load() if e.what() != "plot"), None)
 
     # -- public: directory hints --------------------------------------
     def projects_root(self) -> str | None:
