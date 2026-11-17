@@ -1,6 +1,6 @@
 """Violin, KDE and K-distance plots: data, spec, dialog, tab, macros, app."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import sys, time
 BUILD = sys.argv[1]
 import numpy as np, polars as pl
 from scipy.stats import gaussian_kde

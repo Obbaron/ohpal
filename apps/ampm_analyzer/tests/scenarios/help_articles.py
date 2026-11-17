@@ -1,6 +1,6 @@
 """Help: content integrity, search, context mapping, the window, the wiring."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time, re
+import sys, time
 BUILD = sys.argv[1]
 from PyQt6.QtCore import QEventLoop, QTimer, QUrl, Qt
 from PyQt6.QtWidgets import QApplication

@@ -1,6 +1,6 @@
 """A rebuild is a clean slate; the grid lands on a layer that has data (mask arriving mid-query, reopen with a mask, layers not built)."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import glob, json, os, sys, tempfile
+import os, sys
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication
 from shapely.geometry import box

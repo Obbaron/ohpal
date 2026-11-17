@@ -172,24 +172,16 @@ joined = join_parts_with_stats(cov_overall, parts_with_speed)
 
 ## Stage 8: Visualization
 
-There are two ways to visualize results:
-
-**GUI (recommended):** Launch `python app.py`, load a project root directory, and use the views system. Each view (3D scatter, 2D scatter, contour, KDE, bar, etc.) is a discoverable module in `ampm/views/` with its own axes, settings, and plot logic. The GUI handles column selection, derived columns, and plotting in a background thread. There are also compiled binaries on the Releases page.
-
-**Scripts:** The lower-level plotters in `ampm.plotting` can be called directly from any script:
-
-- `scatter3d`: 3D point cloud, colored by any column
-- `scatter2d`: top-down 2D view with optional equal aspect
-- `scatter2d_layered`: slider-controlled per-layer viewer with signal dropdown
-- `bar`: bar graph with sort and orientation control
-- `contour`: filled contour over a (x, y) grid for parametric process maps
-- `kde`: overlaid kernel density curves for distribution comparison
-
-See [PLOTTING.md](PLOTTING.md) for parameters, file size implications, and which plot to reach for when.
+Results are plotted in **AMPM Analyzer** (`apps/ampm_analyzer`): open a build,
+shape the data in the Data tab (calculated columns, per-part CoV, filters) and
+make plots from it: 2D / 3D scatter, Layer Viewer, bar, histogram, CoV summary,
+contour (parametric process maps), KDE, violin and the k-distance curve for
+DBSCAN tuning. Its in-app help covers each plot. The `ohpal` library itself has
+no plotting: its results are Polars frames, ready for any plotting tool.
 
 ## Where this all comes together
 
-**GUI:** `python app.py` runs all stages behind a single "Load Data" button. Select a project directory, review the auto-detected config, load and mask the data, add derived columns (CoV), and plot — all from the interface. The compiled executable (`ampm-analysis.exe`) bundles everything Python is not required.
+**App:** AMPM Analyzer runs the stages behind **File ▸ New / Open**: pick a build, review the DataStore setup (columns, mask, part assignment, correction), build it, then add calculated columns (CoV) and plot. The packaged `AMPM-Analyzer.exe` is a single file; Python is not required.
 
 **Pipeline scripts:** The scripts in `examples/pipeline/` run stages 1–8 as separate steps:
 
@@ -197,9 +189,6 @@ See [PLOTTING.md](PLOTTING.md) for parameters, file size implications, and which
 python examples/pipeline/01_load_and_mask.py /path/to/project_root
 python examples/pipeline/02a_assign_parts_direct.py /path/to/project_root
 python examples/pipeline/03_compute_cov.py /path/to/project_root
-python examples/pipeline/04_visualize.py /path/to/bproject_root
 ```
 
-04 produces three plots: a 3D scatter colored by per-part CoV, a parametric process map (CoV vs Hatches Power × Hatch Speed), and a KDE comparison of the most-stable and least-stable parts.
-
-The end-to-end scripts in `examples/` (`parametric.py`, `view_3d.py`, `view_layers.py`) combine the same stages into single files. `explore.py` at the project root is the working scratch with extra prints and intermediate plots for development and tuning.
+03 ends with the per-part CoV joined to each part's laser parameters: the table to plot (for example as a contour in the app).

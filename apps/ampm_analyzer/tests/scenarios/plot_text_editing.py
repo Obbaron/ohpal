@@ -1,7 +1,7 @@
 """Editable plot elements: panel ⇄ plot wiring, defaults, reset, selection,
 pop-out / dock, on the real build (no GL needed)."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time, types
+import sys, time, types
 BUILD = sys.argv[1]
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtGui import QColor

@@ -1,7 +1,7 @@
 """Contextual plot controls: the toolbar, side panel and legend follow the plot;
 the nine view options work; custom views can inherit controls."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import sys, time
 BUILD = sys.argv[1]
 import numpy as np
 from PyQt6.QtCore import QEventLoop, QTimer

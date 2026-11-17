@@ -7,7 +7,6 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEventLoop, QObject, QTimer
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QToolButton
 app = QApplication([])
-import polars as pl
 from ampm_analyzer.shell import controller as cmod, macro_dialog, macros, uistate
 from ampm_analyzer.shell.datastore_settings import REQUIRED_COLUMNS, DataStoreSettings
 from ampm_analyzer.shell.plotspec import PlotSpec

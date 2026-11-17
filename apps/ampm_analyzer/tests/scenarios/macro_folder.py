@@ -1,13 +1,13 @@
 """The macro folder: default in Documents, configurable in Settings, used by Save and
 Browse, listed on the Run menu; an unreachable folder falls back to the default."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import sys, tempfile, time
 BUILD = sys.argv[1]
 from pathlib import Path
 from PyQt6.QtCore import QEventLoop, QTimer, QStandardPaths
 from PyQt6.QtWidgets import QApplication, QFileDialog, QToolButton
 app = QApplication([]); app.setOrganizationName("AMPM"); app.setApplicationName("AMPM Analyzer")
-from ampm_analyzer.shell import controller as cmod, macros, window as wmod
+from ampm_analyzer.shell import controller as cmod, macros
 from ampm_analyzer.shell.window import MainWindow
 
 docs = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation))

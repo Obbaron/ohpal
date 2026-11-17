@@ -29,8 +29,8 @@ The two expensive stages are cached: `mask_cache.mask_or_load` and
 `cluster_cache.cluster_or_load` memoise results keyed on the inputs (the mask cache uses
 `stl_hash` of the geometry), so re-runs with unchanged inputs skip recomputation.
 
-Supporting modules: `sampling` (downsampling), `plotting` (figure construction), and
-`setup_build` (build scaffolding).
+Supporting modules: `sampling` (downsampling) and `setup_build` (build scaffolding).
+Plots are drawn by the [`ampm_analyzer`](../../apps/ampm_analyzer/README.md) app.
 
 ### Inputs
 
@@ -95,8 +95,9 @@ uv run python -m pytest
 
 ## Dependencies
 
-Core: `polars`, `pyarrow`, `numpy`, `scipy`, `scikit-learn`, `networkx`. Geometry:
-`trimesh`, `shapely`, `rtree`. Plotting: `plotly`, `matplotlib`. (GUI concerns such as
+Core: `polars`, `pyarrow`, `numpy`, `scipy`, `scikit-learn`. Geometry: `trimesh`,
+`shapely`, with `networkx` and `rtree` (which trimesh uses to slice the STL into layer
+outlines). No plotting library: plots belong to the app. (GUI concerns such as
 PyQt6 belong to the [`ampm_analyzer`](../../apps/ampm_analyzer/README.md) app, not here —
 this package is the headless pipeline.)
 

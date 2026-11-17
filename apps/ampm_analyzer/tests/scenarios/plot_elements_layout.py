@@ -4,7 +4,7 @@ alignment; the legend box; the data as an element; hidden elements give their
 room to the plot. On the real build, under a GL context (xvfb on Linux), so
 the canvas is laid out at its real size."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import sys, time, types
+import sys, time
 BUILD = sys.argv[1]
 import numpy as np
 from PyQt6.QtCore import QEventLoop, QTimer

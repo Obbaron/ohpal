@@ -1,7 +1,6 @@
 """Filled-contour data: interpolation, levels, bands, labels (no GL), then the
 plot tab's state under a GL context when run with xvfb."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile
 import numpy as np, polars as pl
 from PyQt6.QtWidgets import QApplication
 app = QApplication([])

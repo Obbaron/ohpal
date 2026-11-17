@@ -1,6 +1,6 @@
 """Undo / redo shortcuts reach the app, not a text field being edited (and vice versa)."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile
+import os, sys
 from PyQt6.QtCore import QEventLoop, QTimer, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit

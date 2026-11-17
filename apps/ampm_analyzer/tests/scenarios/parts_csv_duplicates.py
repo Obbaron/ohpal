@@ -2,7 +2,7 @@
 
 Args: ORIGINAL_CSV DUPLICATED_BUILD [CSV ...] (the runner makes the duplicated build)."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, types
+import os, sys, types
 import polars as pl
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication

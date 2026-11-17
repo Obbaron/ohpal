@@ -19,7 +19,7 @@ One ``.xlsx`` is written per build into the output directory, named by build_id.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl

@@ -1,10 +1,9 @@
 """Frameless popups: all card dialogs draggable; LogWindow a frameless card;
 no native QMessageBox left in the app's own popups."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QApplication, QDialog, QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 app = QApplication([])
 from ampm_analyzer.shell.card import DraggableCard
 from ampm_analyzer.shell import (

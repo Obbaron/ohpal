@@ -1,9 +1,9 @@
 """The plot toolbar has no selection group; everything else is intact."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import sys, time
 BUILD = sys.argv[1]
 from PyQt6.QtCore import QEventLoop, QTimer
-from PyQt6.QtWidgets import QApplication, QComboBox, QToolBar
+from PyQt6.QtWidgets import QApplication, QComboBox
 app = QApplication([])
 from ampm_analyzer.shell import controller as cmod, icons, toolbars
 from ampm_analyzer.shell.plotspec import PlotSpec

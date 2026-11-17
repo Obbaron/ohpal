@@ -1,6 +1,6 @@
 """First plot must not rebuild the main window (the close-and-reopen flash)."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import sys, time
 BUILD = sys.argv[1]
 from PyQt6.QtCore import QEvent, QEventLoop, QObject, QTimer
 from PyQt6.QtWidgets import QApplication

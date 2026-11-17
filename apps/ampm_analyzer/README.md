@@ -48,8 +48,11 @@ The app compiles a binary executable with [PyInstaller](https://pyinstaller.org/
 just build               # uv --directory apps/ampm_analyzer run pyinstaller app.spec
 ```
 
-Output lands in `apps/ampm_analyzer/dist/AMPM-Analyzer/` (a one-folder app: ship the
-whole folder). A few layout details that make the build work:
+Output is one file, `apps/ampm_analyzer/dist/AMPM-Analyzer.exe`: everything is inside it
+(nothing to ship beside it). It unpacks itself to a temporary folder each time it starts,
+so it starts a little slower than an unpacked app would; a DBSCAN job it starts (the same
+.exe run with `--dbscan-job`) reuses that unpacked copy. A few layout details that make the
+build work:
 
 - **`src/ampm_analyzer/__main__.py`** is the entry script. PyInstaller runs it as
   `__main__`, outside the package, so it imports `ampm_analyzer.shell.app` absolutely.
@@ -57,7 +60,9 @@ whole folder). A few layout details that make the build work:
   `uv --directory`); its paths are relative to `apps/ampm_analyzer/`.
 - The lazily-imported pipeline (`ohpal.*`) is pulled in via `collect_submodules`, and the
   app's assets (icons, fonts, help) and VisPy's shaders via `collect_data_files`.
-- The executable's icon is `src/ampm_analyzer/assets/ampm.ico`.
+- The executable's icon is `src/ampm_analyzer/assets/ampm.ico`; the app also sets it on
+  every window at runtime (title bar, taskbar, floating plots, help, log). The .exe's
+  Windows file properties (name, version, description) come from `__version__`.
 
 ## Layout
 

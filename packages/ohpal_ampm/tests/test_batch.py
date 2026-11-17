@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from ohpal.ampm.batch import generate_build_templates

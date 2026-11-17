@@ -3,10 +3,9 @@ with their look and filter; cleared by a rebuild), and the plot library keeps
 frozen plots that show the numbers of the build they came from, opened beside
 another build's plots or with no build open."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import json, os, shutil, sys, tempfile, time
+import os, shutil, sys, tempfile, time
 BUILD = sys.argv[1]
 TMP = tempfile.mkdtemp()
-import numpy as np
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QFileDialog
 app = QApplication([])

@@ -1,7 +1,7 @@
 """Stage-1 checks on a real build: every action is one undo step, undo restores
 the exact prior state, redo re-applies it, failures roll back."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, types
+import sys, types
 BUILD = sys.argv[1]
 
 from PyQt6.QtCore import QEventLoop, QTimer

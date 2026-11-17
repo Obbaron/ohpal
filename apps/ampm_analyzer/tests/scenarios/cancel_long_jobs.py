@@ -1,7 +1,7 @@
 """DBSCAN settings on the setup page (kept per build); DBSCAN in a child process
 with progress and Cancel; Cancel for a DataStore build; shutdown mid-DBSCAN."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile, time
+import os, sys, time
 BUILD = sys.argv[1]
 import numpy as np, polars as pl
 from pathlib import Path
@@ -24,7 +24,7 @@ assert a["cluster"].to_list() == b["cluster"].to_list(), "the hook doesn't chang
 print("ohpal: progress(chunk, n) per chunk:", calls)
 
 app = QApplication([])
-from ampm_analyzer.shell import controller as cmod, uistate, workers
+from ampm_analyzer.shell import controller as cmod, uistate
 from ampm_analyzer.shell.window import MainWindow
 told, asks = [], []
 cmod._tell = lambda parent, title, text, **k: told.append((title, text))

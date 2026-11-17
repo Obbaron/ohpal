@@ -445,8 +445,6 @@ def filter_rows(df, conditions):
     """
     if not conditions:
         return df
-    import polars as pl  # noqa: F401 (kept parallel with the rest of the module)
-
     names = df.columns
     combined = None
     for cond in conditions:

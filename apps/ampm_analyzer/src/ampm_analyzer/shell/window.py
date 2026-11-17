@@ -1435,7 +1435,6 @@ class MainWindow(QMainWindow):
         self.toolbar.show()
         color = self._icon_color()
         if kind == "data":
-            store = self.session.store
             dt = self._data_tab
             toolbars.populate_data(
                 self.toolbar,

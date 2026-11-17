@@ -328,7 +328,7 @@ class CurveData:
 
 def build_kde(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
     """Overlaid kernel-density curves of ``spec.x``, one per value of
-    ``spec.group_by`` (or a single curve). Mirrors ``ohpal.ampm.plotting.kde``:
+    ``spec.group_by`` (or a single curve), as the old Plotly KDE view drew them:
     Scott's (or Silverman's) bandwidth, a shared x grid over the data range
     padded 5%, "noise" and empty groups dropped."""
     import polars as pl

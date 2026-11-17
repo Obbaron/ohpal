@@ -1,6 +1,6 @@
 """Create Excel from AMPM: full template (DHXML + parts CSV), reduced (CSV only), and a folder with neither."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, shutil, sys, tempfile, time
+import shutil, sys, tempfile, time
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QFileDialog
 app = QApplication([])

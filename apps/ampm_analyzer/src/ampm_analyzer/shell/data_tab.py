@@ -12,7 +12,7 @@ widget is only the grid surface.
 from __future__ import annotations
 
 from PyQt6.QtCore import QByteArray, QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,

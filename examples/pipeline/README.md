@@ -1,6 +1,6 @@
 # AMPM analysis pipeline
 
-A four-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a scaffold to demonstrate how each stage of `ampm-analyzer` works. Copy what you need into your own analysis scripts.
+A three-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a scaffold to demonstrate how each stage of `ampm-analyzer` works. Copy what you need into your own analysis scripts.
 
 For the conceptual reference on each stage (algorithm choices, tuning tradeoffs, memory math), see [docs/PIPELINE.md](../../docs/PIPELINE.md).
 
@@ -10,8 +10,9 @@ For the conceptual reference on each stage (algorithm choices, tuning tradeoffs,
 python examples/pipeline/01_load_and_mask.py /path/to/project_root
 python examples/pipeline/02a_assign_parts_direct.py /path/to/project_root  # OR 02b
 python examples/pipeline/03_compute_cov.py /path/to/project_root
-python examples/pipeline/04_visualize.py /path/to/project_root
 ```
+
+Plot the results in AMPM Analyzer (the app in `apps/ampm_analyzer`).
 
 On first run, the script auto-detects the source data, STL, and parts CSV, writes a `config.toml` into the project root, then proceeds. Subsequent runs reuse the existing `config.toml`. See [docs/PIPELINE.md](../../docs/PIPELINE.md) for details on configuration, including how to use overrides from an IDE.
 
@@ -32,7 +33,6 @@ flowchart LR
     S02a --> S03[03_compute_cov.py]
     S02b --> S03
     C3 --> S03
-    S03 --> S04[04_visualize.py]
 ```
 
 Each `02*` and later script also reads the layer and mask caches (omitted from arrows above for clarity).
@@ -81,7 +81,7 @@ Uses chunked DBSCAN to identify clusters in the masked data, then matches each c
 
 **Key constants:**
 
-- `EPS_XY`: in-plane neighbor radius (mm). Run `examples/tune_eps.py` to find the right value for your build.
+- `EPS_XY`: in-plane neighbor radius (mm). Use the k-distance curve (`ohpal.ampm.clustering.k_distance_curve`, or the K-Distance Curve plot in AMPM Analyzer) to find the right value for your build.
 - `EPS_Z`: through-thickness radius (mm), typically `2 * LAYER_THICKNESS`.
 - `MIN_SAMPLES`: density threshold (default 10).
 - `LAYERS_PER_CHUNK`: chunk size (default 11). Smaller = lower memory, more chunks.
@@ -108,24 +108,6 @@ Computes Coefficient of Variation (CoV) per part in three different modes (`over
 
 **Expected output:** Three tables of per-part CoV (one per mode), then a joined table with `Hatches Power`, `Hatch Speed`, and CoV for each part. Comparing the modes diagnoses where instability lives: high `overall` + low `per_layer_mean` means layer-to-layer drift; low `overall` + high `per_layer_mean` means within-layer noise that averages out.
 
-### 04_visualize.py
-
-Produces three interactive plotly figures from the part-assigned data.
-
-**Caches it reads:** Same as 03.
-
-**Plots produced:**
-
-1. **3D scatter** colored by per-part overall CoV. Hover shows `part_id`, `Hatches Power`, `Hatch Speed`.
-2. **KDE comparison** of the 3 most stable vs 3 least stable parts on a chosen signal.
-3. **Parametric contour plot** of overall CoV vs `(Hatch Speed, Hatches Power)`. Automatically skips this plot if every part has identical laser parameters.
-
-**Key constants:**
-
-- Same branching and assignment constants as 03.
-- `SIGNAL`: the signal column to plot (default `"MeltVIEW melt pool (mean)"`).
-- `TARGET_POINTS_3D`: how many points to sample for the 3D scatter (default 80,000).
-
 ## Choosing 02a vs 02b
 
 Choosing between direct assignment (02a) and clustering (02b) to resolve part IDs, typically depends on **how dense and how well-separated** the parts are on the build plate.
@@ -140,7 +122,7 @@ Choosing between direct assignment (02a) and clustering (02b) to resolve part ID
 
 When in doubt, try 02a first. It's faster, has no tuning parameters, and produces equivalent results to DBSCAN when parts are well-separated. Switch to 02b only if you find 02a is assigning rows to the wrong parts (rare on real geometries).
 
-Clustering methods requires parameter tuning per build. See `examples/tune_eps.py` and [docs/CLUSTERING.md](../../docs/CLUSTERING.md) for more information on DBSCAN tuning.
+Clustering methods requires parameter tuning per build. See the K-Distance Curve plot in AMPM Analyzer and [docs/CLUSTERING.md](../../docs/CLUSTERING.md) for more information on DBSCAN tuning.
 
 ## What's cached and when
 

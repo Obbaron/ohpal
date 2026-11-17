@@ -1,9 +1,9 @@
 """Workers are destroyed on the main thread (never their own: PyQt deadlock),
 and none leak; plot toolbars rebuild as queries finish without freezing."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import gc, os, sys, tempfile, threading, time
+import gc, sys, threading, time
 BUILD = sys.argv[1]
-from PyQt6.QtCore import QEventLoop, QTimer, Qt
+from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 from ampm_analyzer.shell import controller as cmod, plot_window as pwmod, workers

@@ -18,12 +18,10 @@ Key design choices:
 Usage
 -----
     from ampm.clustering import k_distance_curve, cluster_dbscan
-    from ampm.plotting import scatter2d, scatter3d
 
-    # 1. Tune eps_xy by inspecting the k-distance plot
+    # 1. Tune eps_xy by inspecting the k-distance curve (rank vs distance;
+    #    AMPM Analyzer draws it as its K-Distance Curve plot)
     kdc = k_distance_curve(df, k=10, mode="3d", eps_xy=1.0, eps_z=0.1)
-    fig = scatter2d(kdc, x="Rank", y="k-distance (mm)", equal_aspect=False,
-                    title="k-distance (find the elbow)")
     fig.show()
 
     # 2. Cluster

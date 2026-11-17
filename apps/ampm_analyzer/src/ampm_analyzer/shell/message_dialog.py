@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QVBoxLayout,
 )

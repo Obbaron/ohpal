@@ -88,7 +88,12 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 
 - The version is defined once, as `__version__` in `ampm_analyzer/__init__.py`;
   `pyproject.toml` reads it from there.
-- The executable has the app icon.
+- The app is one self-contained executable, `AMPM-Analyzer.exe` (PyInstaller
+  one-file: no `_internal` folder beside it). Its Windows file properties carry
+  the app's name and version.
+- The app icon is on the executable and on every window (title bar, taskbar,
+  floating plots, help, log); on Windows the taskbar groups the app's windows
+  under it.
 - `just verify` / `make verify` import the new application.
 - The `ampm-analyzer` script now points at `ampm_analyzer:main`; the packaged app
   also accepts `--dbscan-job <job.json>` (used internally to run DBSCAN).
@@ -104,6 +109,14 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 ### Removed
 
 - `tests/test_memprof.py`: it tested `ampm.memprof`, which no longer exists.
+- `ohpal.ampm.plotting` (the 1.x Plotly figure builders) and its tests, the
+  Plotly example scripts (`examples/cov_summary.py`, `example_view.py`,
+  `parametric.py`, `tune_eps.py`, `view_3d.py`, `view_layers.py`,
+  `pipeline/04_visualize.py`) and `docs/PLOTTING.md`: plots are the app's.
+- Dependencies nothing uses any more: `plotly` and `matplotlib` (and what they
+  pulled in), and `PyQt6` from the headless `ohpal-ampm` (the app has its own).
+  `uv.lock` and `requirements.txt` are regenerated.
+- Unused imports across the packages, the app and the tests.
 - The 1.x interface: `ampm_analyzer/main.py` and the plot views in
   `ampm_analyzer/views/`, along with drop-in views from `%APPDATA%\AMPM\views`,
   `<project>/views` and `AMPM_VIEWS_PATH`.

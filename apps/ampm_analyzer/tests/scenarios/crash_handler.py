@@ -1,8 +1,7 @@
 """Unexpected errors: report + dialog, the app keeps running; version single-sourced;
 the 1.x GUI is gone."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import importlib.util, os, sys, tempfile, threading, time
-from pathlib import Path
+import importlib.util, sys, threading, time
 from PyQt6.QtCore import QTimer, QEventLoop
 from PyQt6.QtWidgets import QApplication
 

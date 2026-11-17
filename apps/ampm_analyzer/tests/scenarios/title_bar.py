@@ -1,9 +1,8 @@
 """Frameless main window: the tab row as title bar, window buttons, resize grips."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
-import os, sys, tempfile
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QIcon, QMouseEvent, QPixmap, QColor
-from PyQt6.QtWidgets import QApplication, QToolButton
+from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 from ampm_analyzer.shell import titlebar
 from ampm_analyzer.shell.app import _app_icon

@@ -7,8 +7,6 @@ the failure-path tests assert on that rather than a normal exception.
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 
 import pytest
