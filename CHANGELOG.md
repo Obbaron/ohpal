@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Planned as **2.0.0**: a new application. The 1.x window (Config and Analysis tabs,
-Plotly plot views loaded from disk) is replaced by a new PyQt6 interface with
-VisPy plots, a data table you shape before plotting, undo / redo, macros and an
-in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
+## [2.0.0] - 2026-11-17
+
+A new application. The 1.x window (Config and Analysis tabs, Plotly plot views
+loaded from disk) is replaced by a new PyQt6 interface with fast VisPy plots, a
+data table you shape before plotting, undo / redo, macros, a plot library for
+comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
+self-contained `AMPM-Analyzer.exe`. The `ohpal.ampm` pipeline underneath keeps
+its API: it gains a few additions (listed under *Pipeline*) and loses only the
+Plotly figure builders, which the app replaces.
 
 ### Added
 
@@ -81,7 +86,7 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   asks for them each time, with the recorded value filled in. When a build
   lacks a column the macro reads, the issues list offers the build's columns
   to use instead for that run.
-- **Help.** A searchable in-app guide of 30 articles that opens on the article for
+- **Help.** A searchable in-app guide of 31 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,
   traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Analyzer\crash-reports` and
@@ -90,6 +95,17 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 - The version is shown in Help and in crash reports.
 - Log window: captured console output, exportable. The log and help windows
   resize from their edges and corners.
+- **Pipeline (`ohpal.ampm`).**
+  - `ohpal.ampm.stacked`: several build folders read as one stepped build
+    (`write_stack`, `read_stack`, `load_stack`, `StackedStore`), with `layer`,
+    `Z` and a `Build time` column continued from step to step.
+  - `DataStore.cached_layers()`: the layers whose Parquet is built, from one
+    directory read.
+  - `DataStore.set_part_assignment(table, method="labels")`: per-point part
+    ids keyed by (`layer`, `Start time`), such as a DBSCAN clustering's.
+  - `QuantAMParts.part_ids_by_instance()`: the `part_id` of every placed
+    instance, keyed by its QuantAM instance number, so any per-instance section
+    of the parts CSV lines up with the ids part assignment puts on the data.
 
 ### Changed
 
@@ -108,8 +124,10 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (624 in all). The app has GUI
-  scenarios in `apps/ampm_analyzer/tests`, run with `just test-app <build folder>`.
+  current API; `just test` runs every package's tests (579 in all). The app has 28 GUI
+  scenarios in `apps/ampm_analyzer/tests`, run with `just test-app <build folder>`,
+  several at once (pytest-xdist; the number of workers follows the machine's cores
+  and memory).
 - Settings can be kept in an INI file instead of the registry by setting
   `AMPM_SETTINGS_DIR` to a folder (the tests do; also useful for a portable copy).
 
@@ -131,12 +149,6 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
 ### Fixed
 
 - An error in the interface no longer closes the app without a message.
-- A freeze when a background query finished while the window was rebuilding a
-  toolbar (workers are now freed on the main thread).
-- Data tab columns ticked in **Show / hide** but missing from the grid. After
-  a column was removed (for example by a macro), a column shown again could
-  come back with no width; a rebuild kept it. Columns now keep their own
-  width by name, and a layout saved like that is mended when it's opened.
 
 ## [1.3.1] - 2026-06-26
 
@@ -504,7 +516,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Obbaron/ohpal/releases/tag/v2.0.0
 [1.3.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...v1.2.0
