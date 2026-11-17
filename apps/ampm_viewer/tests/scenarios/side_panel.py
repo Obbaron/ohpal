@@ -153,6 +153,18 @@ titles = [cd.title() for cd in p._el_form_host.findChildren(Card) if not cd.isHi
 assert titles[:3] == ["AXIS TITLE", "TICK LABELS", "TICKS"], titles
 print("element editor: cards per group, joined rows")
 
+# Every card fits: the panel is as wide as the widest page or element editor
+# needs (with room for a scroll bar), so nothing is cut off on the right.
+from ampm_viewer.shell import plot_elements as pe
+assert p.minimumWidth() >= 260 and p.width() >= p.minimumWidth()
+for key, element in pe.ELEMENTS.items():
+    p.show_element(element, {}); drain()
+    area = p._plot_stack.currentWidget()
+    assert area.widget().width() <= area.viewport().width(), key
+    assert not area.horizontalScrollBar().isVisible(), key
+p.edit_element(t2, "title"); drain()
+print("every element editor fits the panel's width")
+
 # A theme switch re-tints the panel without errors.
 w._set_theme_choice("dark"); drain(); w._set_theme_choice("light"); drain()
 print("ALL OK")

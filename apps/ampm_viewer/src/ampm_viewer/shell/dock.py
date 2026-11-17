@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QStyle,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -91,7 +92,9 @@ def _scroll(page: QWidget) -> QScrollArea:
     area = QScrollArea()
     area.setWidgetResizable(True)
     area.setFrameShape(QFrame.Shape.NoFrame)
-    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    # The panel is made wide enough for its widest card (SidePanel.fit_width),
+    # so this only shows if something is wider still: never clipped.
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     area.setProperty("class", "PanelScroll")
     page.setProperty("class", "PanelPage")
     area.setWidget(page)
@@ -176,7 +179,8 @@ class SidePanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("SidePanel")
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(self._MIN_WIDTH)
+        self._widest_el: int | None = None  # see _widest_element
         self._col = None  # the column the data page is currently showing
         self._col_stats: dict = {}
         self._element: str | None = None  # the plot element being edited
@@ -353,6 +357,7 @@ class SidePanel(QWidget):
         for w in (self._scale_row, self._range_row, self.range_bar):
             w.setVisible(not map_only)
         self.plot_note.setVisible(not (points or colour))
+        self.fit_width()
 
     # -- plot page: element editor ---------------------------------------
     def _element_page(self) -> QWidget:
@@ -412,9 +417,16 @@ class SidePanel(QWidget):
 
     def show_element(self, element, values: dict, auto_text: str = "") -> None:
         """Build the editor's cards for ``element`` and fill them in."""
+        self._widest_element()  # measured once, before these cards exist
         self._element = element.key
-        self._cards = [c for c in self._cards if _alive(c)]
         self.el_heading.setText(element.label)
+        self._build_element_cards(element, auto_text)
+        self.set_element_values(values)
+        self._plot_stack.setCurrentIndex(1)
+        self.fit_width()
+
+    def _build_element_cards(self, element, auto_text: str = "") -> None:
+        self._cards = [c for c in self._cards if _alive(c)]
         while self._el_form_lay.count():  # drop the previous element's cards
             item = self._el_form_lay.takeAt(0)
             _drop(item.widget())
@@ -428,8 +440,49 @@ class SidePanel(QWidget):
             card = self._card(_GROUP_STEMS.get(group, "text--font"), group or "Text")
             self._fill_card(card, element.key, fields, auto_text)
             self._el_form_lay.addWidget(card)
-        self.set_element_values(values)
-        self._plot_stack.setCurrentIndex(1)
+
+    # -- width -----------------------------------------------------------
+    _MIN_WIDTH = 260
+
+    def _content_width(self) -> int:
+        """The width the widest page's cards need, with room for a vertical
+        scroll bar."""
+        bar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        pages = [a.widget() for a in self.findChildren(QScrollArea)
+                 if a.widget() is not None]
+        widest = max((p.minimumSizeHint().width() for p in pages), default=0)
+        return widest + bar + 2
+
+    def _widest_element(self) -> int:
+        """The width the widest element editor needs: each element's cards are
+        built once (off screen) and measured."""
+        if self._widest_el is None:
+            keep, keep_controls = self._element, self._el_controls
+            widest = 0
+            for element in pe.ELEMENTS.values():
+                self._build_element_cards(element)
+                self._el_form_host.adjustSize()
+                widest = max(widest, self._content_width())
+            self._build_element_cards_empty()
+            self._element, self._el_controls = keep, keep_controls
+            self._widest_el = widest
+        return self._widest_el
+
+    def _build_element_cards_empty(self) -> None:
+        while self._el_form_lay.count():
+            _drop(self._el_form_lay.takeAt(0).widget())
+        self._el_controls = {}
+
+    def fit_width(self) -> None:
+        """Make the panel at least as wide as its widest card (any page, any
+        element editor), so no card is ever cut off; the splitter widens it."""
+        need = max(self._MIN_WIDTH, self._content_width(), self._widest_element())
+        if need != self.minimumWidth():
+            self.setMinimumWidth(need)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.fit_width()
 
     def _fill_card(self, card: Card, key: str, fields, auto_text: str) -> None:
         """One card's rows. Font and size share a row; so do the bold / italic
@@ -732,6 +785,7 @@ class SidePanel(QWidget):
             self._filter_column_rows(self.column_search.text())
         self.columns_count.setText(f"{shown_cols} of {len(cols)} shown")
         self.btn_show_all.setEnabled(shown_cols < len(cols))
+        self.fit_width()
 
     def showing_grid(self) -> bool:
         """Whether the data page is on the whole grid (no column)."""
@@ -878,6 +932,7 @@ class SidePanel(QWidget):
             self.col_sig.setValue(n)
             self.col_sig.blockSignals(False)
             self._show_sig_preview(n)
+        self.fit_width()
 
     def _show_sig_preview(self, n: int) -> None:
         s = self._col_stats

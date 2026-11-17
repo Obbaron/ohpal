@@ -67,6 +67,7 @@ Plotly figure builders, which the app replaces.
   maps, and the colour range as two handles on the colour bar, labelled with
   the values they sit at. An element's editor groups its properties in cards,
   with font and size on one row and bold, italic and alignment as buttons.
+  The panel is always wide enough for its widest card, so none is cut off.
 - **Data tab.** A virtualised table of one layer; column details in the side panel;
   rename, hide, remove and restore columns; calculated columns (a formula language
   with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
