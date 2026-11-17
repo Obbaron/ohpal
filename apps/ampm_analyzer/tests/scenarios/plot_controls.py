@@ -243,7 +243,8 @@ show(t3); assert "BBox" in tips(w.toolbar)
 show(th); assert "BBox" not in tips(w.toolbar) and "Bins" in tips(w.toolbar)
 fired = []; t1.controlsChanged.connect(lambda: fired.append(1))
 show(t1); assert "Legend" not in tips(w.toolbar)
-t1.spec = PlotSpec(kind=SCATTER_2D, x="Demand X", y="Demand Y", color=MP); t1._render(); drain()
+t1.spec = PlotSpec(kind=SCATTER_2D, x="Demand X", y="Demand Y", color=MP)
+w._query_plot(t1); drain()   # a plot holds only its own columns: a new colour is queried
 assert fired and "Legend" in tips(w.toolbar), "a legend appearing adds the Legend button"
 print("toolbar rebuilds on tab switch and when a plot's controls change")
 

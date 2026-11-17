@@ -308,6 +308,9 @@ class PlotTab(QWidget):
 
         self._df = None
         self.raw = None  # the plot's own raw span query (for re-shaping)
+        # Its query brings only the columns it needs (see plotneeds); True
+        # once it fell back to every column.
+        self._all_columns = False
         # A contour plot starts on the familiar filled-contour colours.
         self.cmap = "viridis" if spec.is_contour else DEFAULT_COLORMAP
         self.scale = "linear"

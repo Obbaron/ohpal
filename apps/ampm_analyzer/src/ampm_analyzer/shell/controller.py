@@ -559,13 +559,15 @@ class AppController(QObject):
         return (lo, hi) if lo <= hi else (hi, lo)
 
     # -- per-plot span query (its own dataset, not the grid's) ---------
-    def query_for(self, mode: str, lo, hi, on_raw) -> None:
+    def query_for(self, mode: str, lo, hi, on_raw, columns=None) -> None:
         """Query a plot's span off-thread; call ``on_raw(raw_df)`` when ready.
 
         Shaping (derived/removed columns) is applied by the caller via ``shape``
         so a plot can re-shape without re-querying. A plot's span can be the
         whole build (tens of millions of rows) but it only draws ~150k points,
-        so the query is downsampled to a bounded budget to cap memory.
+        so the query is downsampled to a bounded budget to cap memory, and
+        ``columns`` (source names) limits it to what the plot depends on
+        (None: every loaded column).
         """
         store = self.session.store
         if store is None:
@@ -575,17 +577,50 @@ class AppController(QObject):
         # quiet: no global loading UI — the plot tab shows its own overlay.
         self._request(
             (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False,
-            quiet=True, sample_to=_PLOT_SAMPLE_ROWS,
+            quiet=True, sample_to=_PLOT_SAMPLE_ROWS, columns=columns,
         )
+
+    def pipeline_columns(self) -> list[str]:
+        """Source columns the load recipe reads while shaping (masking,
+        correction), when those are on: a plot's narrowed query brings them
+        too, so its rows are shaped like the grid's."""
+        cols: list[str] = []
+        if self._apply_mask:
+            cols += list(self._MASK_COLS)
+        if self._correction.get("on"):
+            cols += list(_CORR_INPUTS)
+        return cols
+
+    def plot_sources(self, spec, row_filter) -> list[str] | None:
+        """The source columns a session-linked plot's query needs (None:
+        every column)."""
+        from . import plotneeds
+
+        store = self.session.store
+        if store is None:
+            return None
+        loaded = self._query_columns(store)
+        return plotneeds.source_columns(
+            spec, derivations=self.session.derivations,
+            renames=self.session.renames, filters=row_filter,
+            available=loaded if loaded is not None else store.columns,
+            extra=self.pipeline_columns())
+
+    def known_columns(self) -> list[str]:
+        """The display columns the full data has (for checking a narrowed
+        plot frame lacks none it should have)."""
+        return self._derivable_columns()
 
     # -- query queue (serialized worker) -------------------------------
     def _request(self, span, dest, label: str, coalesce: bool,
-                 quiet: bool = False, sample_to: int | None = None) -> None:
+                 quiet: bool = False, sample_to: int | None = None,
+                 columns=None) -> None:
         if coalesce:  # drop any still-queued grid request; keep the latest
             self._queue = [r for r in self._queue if not r["coalesce"]]
         self._queue.append({
             "span": span, "dest": dest, "label": label,
             "coalesce": coalesce, "quiet": quiet, "sample_to": sample_to,
+            "columns": columns,
         })
         if not self._busy:
             self._start_next()
@@ -598,7 +633,8 @@ class AppController(QObject):
         self._busy = True
         if not req["quiet"]:
             self.session.begin_load(req["label"])
-        self._start_query(self.session.store, req["span"], req.get("sample_to"))
+        self._start_query(self.session.store, req["span"], req.get("sample_to"),
+                          req.get("columns"))
 
     def _begin_query(self, store) -> None:
         first = self._landing_layer(store)
@@ -618,12 +654,12 @@ class AppController(QObject):
         return cols
 
     def _start_query(self, store, layers: tuple[int, int],
-                     sample_to: int | None = None) -> None:
+                     sample_to: int | None = None, columns=None) -> None:
         thread = QThread(self)
         worker = QueryWorker(
-            store, layers, columns=self._query_columns(store),
+            store, layers, columns=columns or self._query_columns(store),
             row_cap=None, sample_to=sample_to,
-        )  # virtualised grid: no cap; plots pass a sample budget
+        )  # virtualised grid: no cap; plots pass a sample budget + columns
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_query_finished)

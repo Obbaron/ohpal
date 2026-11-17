@@ -39,7 +39,10 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   side panel that show only what applies to the plot, with per-plot options (equal
   axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
   measured points, level lines, eps guide); screenshots; plots popped out into
-  their own windows and docked back.
+  their own windows and docked back. A plot queries and keeps only the columns
+  it depends on (what it draws and filters on, and the inputs of calculated
+  columns among them) and draws only its filter's rows, so many open plots
+  stay light.
 - **Editable plot elements.** Click to select, double-click to edit in the side
   panel, set as the default for new plots: the title (text, font, alignment),
   the axes (titles, tick labels, number of ticks and their format, the axis

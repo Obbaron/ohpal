@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QToolBar,
 )
 
-from . import derive, plot_library, toolbars
+from . import derive, plot_library, plotneeds, toolbars
 from .dock import SidePanel
 from .plot_tab import PlotTab
 from .workers import release_after
@@ -213,7 +213,8 @@ class DetachedPlotWindow(QMainWindow):
         else:
             shaped = derive.shape(raw, self._derivations, self._removed,
                                   self._row_filter, self._renames)
-        self._tab.set_dataframe(shaped)
+        # Only what it draws (its columns, its filter's rows).
+        self._tab.set_dataframe(plotneeds.trim(shaped, self._tab.spec, self._renames))
         if self._panel.isVisible():
             self._panel.sync_plot(self._tab.panel_state())
 
@@ -231,8 +232,13 @@ class DetachedPlotWindow(QMainWindow):
         from .workers import QueryWorker
 
         thread = QThread(self)
-        worker = QueryWorker(self._store, (lo, hi), columns=None,
-                             sample_to=_PLOT_SAMPLE_ROWS)
+        worker = QueryWorker(
+            self._store, (lo, hi),
+            columns=plotneeds.source_columns(
+                self._tab.spec, derivations=self._derivations,
+                renames=self._renames, filters=self._row_filter,
+                available=self._store.columns),
+            sample_to=_PLOT_SAMPLE_ROWS)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_query_done)

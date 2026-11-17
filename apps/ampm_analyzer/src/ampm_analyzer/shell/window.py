@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import icons, macros, plot_library, theme, titlebar, toolbars, uistate
+from . import icons, macros, plot_library, plotneeds, theme, titlebar, toolbars, uistate
 from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
@@ -531,11 +531,25 @@ class MainWindow(QMainWindow):
         if appearance:
             tab.apply_appearance(appearance)
         self._add_plot_tab(tab, select=select)
-        # Query this plot's own span, then shape + feed it.
-        tab.set_loading(f"Querying {tab.span_label}…")
-        self.controller.query_for(*span, lambda raw, t=tab: self._feed_plot(t, raw))
+        # Query this plot's own span (only the columns it needs), then shape +
+        # feed it.
+        self._query_plot(tab)
         self._save_plots()
         return tab
+
+    def _plot_columns(self, tab):
+        """The source columns a session-linked plot's query brings (None:
+        all; a plot falls back to that if its narrowed frame lacked any)."""
+        if tab._all_columns:
+            return None
+        return self.controller.plot_sources(tab.spec, tab.row_filter)
+
+    def _query_plot(self, tab) -> None:
+        """(Re)query a session-linked plot's span and feed it."""
+        tab.set_loading(f"Querying {tab.span_label}…")
+        self.controller.query_for(
+            *tab.span, lambda raw, t=tab: self._feed_plot(t, raw),
+            columns=self._plot_columns(tab))
 
     def _add_plot_tab(self, tab, *, select: bool = True) -> None:
         self._plot_tabs.append(tab)
@@ -682,16 +696,23 @@ class MainWindow(QMainWindow):
             for i, L in enumerate(layers):
                 self.set_status(f"Freezing layer {L} ({i + 1}/{len(layers)})…")
                 QApplication.processEvents()
+                live = tab.context is None
+                columns = (self._plot_columns(tab) if live else
+                           plotneeds.source_columns(
+                               tab.spec, derivations=ctx["derivations"],
+                               renames=renames, filters=ctx["row_filter"],
+                               available=ctx["store"].columns))
                 try:
-                    raw = ctx["store"].query(layers=(L, L), columns=None,
+                    raw = ctx["store"].query(layers=(L, L), columns=columns,
                                              sample_to=_PLOT_SAMPLE_ROWS)
                 except Exception as exc:  # noqa: BLE001
                     tell(self, "Save to plot library",
                          f"Couldn't read layer {L} of {build}: {exc}")
                     return
-                parts.append(derive.shape(
-                    raw, ctx["derivations"], ctx["removed"],
-                    list(tab.row_filter or []), renames))
+                parts.append(
+                    self.controller.shape_filtered(raw, tab.row_filter) if live
+                    else derive.shape(raw, ctx["derivations"], ctx["removed"],
+                                      list(tab.row_filter or []), renames))
             frame = pl.concat(parts, how="diagonal_relaxed") if parts else tab._df
         else:
             frame = tab._df
@@ -855,8 +876,13 @@ class MainWindow(QMainWindow):
             # interaction) and shape it with the tab's frozen context.
             try:
                 from .controller import _PLOT_SAMPLE_ROWS
-                df = tab.context["store"].query(
-                    layers=(layer, layer), columns=None,
+                ctx = tab.context
+                df = ctx["store"].query(
+                    layers=(layer, layer),
+                    columns=plotneeds.source_columns(
+                        tab.spec, derivations=ctx["derivations"],
+                        renames=ctx.get("renames"), filters=ctx["row_filter"],
+                        available=ctx["store"].columns),
                     sample_to=_PLOT_SAMPLE_ROWS)
             except Exception as exc:  # noqa: BLE001
                 self.set_status(f"Couldn't re-query that layer: {exc}")
@@ -865,7 +891,8 @@ class MainWindow(QMainWindow):
         else:
             self.controller.query_for(
                 "single", layer, layer,
-                lambda raw, t=tab: self._feed_plot(t, raw))
+                lambda raw, t=tab: self._feed_plot(t, raw),
+                columns=self._plot_columns(tab))
 
     def _popout_plot(self) -> None:
         """Detach the active plot into its own window — a self-contained copy
@@ -944,12 +971,22 @@ class MainWindow(QMainWindow):
     def _feed_plot(self, tab, raw_df) -> None:
         if tab not in self._plot_tabs:
             return  # closed before the query returned
-        tab.raw = raw_df
         # Hover extras (part_id/layer) resolve through the rename map: a
         # self-contained tab uses its frozen one, a live tab the session's.
         ctx = getattr(tab, "context", None)
-        tab.set_renames(ctx.get("renames", {}) if ctx else self.session.renames)
-        tab.set_dataframe(self._shape_for(tab, raw_df))
+        renames = ctx.get("renames", {}) if ctx else self.session.renames
+        shaped = self._shape_for(tab, raw_df)
+        if ctx is None and not tab._all_columns and not plotneeds.complete(
+                shaped, tab.spec, renames=renames, filters=tab.row_filter,
+                known=self.controller.known_columns()):
+            # The narrowed query missed something: bring every column.
+            tab._all_columns = True
+            self._query_plot(tab)
+            return
+        tab.raw = raw_df  # kept to re-shape on a column change, no re-query
+        tab.set_renames(renames)
+        # The plot holds only what it draws: its columns, its filter's rows.
+        tab.set_dataframe(plotneeds.trim(shaped, tab.spec, renames))
         if tab is self._active_plot:  # data just arrived — refresh Min/Max etc.
             self.panel.sync_plot(tab.panel_state())
 
@@ -971,13 +1008,16 @@ class MainWindow(QMainWindow):
         """Re-shape session-linked plots after a column change. Self-contained
         tabs (docked back from a floating window) are frozen to their own
         context and skipped, so a derivation edit never disturbs them."""
-        for tab in self._plot_tabs:
+        for tab in list(self._plot_tabs):
             if tab.context is not None:
                 continue
-            if getattr(tab, "raw", None) is not None:
-                tab.set_dataframe(
-                    self.controller.shape_filtered(tab.raw, tab.row_filter)
-                )
+            if getattr(tab, "raw", None) is None:
+                continue
+            need = self._plot_columns(tab)
+            if need is not None and not set(need) <= set(tab.raw.columns):
+                self._query_plot(tab)  # now made from a column it didn't bring
+            else:
+                self._feed_plot(tab, tab.raw)
 
     def _start_rename_column(self) -> None:
         """Toolbar 'Rename column': rename the selected column, or arm
