@@ -2,9 +2,9 @@
 
 GUI scenarios: scripts that drive the real app (the main window, real builds,
 plots, macros, dialogs) and assert as they go. Each runs in its own process, on
-its own copy of a test build, with settings and standard folders (Documents,
-app data) redirected to a temp folder, so your real settings, macro folder and
-builds are never touched.
+its own copy of a test build, with settings, the AMPM folder and standard
+folders (Documents, app data) redirected to a temp folder, so your real
+settings, macro folder, plot library and builds are never touched.
 
 ## Running
 

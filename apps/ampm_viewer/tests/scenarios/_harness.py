@@ -2,9 +2,9 @@
 
 - Settings go to an INI file in a temp folder (``AMPM_SETTINGS_DIR``; on
   Windows the app would otherwise use the registry).
-- Qt's standard folders (Documents, app data, config, cache) point into the
-  same temp folder, so the macro folder, crash reports and the like are
-  created there, not in your profile.
+- The AMPM folder (``AMPM_DATA_DIR``: macros, the plot library, crash
+  reports) and Qt's standard folders (Documents, app data, config, cache)
+  point into the same temp folder, so nothing is created in your profile.
 - No windows on screen: Qt's ``offscreen`` platform, unless the caller set one.
 - A dialog nobody answers fails the run: one still open after
   ``MODAL_LIMIT_S`` ends the process with its text, instead of a hang.
@@ -22,6 +22,7 @@ ROOT = Path(tempfile.mkdtemp(prefix="ampm-test-"))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["AMPM_SETTINGS_DIR"] = str(ROOT / "settings")
+os.environ["AMPM_DATA_DIR"] = str(ROOT / "data" / "AMPM")
 os.environ["HOME"] = str(ROOT / "home")          # POSIX: ~ for anything else
 (ROOT / "home").mkdir()
 

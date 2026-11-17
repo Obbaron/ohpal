@@ -12,9 +12,9 @@ was made with, its title and its whole look (``PlotTab.appearance``).
   plot draws, in one ``.ampmplot`` file (a zip of ``plot.json`` and
   ``data.parquet``). A frozen plot always shows the numbers of the build it
   came from, so plots of different builds can be opened side by side, with
-  or without a build open. The library is a folder (Documents/AMPM
-  Viewer/Plots by default, changeable in Settings, for example to a shared
-  team folder).
+  or without a build open. The library is a folder (``Plots`` in the AMPM
+  folder by default, ``%APPDATA%/AMPM/Plots`` on Windows; changeable in
+  Settings, for example to a shared team folder).
 """
 
 from __future__ import annotations
@@ -27,9 +27,8 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QStandardPaths
 
-from .settings import app_settings
+from .settings import app_settings, data_dir
 
 FORMAT = "ampm-plot"
 VERSION = 1
@@ -135,10 +134,9 @@ _FOLDER_KEY = "plots/library_folder"
 
 
 def default_folder() -> Path:
-    """``Documents/AMPM Viewer/Plots``, beside the macro folder."""
-    docs = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.DocumentsLocation)
-    return Path(docs or Path.home()) / "AMPM Viewer" / "Plots"
+    """``Plots`` in the AMPM folder, beside the macro folder (see
+    ``settings.data_dir``)."""
+    return data_dir() / "Plots"
 
 
 def folder() -> Path:

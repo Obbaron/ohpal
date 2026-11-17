@@ -38,9 +38,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSettings, QStandardPaths, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 
-from .settings import app_settings
+from .settings import app_settings, data_dir
 
 FORMAT = "ampm-macro"
 VERSION = 1
@@ -110,11 +110,9 @@ FOLDER_LIST_MAX = 20   # macros from the folder listed on the Run menu
 
 
 def default_folder() -> Path:
-    """``Documents/AMPM Viewer/Macros``: visible, backed up with the user's
-    documents, and untouched by reinstalling the app."""
-    docs = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.DocumentsLocation)
-    return Path(docs or Path.home()) / "AMPM Viewer" / "Macros"
+    """``Macros`` in the AMPM folder (``%APPDATA%/AMPM/Macros`` on Windows;
+    see ``settings.data_dir``), untouched by reinstalling the app."""
+    return data_dir() / "Macros"
 
 
 def folder() -> Path:

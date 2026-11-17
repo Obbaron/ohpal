@@ -27,7 +27,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QStandardPaths, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -58,11 +58,11 @@ def version() -> str:
 
 
 def report_dir() -> Path:
-    """Where reports go: the app's local data folder (on Windows,
-    ``%LOCALAPPDATA%\\AMPM\\AMPM Viewer\\crash-reports``)."""
-    base = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppLocalDataLocation)
-    path = Path(base or Path.home() / ".ampm-viewer") / "crash-reports"
+    """Where reports go: ``crash-reports`` in the AMPM folder (on Windows,
+    ``%APPDATA%\\AMPM\\crash-reports``; see ``settings.data_dir``)."""
+    from .settings import data_dir
+
+    path = data_dir() / "crash-reports"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

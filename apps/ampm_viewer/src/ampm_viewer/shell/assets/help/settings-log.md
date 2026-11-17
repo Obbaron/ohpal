@@ -13,7 +13,7 @@ The **Settings** button at the top right holds:
 - **Theme**: **Auto (system)**, **Light** or **Dark**.
 - **Macros**: where macros are saved and listed from. **Open macro folder**,
   **Change macro folder…**, and **Use the default folder**
-  (Documents\AMPM Viewer\Macros). See [Macros](help:macros).
+  (`%APPDATA%\AMPM\Macros` on Windows). See [Macros](help:macros).
 
 ## Status bar
 

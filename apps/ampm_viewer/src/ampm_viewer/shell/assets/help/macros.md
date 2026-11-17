@@ -102,9 +102,14 @@ the macro file isn't changed.
 ## Where macros are kept
 
 Macros are saved to, and listed from, the **macro folder**. By default it is
-**Documents\AMPM Viewer\Macros**, created the first time it is needed:
-easy to find, backed up with your documents, and kept when the app is
-updated.
+the **Macros** folder in the app's AMPM folder, created the first time it is
+needed and kept when the app is updated:
+
+| System | Default macro folder |
+| --- | --- |
+| Windows | `%APPDATA%\AMPM\Macros` |
+| macOS | `~/Library/Application Support/AMPM/Macros` |
+| Linux | `$XDG_DATA_HOME/AMPM/Macros` (`~/.local/share/AMPM/Macros`) |
 
 To change it, open **Settings** (the gear in the title bar) and, under
 **Macros**:
@@ -112,7 +117,7 @@ To change it, open **Settings** (the gear in the title bar) and, under
 - **Open macro folder** shows it in Explorer.
 - **Change macro folder…** picks another, for example a shared network
   folder so a team uses the same macros.
-- **Use the default folder** goes back to Documents.
+- **Use the default folder** goes back to the AMPM folder's **Macros**.
 
 You can still save a macro anywhere, and run one from anywhere with
 **Browse…**; recently used ones stay on the Run menu wherever they are. If the

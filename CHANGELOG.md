@@ -84,11 +84,11 @@ Plotly figure builders, which the app replaces.
   rows it draws, in one `.ampmplot` file (a Layer Viewer keeps every layer).
   **File ▸ Plot library** (or **New plot ▸ Open from the plot library…**)
   opens one beside another build's plots, or with no build open, for
-  comparing builds. The library folder (default `Documents\AMPM Viewer\Plots`)
+  comparing builds. The library folder (default `Plots` in the AMPM folder)
   can be changed in Settings.
 - **Undo / redo** of data shaping, and **macros**: record actions, save them to a
   file, check and run them on another build, recent macros one click away.
-  Macros live in a **macro folder** (default `Documents\AMPM Viewer\Macros`,
+  Macros live in a **macro folder** (default `Macros` in the AMPM folder,
   changeable in Settings, for example to a shared team folder); Save and Browse
   start there and the Run menu lists its macros.
   Showing and hiding columns are recorded, and a plot's step keeps the plot
@@ -100,7 +100,7 @@ Plotly figure builders, which the app replaces.
 - **Help.** A searchable in-app guide of 31 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,
-  traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Viewer\crash-reports` and
+  traceback, recent log) in `crash-reports` in the AMPM folder and
   shown in a dialog; the app keeps running. Hard crashes are recorded in
   `fatal.log` in the same folder.
 - The version is shown in Help and in crash reports.
@@ -124,8 +124,11 @@ Plotly figure builders, which the app replaces.
   (`AMPM-Viewer.exe`), the `ampm-viewer` distribution and script, the
   `ampm_viewer` package and the `apps/ampm_viewer` folder. On first start the
   app carries over the old name's settings (recent builds, Settings choices,
-  plot defaults) and keeps using macro and plot library folders under
-  `Documents\AMPM Analyzer` that hold files.
+  plot defaults).
+- **One AMPM folder** for what the app keeps (the macro folder, the plot library
+  and crash reports): `%APPDATA%\AMPM` on Windows,
+  `~/Library/Application Support/AMPM` on macOS and `$XDG_DATA_HOME/AMPM` on
+  Linux (`AMPM_DATA_DIR` overrides it).
 - The version is defined once, as `__version__` in `ampm_viewer/__init__.py`;
   `pyproject.toml` reads it from there.
 - The app is one self-contained executable, `AMPM-Viewer.exe` (PyInstaller

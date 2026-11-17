@@ -1,31 +1,41 @@
-"""The app was named AMPM Analyzer before 2.0.0: at the first start as AMPM
-Viewer its settings and its macro / plot folders come across, once, and the
-old ones are left alone."""
+"""The AMPM folder (macros, plots, crash reports) per platform; and the
+settings kept under the app's old name (AMPM Analyzer) carried over once, the
+old store left alone."""
 import _harness  # noqa: F401  (first: temp settings and folders, see _harness.py)
 from pathlib import Path
-from PyQt6.QtCore import QSettings, QStandardPaths
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 app = QApplication([]); app.setOrganizationName("AMPM"); app.setApplicationName("AMPM Viewer")
-from ampm_viewer.shell import macros, plot_library, settings
+from ampm_viewer.shell import crash, macros, plot_library, settings
 
+# -- where the AMPM folder is ---------------------------------------------
+home = Path("/home/u")
+assert settings.default_data_dir("win32", {"APPDATA": r"C:\Users\u\AppData\Roaming"}, home) \
+    == Path(r"C:\Users\u\AppData\Roaming") / "AMPM"
+assert settings.default_data_dir("darwin", {}, home) == home / "Library" / "Application Support" / "AMPM"
+assert settings.default_data_dir("linux", {"XDG_DATA_HOME": "/data/u"}, home) == Path("/data/u/AMPM")
+assert settings.default_data_dir("linux", {}, home) == home / ".local" / "share" / "AMPM"
+data = _harness.ROOT / "data" / "AMPM"
+assert settings.data_dir() == data, "AMPM_DATA_DIR overrides it"
+assert macros.default_folder() == data / "Macros" and plot_library.default_folder() == data / "Plots"
+assert crash.report_dir() == data / "crash-reports"
+print("AMPM folder: %APPDATA%/AMPM, ~/Library/Application Support/AMPM, $XDG_DATA_HOME/AMPM")
+
+# -- settings kept under the old name come across, once ------------------------
 ini = _harness.ROOT / "settings"
 old = QSettings(str(ini / "AMPM Analyzer.ini"), QSettings.Format.IniFormat)
 old.setValue("recent/builds", '["C:/builds/JR299"]')
 old.setValue("window/theme", "dark")
 old.sync()
-docs = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation))
-(docs / "AMPM Analyzer" / "Macros").mkdir(parents=True)
-(docs / "AMPM Analyzer" / "Macros" / "cov.macro.json").write_text("{}")
-(docs / "AMPM Analyzer" / "Plots").mkdir(parents=True)   # empty: not kept
 
 assert settings.app_settings().fileName().endswith("AMPM Viewer.ini")
 assert settings.carry_over() is True
 new = settings.app_settings()
 assert new.value("recent/builds") == '["C:/builds/JR299"]'
 assert new.value("window/theme") == "dark"
-assert macros.folder() == docs / "AMPM Analyzer" / "Macros", macros.folder()
-assert plot_library.folder() == docs / "AMPM Viewer" / "Plots", "an empty old folder isn't kept"
-print("carried over: settings, and the old macro folder (it holds macros)")
+assert macros.folder() == data / "Macros" and macros.is_default_folder()
+assert plot_library.folder() == data / "Plots" and plot_library.is_default_folder()
+print("carried over: the settings; macros and plots in the AMPM folder")
 
 # Once only: a later change under the new name is never overwritten.
 new.setValue("window/theme", "light")
@@ -35,10 +45,9 @@ assert settings.app_settings().value("window/theme") == "light"
 assert (ini / "AMPM Analyzer.ini").is_file(), "the old store is left as it was"
 print("only once; the old store is left alone")
 
-# A fresh install (no old settings, no old folders): nothing to carry.
+# A fresh install (no old settings): nothing to carry.
 (ini / "AMPM Viewer.ini").unlink(); (ini / "AMPM Analyzer.ini").unlink()
-import shutil; shutil.rmtree(docs / "AMPM Analyzer")
 assert settings.carry_over() is False
-assert macros.folder() == docs / "AMPM Viewer" / "Macros" and macros.is_default_folder()
-print("fresh install: the new defaults")
+assert macros.folder() == data / "Macros" and macros.is_default_folder()
+print("fresh install: the AMPM folder")
 print("ALL OK")

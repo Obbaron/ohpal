@@ -42,9 +42,9 @@ and rebuilds leave it as it was saved. Opening another build leaves it open.
 
 ## The library folder
 
-Plots are saved to **Documents\AMPM Viewer\Plots** unless you choose
-another folder in **Settings ▸ Plot library** (a shared team folder, for
-example). **Open folder** on the library page shows it.
+Plots are saved to the **Plots** folder in the app's AMPM folder
+(`%APPDATA%\AMPM\Plots` on Windows) unless you choose another folder in
+**Settings ▸ Plot library** (a shared team folder, for example). **Open folder** on the library page shows it.
 
 Each plot is one `.ampmplot` file, so it can also be copied or emailed.
 

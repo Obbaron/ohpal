@@ -94,7 +94,9 @@ restart the app if something looks wrong.
 
 Each error is written to a report file: the version, the error and the
 recent log. **Open folder** on the message shows where they are; on Windows
-it is `%LOCALAPPDATA%\AMPM\AMPM Viewer\crash-reports`. The newest 30
+it is `%APPDATA%\AMPM\crash-reports` (macOS:
+`~/Library/Application Support/AMPM/crash-reports`; Linux:
+`~/.local/share/AMPM/crash-reports`). The newest 30
 are kept. If the app closes without any message (a graphics driver fault,
 for example), `fatal.log` in the same folder records it.
 

@@ -18,7 +18,7 @@ from ampm_viewer.shell.logconsole import LogBus, StreamTee
 bus = LogBus(); bus.log_line("opened build JR299"); sys.stderr = StreamTee(bus, sys.stderr)  # as app.main does
 crash.install(bus)
 folder = crash.report_dir()
-assert folder.parts[-3:] == ("AMPM", "AMPM Viewer", "crash-reports"), folder
+assert folder.parts[-2:] == ("AMPM", "crash-reports"), folder
 fatal = (folder / "fatal.log").read_text(); assert "AMPM Viewer 2.0.0 started" in fatal
 
 def run_until(cond, limit=10):

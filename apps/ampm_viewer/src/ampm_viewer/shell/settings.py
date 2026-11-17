@@ -6,6 +6,12 @@ elsewhere. When the ``AMPM_SETTINGS_DIR`` environment variable names a folder,
 an INI file there is used instead: the tests set it so they never touch your
 real settings, and it also gives a portable install its own settings.
 
+Files the app keeps (the macro folder, the plot library, crash reports) live
+in one **AMPM folder**, ``data_dir()``: ``%APPDATA%\\AMPM`` on Windows,
+``~/Library/Application Support/AMPM`` on macOS and ``$XDG_DATA_HOME/AMPM``
+(``~/.local/share/AMPM``) on Linux. ``AMPM_DATA_DIR`` names another folder
+(the tests set it).
+
 Before 2.0.0 the app was named AMPM Analyzer, and kept its settings under that
 name; ``carry_over`` brings them across once.
 """
@@ -13,6 +19,7 @@ name; ``carry_over`` brings them across once.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings
@@ -21,7 +28,32 @@ ORG = "AMPM"
 APP = "AMPM Viewer"
 OLD_APP = "AMPM Analyzer"  # the app's name before 2.0.0 (see carry_over)
 ENV_DIR = "AMPM_SETTINGS_DIR"
+ENV_DATA = "AMPM_DATA_DIR"
+DATA_NAME = "AMPM"
 _CARRIED = "migrated/from_ampm_analyzer"
+
+
+def default_data_dir(platform: str | None = None, env=None,
+                     home: Path | None = None) -> Path:
+    """The platform's AMPM folder: ``%APPDATA%/AMPM`` (Windows),
+    ``~/Library/Application Support/AMPM`` (macOS), ``$XDG_DATA_HOME/AMPM``
+    (Linux; ``~/.local/share/AMPM`` when it isn't set)."""
+    platform = platform or sys.platform
+    env = os.environ if env is None else env
+    home = Path(home) if home is not None else Path.home()
+    if platform.startswith("win"):
+        base = env.get("APPDATA") or home / "AppData" / "Roaming"
+    elif platform == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        base = env.get("XDG_DATA_HOME") or home / ".local" / "share"
+    return Path(base) / DATA_NAME
+
+
+def data_dir() -> Path:
+    """The AMPM folder (``AMPM_DATA_DIR``, else the platform's)."""
+    chosen = os.environ.get(ENV_DATA)
+    return Path(chosen) if chosen else default_data_dir()
 
 
 def app_settings() -> QSettings:
@@ -40,10 +72,8 @@ def _store(name: str) -> QSettings:
 
 def carry_over() -> bool:
     """Once, at the first start under the new name: copy the settings kept
-    under the old one (recent builds, Settings choices, plot defaults), and
-    keep using the old default macro and plot library folders
-    (``Documents/AMPM Analyzer/...``) when they hold files. The old store
-    and folders are left as they are. True if anything was carried over."""
+    under the old one (recent builds, Settings choices, plot defaults). The
+    old store is left as it is. True if anything was carried over."""
     new = app_settings()
     if new.value(_CARRIED, False, type=bool):
         return False
@@ -53,23 +83,6 @@ def carry_over() -> bool:
         for key in old.allKeys():
             new.setValue(key, old.value(key))
             carried = True
-    from PyQt6.QtCore import QStandardPaths
-
-    docs = Path(QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.DocumentsLocation) or Path.home())
-    for key, sub in (("macros/folder", "Macros"),
-                     ("plots/library_folder", "Plots")):
-        was = docs / OLD_APP / sub
-        if not (new.value(key, "") or "") and _holds_files(was):
-            new.setValue(key, str(was))
-            carried = True
     new.setValue(_CARRIED, True)
     new.sync()
     return carried
-
-
-def _holds_files(folder: Path) -> bool:
-    try:
-        return folder.is_dir() and any(folder.iterdir())
-    except OSError:
-        return False
