@@ -1380,7 +1380,10 @@ class AppController(QObject):
         except Exception:  # noqa: BLE001
             pass
         n = len(mask) if mask else 0
-        self._window.set_status(f"Mask applied across {n} layers.")
+        store = self.session.store
+        total = len(store.layers) if store is not None else n
+        self._window.set_status(
+            f"Mask ready: part outlines on {n:,} of {total:,} layers.")
 
     def _on_mask_error(self, message: str) -> None:
         self._mask_geom = None

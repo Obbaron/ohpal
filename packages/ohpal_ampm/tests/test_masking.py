@@ -71,6 +71,13 @@ class TestBuildMask:
         for geom in mask.values():
             assert geom.area == pytest.approx(100.0, abs=1.0)
 
+    def test_verbose_false_prints_nothing(self, box_stl, capsys):
+        build_mask(box_stl, layers=[10, 50], layer_thickness=THICKNESS)
+        assert "[stl_stream]" in capsys.readouterr().out
+        quiet = build_mask(box_stl, layers=[10, 50], layer_thickness=THICKNESS,
+                           verbose=False)
+        assert capsys.readouterr().out == "" and set(quiet) == {10, 50}
+
     def test_layers_above_box_are_absent(self, box_stl):
         # layer 200 -> z = 6.0, well above the z<=3 box.
         mask = build_mask(box_stl, layers=[50, 200], layer_thickness=THICKNESS)

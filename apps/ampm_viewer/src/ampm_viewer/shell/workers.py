@@ -311,7 +311,7 @@ class DbscanWorker(QObject):
                 self.progress.emit("masking")
                 mask = build_mask(
                     stl, self._layers, layer_thickness=self._thickness,
-                    cache_path=cache / "dbscan_mask.pkl")
+                    cache_path=cache / "dbscan_mask.pkl", verbose=False)
                 masked = apply_mask(df, mask)
                 if masked.height:  # an STL that misses these layers masks
                     df = masked    # everything away; then cluster unmasked
@@ -515,9 +515,12 @@ class MaskWorker(QObject):
 
             mask = {}
             for stl, layers, thickness, cache_path, offset in self._jobs:
+                # Quiet: the slicer's own progress lines would go to the
+                # terminal and weave through the DataStore build's in the
+                # log; the controller logs one line when the mask is ready.
                 part = build_mask(
                     stl, list(layers), layer_thickness=thickness,
-                    cache_path=cache_path)
+                    cache_path=cache_path, verbose=False)
                 mask.update({int(L) + offset: g for L, g in part.items()})
         except SystemExit as exc:  # ohpal helpers can call sys.exit()
             self.error.emit(f"Mask build aborted: {exc}")

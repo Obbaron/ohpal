@@ -110,6 +110,8 @@ Plotly figure builders, which the app replaces.
   - `ohpal.ampm.stacked`: several build folders read as one stepped build
     (`write_stack`, `read_stack`, `load_stack`, `StackedStore`), with `layer`,
     `Z` and a `Build time` column continued from step to step.
+  - `build_mask(..., verbose=False)`: slices without printing the slicer's
+    progress (the app uses it, and logs one line when the mask is ready).
   - `DataStore.cached_layers()`: the layers whose Parquet is built, from one
     directory read.
   - `DataStore.set_part_assignment(table, method="labels")`: per-point part
@@ -144,7 +146,7 @@ Plotly figure builders, which the app replaces.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (579 in all). The app has 30 GUI
+  current API; `just test` runs every package's tests (580 in all). The app has 30 GUI
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).

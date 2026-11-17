@@ -172,12 +172,28 @@ assert f.excluded_parts() == sorted(out) and f.spin_max_distance.value() == 25
 assert not c._shape(c._base_df).filter(pl.col("part_id").is_in(out)).height
 print("reopen: the Part filter and max distance come back")
 
+# The mask's slicer is quiet: one line in the log, nothing on the terminal
+import io
+heard = io.StringIO(); real_out = sys.stdout
+class _Tee:
+    def write(self, text): heard.write(text); return real_out.write(text)
+    def flush(self): real_out.flush()
+sys.stdout = _Tee()
+c._apply_mask = True; c._mask_geom = None; c._mask_key = None
+c._ensure_mask(); idle()
+sys.stdout = real_out
+assert "[stl_stream]" not in heard.getvalue(), heard.getvalue()
+assert "Mask ready: part outlines on 0 of 10 layers." in w.log_bus.history(), w.log_bus.history()[-300:]
+c._apply_mask = False
+print("mask: no slicer output; one 'Mask ready' line in the log")
+
 # Info: the build's properties
 bs.btn_info.click(); pump()
 assert bs.main_stack.currentIndex() == INFO and bs.info_title.text() == BUILD.name
 title, sections, folder = c.build_info()
 info = {k: v for _, rows in sections for k, v in rows}
 assert info["Type"] == "Single build" and info["Built"] == "10 of 10 layers"
+assert info["Masking"] == "Off"
 assert info["Layers"] == "1 - 10 (10 layers)" and info["Part assignment"].startswith("Direct (max distance 25 mm)")
 assert "3 parts filtered out" in info["Part assignment"] and info["STL"] == str(moved)
 assert folder == str(BUILD) and not bs.info_reveal.isHidden()
