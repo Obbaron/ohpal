@@ -49,7 +49,6 @@ from typing import Iterator
 
 import numpy as np
 import polars as pl
-import pyarrow as pa
 from scipy.spatial import KDTree
 
 from ohpal.core.build import BuildParts
@@ -800,7 +799,7 @@ def assign_nearest_part(
         xc = x[start:stop]
         yc = y[start:stop]
 
-        _, nearest = tree.query(np.column_stack((xc, yc)), k=1, workers=1)
+        _, nearest = tree.query(np.column_stack((xc, yc)), k=1, workers=-1)
         nearest = np.asarray(nearest, dtype=np.int64).reshape(-1)
 
         dxp = xc - px[nearest]
@@ -833,7 +832,7 @@ def assign_nearest_part(
 
         codes[start:stop] = chunk_codes
 
-        if keep_idx.size:
+        if verbose and keep_idx.size:  # the per-part summary printed below
             counts += np.bincount(keep_idx, minlength=n_parts)
             dist_sums += np.bincount(keep_idx, weights=keep_d, minlength=n_parts)
             np.maximum.at(dist_maxs, keep_idx, keep_d.astype(np.float32))
@@ -849,9 +848,10 @@ def assign_nearest_part(
             f"part → labelled {noise_label!r}"
         )
 
-    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
-    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
-        pl.Enum(categories)
+    # The codes index the categories: gather them as an Enum (much faster
+    # than going through an Arrow dictionary array and a cast).
+    part_series = pl.Series(part_id_col, categories, dtype=pl.Enum(categories)).gather(
+        codes
     )
 
     if null_far is not None and n_too_far > 0:
@@ -1037,9 +1037,10 @@ def assign_bounding_box_part(
             f"\u2192 labelled {noise_label!r}"
         )
 
-    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
-    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
-        pl.Enum(categories)
+    # The codes index the categories: gather them as an Enum (much faster
+    # than going through an Arrow dictionary array and a cast).
+    part_series = pl.Series(part_id_col, categories, dtype=pl.Enum(categories)).gather(
+        codes
     )
 
     if noise_label is None and n_unassigned > 0:

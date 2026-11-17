@@ -19,7 +19,6 @@ CONTOUR = "Contour"
 KDE = "KDE"
 KDIST = "K-Distance Curve"
 VIOLIN = "Violin"
-SCATTER_KINDS = (SCATTER_2D, SCATTER_3D)
 # the wired plot types
 PLOT_KINDS = (
     SCATTER_2D, SCATTER_3D, LAYER_VIEWER, SINGLE_LAYER,

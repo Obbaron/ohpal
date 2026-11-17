@@ -58,7 +58,8 @@ class LoadWorker(QObject):
     UI thread.
 
     This is where the first ``import ohpal`` happens — which cascades into
-    ``polars`` / ``pyarrow`` and costs ~2s cold on the first build open. Running
+    ``polars`` and SciPy and costs about half a second on the first build open
+    (scikit-learn and trimesh are imported only when used). Running
     it here keeps the window responsive instead of freezing. Emits
     ``(config, store, source_dir, thickness, elapsed_ms)``; a ``create`` flag
     (decided on the main thread) says whether a missing config should be made.

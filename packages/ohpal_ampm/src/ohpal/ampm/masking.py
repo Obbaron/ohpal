@@ -35,7 +35,6 @@ from typing import Iterable
 import numpy as np
 import polars as pl
 import shapely
-import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
@@ -150,6 +149,8 @@ def _slice_trimesh(
     stl_path: Path, layer_list: list[int], layer_thickness: float
 ) -> Mask:
     """In-memory slicing via trimesh."""
+    import trimesh
+
     mesh = trimesh.load_mesh(stl_path)
 
     if not isinstance(mesh, trimesh.Trimesh):
@@ -352,3 +353,13 @@ def _load_cache(path: Path) -> dict | None:
             return pickle.load(f)
     except Exception:
         return None
+
+
+def __getattr__(name: str):
+    # trimesh (half a second to import) is only the fallback slicer, so it is
+    # imported when first used; ``masking.trimesh`` still reaches it.
+    if name == "trimesh":
+        import trimesh
+
+        return trimesh
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

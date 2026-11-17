@@ -225,10 +225,6 @@ class SidePanel(QWidget):
         if page is not None:
             self.stack.setCurrentWidget(page)
 
-    def has_content_for(self, kind: str) -> bool:
-        """Whether this surface has panel content worth auto-opening for."""
-        return kind == "plot"
-
     # =================================================================
     # Plot page: the whole-plot controls, or one element's editor
     # =================================================================

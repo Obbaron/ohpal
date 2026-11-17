@@ -40,15 +40,15 @@ from pathlib import Path
 from typing import Callable
 
 import polars as pl
-import pyarrow.parquet as pq
 
 CACHE_FORMAT_VERSION = 1
 _KEY_COLUMNS: tuple[str, str] = ("layer", "Start time")
 _LABEL_COLUMN = "cluster"
 
-# Parquet metadata keys must be bytes for pyarrow
-_META_VERSION_KEY = b"ampm_cluster_cache_version"
-_META_PARAMS_KEY = b"ampm_cluster_cache_params"
+# Parquet key-value metadata (strings; files written by the earlier pyarrow
+# writer carry the same keys and read the same).
+_META_VERSION_KEY = "ampm_cluster_cache_version"
+_META_PARAMS_KEY = "ampm_cluster_cache_params"
 
 
 def save_cluster_labels(
@@ -93,25 +93,21 @@ def save_cluster_labels(
             f"This cache format requires unique row keys."
         )
 
-    table = keys.to_arrow()
-    metadata: dict[bytes, bytes] = {
-        _META_VERSION_KEY: str(CACHE_FORMAT_VERSION).encode(),
+    metadata: dict[str, str] = {
+        _META_VERSION_KEY: str(CACHE_FORMAT_VERSION),
     }
     if params is not None:
         try:
             metadata[_META_PARAMS_KEY] = json.dumps(
                 params, sort_keys=True, default=str
-            ).encode()
+            )
         except TypeError as e:
             raise TypeError(
                 f"params must be JSON-serializable (got error: {e}). "
                 f"Convert paths and other objects to strings first."
             ) from e
-    existing = table.schema.metadata or {}
-    table = table.replace_schema_metadata({**existing, **metadata})
-
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, cache_path, compression="zstd")
+    keys.write_parquet(cache_path, compression="zstd", metadata=metadata)
 
     if verbose:
         n = clustered.height
@@ -170,11 +166,10 @@ def load_cluster_labels(
         if column not in df.columns:
             raise KeyError(f"Column {column!r} required to load cluster cache.")
 
-    pf = pq.ParquetFile(cache_path)
-    raw_meta = pf.schema_arrow.metadata or {}
+    raw_meta = pl.read_parquet_metadata(cache_path)
 
-    version_bytes = raw_meta.get(_META_VERSION_KEY)
-    if version_bytes is None:
+    version_text = raw_meta.get(_META_VERSION_KEY)
+    if version_text is None:
         msg = (
             f"Cache file {cache_path} has no version metadata; refusing to "
             f"load (likely produced by a different tool)."
@@ -184,7 +179,7 @@ def load_cluster_labels(
         if verbose:
             print(f"  [cache] {msg}")
         raise FileNotFoundError(msg)
-    version = int(version_bytes.decode())
+    version = int(version_text)
     if version != CACHE_FORMAT_VERSION:
         msg = (
             f"Cache format version {version} != expected "
@@ -197,8 +192,8 @@ def load_cluster_labels(
         raise FileNotFoundError(msg)
 
     if expect_params is not None:
-        params_bytes = raw_meta.get(_META_PARAMS_KEY)
-        cached_params = json.loads(params_bytes.decode()) if params_bytes else None
+        params_text = raw_meta.get(_META_PARAMS_KEY)
+        cached_params = json.loads(params_text) if params_text else None
         if cached_params != json.loads(
             json.dumps(expect_params, sort_keys=True, default=str)
         ):

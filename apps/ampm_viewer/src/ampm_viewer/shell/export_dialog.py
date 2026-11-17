@@ -61,7 +61,7 @@ def _section(text: str) -> QLabel:
 
 class ExcelExportDialog(DraggableCard, QDialog):
     def __init__(self, columns, parent=None, *, layers=None, current_layer=None,
-                 key_default="part_id", start_dir=None, renames=None) -> None:
+                 start_dir=None, renames=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Export to Excel")
         self._columns = list(columns)

@@ -121,16 +121,6 @@ def auto_match(name: str) -> str:
     return "chart--custom"
 
 
-def list_chart_icons() -> list[str]:
-    """All bundled chart/plot stems, for a custom-chart picker."""
-    out = []
-    for p in sorted((_ICON_DIR / "carbon").glob("*.svg")):
-        stem = p.stem
-        if stem.startswith("chart--") or stem.endswith("-plot") or "contour" in stem:
-            out.append(stem)
-    return out
-
-
 # -- rendering ---------------------------------------------------------
 def _svg_path(stem: str) -> Path:
     if stem.startswith("custom/"):

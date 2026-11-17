@@ -308,8 +308,6 @@ def _data_elements() -> list[Element]:
     ]
 
 
-DATA_KEYS = ("data_points", "data_bars", "data_curves", "data_kdist",
-             "data_violins", "data_contour")
 # Data fields that are the plot's own settings (shared with the side panel's
 # Points / Colour controls), not part of the element's stored style.
 BRIDGED = {"symbol", "size", "opacity", "cmap", "scale"}

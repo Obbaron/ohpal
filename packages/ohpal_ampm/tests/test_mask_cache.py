@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import numpy as np
 import polars as pl
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from ohpal.ampm.mask_cache import (
@@ -174,11 +172,9 @@ class TestLoad:
     def test_zero_row_cache(self, tmp_path):
         # Craft a 0-row but validly-versioned cache file.
         path = tmp_path / "empty.pq"
-        schema = pa.schema(
-            [("layer", pa.int16()), ("Start time", pa.int32())],
-            metadata={_META_VERSION_KEY: str(CACHE_FORMAT_VERSION).encode()},
+        pl.DataFrame(schema={"layer": pl.Int16, "Start time": pl.Int32}).write_parquet(
+            path, metadata={_META_VERSION_KEY: str(CACHE_FORMAT_VERSION)}
         )
-        pq.write_table(schema.empty_table(), path)
         full = pl.DataFrame(
             {
                 "layer": pl.Series([1], dtype=pl.Int16),
@@ -343,12 +339,10 @@ class TestVerboseLogging:
         assert "params" in capsys.readouterr().out
 
     def test_load_zero_keys_verbose(self, tmp_path, capsys):
-        schema = pa.schema(
-            [("layer", pa.int16()), ("Start time", pa.int32())],
-            metadata={_META_VERSION_KEY: str(CACHE_FORMAT_VERSION).encode()},
-        )
         path = tmp_path / "empty.pq"
-        pq.write_table(schema.empty_table(), path)
+        pl.DataFrame(schema={"layer": pl.Int16, "Start time": pl.Int32}).write_parquet(
+            path, metadata={_META_VERSION_KEY: str(CACHE_FORMAT_VERSION)}
+        )
         full = pl.DataFrame(
             {
                 "layer": pl.Series([1], dtype=pl.Int16),

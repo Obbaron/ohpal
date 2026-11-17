@@ -98,7 +98,7 @@ uv run python -m pytest
 
 ## Dependencies
 
-Core: `polars`, `pyarrow`, `numpy`, `scipy`, `scikit-learn`. Geometry: `trimesh`,
+Core: `polars`, `numpy`, `scipy`, `scikit-learn`. Geometry: `trimesh`,
 `shapely`, with `networkx` and `rtree` (which trimesh uses to slice the STL into layer
 outlines). No plotting library: plots belong to the app. (GUI concerns such as
 PyQt6 belong to the [`ampm_viewer`](../../apps/ampm_viewer/README.md) app, not here —

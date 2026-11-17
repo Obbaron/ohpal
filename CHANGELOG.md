@@ -170,6 +170,31 @@ Plotly figure builders, which the app replaces.
   and memory).
 - Settings are kept in `ampm-viewer.conf` in the AMPM folder (not the registry).
   `AMPM_SETTINGS_DIR` names another folder for them (the tests do).
+- **Faster.** Opening a 1.6 million row build and one plot of every kind took
+  37 s; it takes 13 s. Each plot opens two to five times faster (a KDE 8.9 s to
+  1.7 s, a contour 5.0 s to 1.4 s, a 2D scatter 3.4 s to 1.4 s); opening a
+  build 1.7 s to 0.7 s.
+  - Text on plots: a glyph is drawn once per process instead of once per text,
+    and the text of one plot shares one font atlas (it was a quarter of the
+    time to open a plot, and each text took its own 3 MB texture).
+  - Shader sources are parsed once each, not once per visual.
+  - VisPy no longer looks for matplotlib on every draw of a line (it tried
+    `import matplotlib` for each named colour; the built app searched for it
+    every frame).
+  - A legend is built once, not three times, when a plot opens.
+  - Part assignment uses every core, and makes the `part_id` column directly
+    from its codes (20 times faster).
+  - A contour over continuous data (more than 400 distinct X or Y values)
+    puts the values into 200 steps first: it was a grid as wide as the number
+    of distinct values (gigabytes for a million rows).
+  - KDE and violin groups are split from one array, not a Python list per
+    value; colouring by a category column no longer loops over every row.
+  - `import ohpal.ampm` takes 0.4 s, not 1.5 s: scikit-learn and trimesh are
+    imported when first used, and the KDE no longer imports `scipy.signal`.
+- **Smaller.** The executable is 183 MB, not 235 MB: `pyarrow` is no longer a
+  dependency (the mask and cluster caches are read and written with Polars,
+  which now needs to be 1.30 or later; caches written before still load), and
+  Qt's translations and PDF module are left out.
 
 ### Removed
 
@@ -182,6 +207,11 @@ Plotly figure builders, which the app replaces.
   pulled in), and `PyQt6` from the headless `ohpal-ampm` (the app has its own).
   `uv.lock` and `requirements.txt` are regenerated.
 - Unused imports across the packages, the app and the tests.
+- Code nothing called: the controller's old config and packet helpers,
+  `remove_derivation`, `colref.rename_name_set`, `icons.list_chart_icons` and
+  the 53 chart icons only it listed, the side panel's `has_content_for`, the
+  expression editor's `set_columns`, `plot_elements.DATA_KEYS`,
+  `plotspec.SCATTER_KINDS` and the Excel export dialog's unused `key_default`.
 - The 1.x interface: `ampm_analyzer/main.py` and the plot views in
   `ampm_analyzer/views/`, along with drop-in views from `%APPDATA%\AMPM\views`,
   `<project>/views` and `AMPM_VIEWS_PATH`.

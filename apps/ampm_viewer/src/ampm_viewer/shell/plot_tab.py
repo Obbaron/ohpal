@@ -20,6 +20,8 @@ shows a labelled placeholder. Render arrays are released on close.
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
@@ -96,12 +98,32 @@ _TITLE_INSET = 4         # px from the strip's end, for a left / right title
 _CLICK_SLOP_PX = 4        # press→release travel that still counts as a click
 
 
-def _style_text(tv, style: dict, prefix: str = "") -> None:
-    """Apply a style's font / size / colour to a VisPy text visual, live."""
+def _shared_fonts(method):
+    """Run a PlotTab method with its canvas's font manager shared by every
+    text visual made meanwhile (VisPy's own axis and colour bar text too)."""
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        try:
+            from . import vispy_speedups
+            fonts = self._fonts
+        except Exception:  # noqa: BLE001 - no VisPy: nothing to share
+            return method(self, *args, **kwargs)
+        with vispy_speedups.shared_fonts(fonts):
+            return method(self, *args, **kwargs)
+    return run
+
+
+def _style_text(tv, style: dict, prefix: str = "", fonts=None) -> None:
+    """Apply a style's font / size / colour to a VisPy text visual, live.
+    ``fonts``: the plot's shared font manager, so its texts share one texture
+    atlas per font rather than making their own."""
     face = pe.face(style.get(prefix + "font"))
     bold = bool(style.get(prefix + "bold", False))
     italic = bool(style.get(prefix + "italic", False))
-    if (tv.face, bool(tv.bold), bool(tv.italic)) != (face, bold, italic):
+    adopt = fonts is not None and getattr(tv, "_font_manager", fonts) is not fonts
+    if adopt:
+        tv._font_manager = fonts
+    if adopt or (tv.face, bool(tv.bold), bool(tv.italic)) != (face, bold, italic):
         tv._face, tv._bold, tv._italic = face, bold, italic
         tv._update_font()
         tv.text = tv.text  # glyph vertices belong to a font: rebuild them
@@ -368,6 +390,7 @@ class PlotTab(QWidget):
         # box of swatches and names, beside the plot or inside a corner.
         self._legend = None          # its VisPy widget
         self._legend_parts: list = []
+        self._legend_key = None      # what the legend was last built from
         self._legend_items = None    # (names, colours) shown, or None
         self._legend_auto = ""       # its automatic title (the group column)
         self._legend_size = (0.0, 0.0)
@@ -497,7 +520,19 @@ class PlotTab(QWidget):
         if 0 <= idx < len(self._layers):
             self._layer_label.setText(f"Layer {self._layers[idx]}")
 
+    @property
+    def _fonts(self):
+        """This plot's VisPy font manager: every text on its canvas shares it
+        (one texture atlas per font, not one per text). GL objects belong to
+        a canvas, so each plot has its own."""
+        fm = self.__dict__.get("_font_manager")
+        if fm is None:
+            from vispy.visuals.text.text import FontManager
+            fm = self.__dict__["_font_manager"] = FontManager(method="cpu")
+        return fm
+
     # -- canvas --------------------------------------------------------
+    @_shared_fonts
     def _build_canvas(self) -> QWidget:
         try:
             from vispy import scene
@@ -509,6 +544,8 @@ class PlotTab(QWidget):
             )
         try:
             pe.ensure_fonts()
+            from . import vispy_speedups
+            vispy_speedups.install()
             canvas = scene.SceneCanvas(keys="interactive", bgcolor=_BG, show=False)
             grid = canvas.central_widget.add_grid(margin=6)
             self._grid = grid
@@ -605,6 +642,7 @@ class PlotTab(QWidget):
         hover tooltip's part_id / layer extras to their renamed names."""
         self._renames = dict(renames or {})
 
+    @_shared_fonts
     def set_dataframe(self, df) -> None:
         """(Re)render with a new dataframe, keeping the same spec."""
         self._df = df
@@ -1028,7 +1066,7 @@ class PlotTab(QWidget):
         if self._ref_label is None:
             self._ref_label = scene.visuals.Text(
                 text, pos=(xhi, y + lift), color=guide, anchor_x="right",
-                anchor_y="top", font_size=9, parent=self._view.scene)
+                anchor_y="top", font_size=9, parent=self._view.scene, font_manager=self._fonts)
         else:
             self._ref_label.text = text
             self._ref_label.color = guide
@@ -1401,6 +1439,7 @@ class PlotTab(QWidget):
             self._hide_tooltip()
 
     # -- decorations ---------------------------------------------------
+    @_shared_fonts
     def _update_decor(self, data) -> None:
         if data.n_drawn:
             lo, hi = data.pos.min(axis=0), data.pos.max(axis=0)
@@ -1437,7 +1476,7 @@ class PlotTab(QWidget):
         for i, (name, p) in enumerate(labels):
             t = scene.visuals.Text(name, pos=p, color=_AXIS_RGB[i],
                                    font_size=10, bold=True,
-                                   parent=self._view.scene)
+                                   parent=self._view.scene, font_manager=self._fonts)
             self._axis_labels.append(t)
 
     def _build_floor(self, x0, x1, y0, y1, z0):
@@ -1515,6 +1554,7 @@ class PlotTab(QWidget):
         self._apply_visibility()
         self._apply_element("cbar")  # label text + fonts (a new bar included)
 
+    @_shared_fonts
     def _ensure_cbar(self) -> None:
         """The colour bar widget (and its name) in the cells for the chosen
         position; made again when the position changes (VisPy fixes a bar's
@@ -1567,6 +1607,7 @@ class PlotTab(QWidget):
         return pe.format_number(value, st.get("num_format", "auto"),
                                 st.get("num_decimals", 2))
 
+    @_shared_fonts
     def _set_cbar_ticks(self) -> None:
         """The numbers along the bar. VisPy's bar labels only its two ends;
         the labels between them (a banded bar's round levels, or the ticks
@@ -1602,7 +1643,7 @@ class PlotTab(QWidget):
                         marks.append((frac, self._cbar_number(v)))
         for frac, text in marks:
             label = scene.visuals.Text(
-                text, parent=self._cbar, color="black", font_size=12)
+                text, parent=self._cbar, color="black", font_size=12, font_manager=self._fonts)
             self._cbar_extra.append(label)
             self._cbar_extra_at.append(frac)
         self._place_cbar_ticks()
@@ -1665,6 +1706,7 @@ class PlotTab(QWidget):
     def _legend_place(self) -> str:
         return self._el_style.get("legend", {}).get("place", "outside")
 
+    @_shared_fonts
     def _build_legend(self) -> None:
         """Lay the legend out: title, then the rows, as many as fit beside
         the plot (the rest are counted on a last row)."""
@@ -1675,6 +1717,22 @@ class PlotTab(QWidget):
             return
         place = self._legend_place()
         host = self._slots["side"] if place == "outside" else self._view
+        # Opening a plot asks for the legend several times (its items, the
+        # visibility pass, the element styles); rebuild it only when something
+        # it shows has changed.
+        try:
+            room_now = float(self._view.size[1])
+        except Exception:  # noqa: BLE001
+            room_now = 400.0
+        names, colors = self._legend_items
+        key = (tuple(str(n) for n in names), np.asarray(colors).tobytes(),
+               repr(sorted(st.items())), place, id(host), round(room_now),
+               self._legend_auto, self._px(1.0))
+        if (key == self._legend_key and self._legend is not None
+                and self._legend.parent is host and self._legend_parts):
+            self._place_legend()
+            return
+        self._legend_key = key
         if self._legend is None or self._legend.parent is not host:
             if self._legend is not None:
                 self._legend.parent = None
@@ -1683,7 +1741,6 @@ class PlotTab(QWidget):
         for part in self._legend_parts:
             part.parent = None
         self._legend_parts = []
-        names, colors = self._legend_items
 
         def metrics(prefix):
             font = QFont(st.get(prefix + "font") or pe.DEFAULT_FONT)
@@ -1717,8 +1774,8 @@ class PlotTab(QWidget):
         if title:
             t = scene.visuals.Text(title, parent=self._legend, anchor_x="left",
                                    anchor_y="center",
-                                   pos=(_LEGEND_PAD, y + title_h / 2))
-            _style_text(t, st)
+                                   pos=(_LEGEND_PAD, y + title_h / 2), font_manager=self._fonts)
+            _style_text(t, st, fonts=self._fonts)
             self._legend_parts.append(t)
             y += title_h
         # Every row has a swatch except a last "+ n more".
@@ -1737,8 +1794,8 @@ class PlotTab(QWidget):
         for i, text in enumerate(rows):
             t = scene.visuals.Text(
                 text, parent=self._legend, anchor_x="left", anchor_y="center",
-                pos=(_LEGEND_PAD + swatch + 6, y + (i + 0.5) * row_h))
-            _style_text(t, name_st)
+                pos=(_LEGEND_PAD + swatch + 6, y + (i + 0.5) * row_h), font_manager=self._fonts)
+            _style_text(t, name_st, fonts=self._fonts)
             self._legend_parts.append(t)
         frame = bool(st.get("frame", True))
         self._legend.border_color = st.get("frame_color") if frame else None
@@ -1815,6 +1872,7 @@ class PlotTab(QWidget):
             self._size_slot(name, px)
         self._relayout()
 
+    @_shared_fonts
     def _apply_visibility(self) -> None:
         if self._yaxis is not None:
             self._yaxis.visible = self._show_axes
@@ -2208,10 +2266,12 @@ class PlotTab(QWidget):
         if redraw:
             self._render()
 
+    @_shared_fonts
     def _apply_elements(self) -> None:
         for key in self._el_style:
             self._apply_element(key)
 
+    @_shared_fonts
     def _apply_element(self, key: str) -> None:
         """Push an element's style onto its live VisPy objects."""
         st = self._el_style.get(key)
@@ -2220,7 +2280,7 @@ class PlotTab(QWidget):
         try:
             if key == "title":
                 if self._title_label is not None:
-                    _style_text(self._title_label._text_visual, st)
+                    _style_text(self._title_label._text_visual, st, fonts=self._fonts)
                     self._title_label.height_max = (
                         self._title_height() if self._show_title else 0)
                     self._place_title()
@@ -2231,7 +2291,7 @@ class PlotTab(QWidget):
                 if i < len(self._axis_labels):
                     label = self._axis_labels[i]
                     label.text = st.get("text") or self._auto_text(key)
-                    _style_text(label, st)
+                    _style_text(label, st, fonts=self._fonts)
             elif key == "categories":  # the x axis's labels
                 self._apply_axis("xaxis", self._el_style["xaxis"])
             elif key == "cbar":
@@ -2256,10 +2316,10 @@ class PlotTab(QWidget):
             self._set_cbar_ticks()       # number format / count
         if self._cbar_label is not None:
             self._cbar_label.text = st.get("text") or self._cbar_auto
-            _style_text(self._cbar_label._text_visual, st)
+            _style_text(self._cbar_label._text_visual, st, fonts=self._fonts)
         if self._cbar is not None:
             for tick in [*self._cbar.ticks, *self._cbar_extra]:
-                _style_text(tick, st, "num_")
+                _style_text(tick, st, "num_", fonts=self._fonts)
         self._layout_side()
 
     def _cbar_label_extent(self, st: dict) -> float:
@@ -2314,12 +2374,12 @@ class PlotTab(QWidget):
             return
         axis = widget.axis
         axis.axis_label = st.get("text") or self._auto_text(key)
-        _style_text(axis._axis_label_vis, st)
+        _style_text(axis._axis_label_vis, st, fonts=self._fonts)
         category = key == "xaxis" and self._categories is not None
         if category:  # its labels are the category names: their own style
-            _style_text(axis._text, self._el_style["categories"])
+            _style_text(axis._text, self._el_style["categories"], fonts=self._fonts)
         else:
-            _style_text(axis._text, st, "tick_")
+            _style_text(axis._text, st, "tick_", fonts=self._fonts)
         line = st.get("line_color", _AXIS_TICK) if st.get("line") else _AXIS_LINE
         if str(axis.axis_color) != str(line):
             axis.axis_color = line
@@ -3063,6 +3123,7 @@ class PlotTab(QWidget):
         self._axis_labels = []
         self._legend = None
         self._legend_parts = []
+        self._legend_key = None
         self._bar_outline = None
         self._slots = {}
         self._hide_tooltip()

@@ -80,10 +80,6 @@ class FormulaHighlighter(QSyntaxHighlighter):
         ]
         self._col_re = re.compile(r"\[([^\[\]]*)\]")
 
-    def set_columns(self, columns) -> None:
-        self._known = set(columns)
-        self.rehighlight()
-
     def highlightBlock(self, text: str) -> None:  # noqa: N802 (Qt override)
         for rx, fmt in self._rules:
             for m in rx.finditer(text):
@@ -111,9 +107,6 @@ class FormulaEdit(QPlainTextEdit):
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._completer.setModel(QStringListModel(self))
         self._completer.activated[str].connect(self._insert_completion)
-
-    def set_columns(self, columns) -> None:
-        self._columns = list(columns)
 
     def completer_active(self) -> bool:
         """True while the completion popup is open (mid-token entry)."""

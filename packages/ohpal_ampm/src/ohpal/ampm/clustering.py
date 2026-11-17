@@ -35,8 +35,8 @@ from typing import Callable, Literal, Sequence
 
 import numpy as np
 import polars as pl
-from sklearn.cluster import DBSCAN
-from sklearn.neighbors import BallTree, NearestNeighbors
+# scikit-learn is imported where it is used: it takes about a second to
+# import, and opening a build (which imports this package) never needs it.
 
 Mode = Literal["2d", "3d"]
 DEFAULT_COLUMNS: tuple[str, str, str] = ("Demand X", "Demand Y", "Z")
@@ -176,6 +176,8 @@ def k_distance_curve(
     )
     coords = _to_scaled_array(sampled, x_col, y_col, z_col, eps_xy, eps_z)
 
+    from sklearn.neighbors import NearestNeighbors
+
     nn = NearestNeighbors(n_neighbors=k + 1, algorithm="ball_tree")
     nn.fit(coords)
     distances, _ = nn.kneighbors(coords)
@@ -247,6 +249,8 @@ def cluster_dbscan(
 
     rep_coords = _to_scaled_array(rep, x_col, y_col, z_col, eps_xy, eps_z)
 
+    from sklearn.cluster import DBSCAN
+
     db = DBSCAN(eps=eps_xy, min_samples=min_samples, algorithm="ball_tree", n_jobs=-1)
     rep_labels = db.fit_predict(rep_coords)
 
@@ -286,6 +290,8 @@ def _propagate_labels(
     """
     rep_coords = _to_scaled_array(rep, x_col, y_col, z_col, eps_xy, eps_z)
     full_coords = _to_scaled_array(df, x_col, y_col, z_col, eps_xy, eps_z)
+
+    from sklearn.neighbors import BallTree
 
     tree = BallTree(rep_coords)
     _, idx = tree.query(full_coords, k=1)
@@ -495,6 +501,8 @@ def cluster_dbscan_chunked(
     n = df.height
     row_chunk = np.full(n, -1, dtype=np.int32)
     row_local = np.full(n, -1, dtype=np.int32)
+
+    from sklearn.cluster import DBSCAN
 
     layer_arr = df[layer_col].to_numpy()
     uf = _UnionFind()

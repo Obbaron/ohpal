@@ -268,12 +268,10 @@ def kde_bandwidth(values: np.ndarray, method: str | None = "scott") -> float:
 def kde_density(values: np.ndarray, grid: np.ndarray, bw: float) -> np.ndarray:
     """Gaussian KDE of ``values`` on the evenly spaced ``grid``.
 
-    Linear binning onto the grid, then one FFT convolution with the kernel:
+    Linear binning onto the grid, then one convolution with the kernel:
     every point is used (no sampling) and it stays fast on millions of rows.
     The result matches a direct ``gaussian_kde`` evaluation to well within
     what is visible on a plot."""
-    from scipy.signal import fftconvolve
-
     m = grid.size
     if values.size == 0 or m < 2 or not np.isfinite(bw) or bw <= 0:
         return np.zeros(m, "float64")
@@ -287,8 +285,30 @@ def kde_density(values: np.ndarray, grid: np.ndarray, bw: float) -> np.ndarray:
     offsets = np.arange(-half, half + 1) * dx
     kernel = np.exp(-0.5 * (offsets / bw) ** 2)
     kernel /= kernel.sum()
-    density = fftconvolve(counts, kernel, mode="same") / (values.size * dx)
+    # A direct convolution (the grid is a few hundred points), centred as
+    # "same" mode; numpy only, so no SciPy signal import (half a second).
+    full = np.convolve(counts, kernel)
+    start = (kernel.size - 1) // 2
+    density = full[start:start + m] / (values.size * dx)
     return np.clip(density, 0.0, None)
+
+
+def _category_codes(s, uniques: list) -> np.ndarray:
+    """Each value's index in ``uniques`` (nulls: None's index, else 0)."""
+    import polars as pl
+
+    code_of = {v: i for i, v in enumerate(uniques)}
+    missing = code_of.get(None, 0)
+    non_null = [v for v in uniques if v is not None]
+    try:
+        if not non_null:
+            return np.full(len(s), missing, dtype=int)
+        old = pl.Series(non_null, dtype=s.dtype)
+        new = pl.Series([code_of[v] for v in non_null], dtype=pl.Int64)
+        return (s.replace_strict(old, new, default=missing).fill_null(missing)
+                .to_numpy().astype(int))
+    except Exception:  # noqa: BLE001 - an unusual dtype: value by value
+        return np.array([code_of.get(v, 0) for v in s.to_list()], dtype=int)
 
 
 def _finite(series) -> np.ndarray:
@@ -352,8 +372,11 @@ def build_kde(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
     if grp:
         parts = (work.group_by(grp, maintain_order=True)
                  .agg(pl.col(col)).sort(grp))
-        groups = [(str(k), np.asarray(v, dtype="float64"))
-                  for k, v in zip(parts[grp].to_list(), parts[col].to_list())]
+        # One flat array split per group (not a Python list per value).
+        flat = parts[col].explode().cast(pl.Float64).to_numpy()
+        ends = np.cumsum(parts[col].list.len().to_numpy())
+        groups = [(str(k), v) for k, v in
+                  zip(parts[grp].to_list(), np.split(flat, ends[:-1]))]
     else:
         groups = [(col, allv)]
 
@@ -443,8 +466,9 @@ def build_violins(df, spec, *, cmap=None, scale="linear", crange=None) -> Violin
             f"{cat!r} has {parts.height} different values; a violin plot needs "
             f"{MAX_VIOLINS} or fewer. Choose a grouping column such as part_id.")
     labels, outlines, stats = [], [], []
-    for key, vals in zip(parts[cat].to_list(), parts[val].to_list()):
-        v = np.asarray(vals, dtype="float64")
+    flat = parts[val].explode().cast(pl.Float64).to_numpy()
+    ends = np.cumsum(parts[val].list.len().to_numpy())
+    for key, v in zip(parts[cat].to_list(), np.split(flat, ends[:-1])):
         v = v[np.isfinite(v)]
         if v.size == 0:
             continue
@@ -494,6 +518,12 @@ class ContourData:
 
 
 CONTOUR_RES = 400      # samples per axis of the interpolated field
+# A contour is drawn over a parameter grid: a handful of distinct x and y
+# values. An axis with more distinct values than this is continuous data, so
+# its values are put into CONTOUR_STEPS equal steps first (a million distinct
+# values would otherwise make a million-column grid).
+CONTOUR_MAX_STEPS = 400
+CONTOUR_STEPS = 200
 CONTOUR_BANDS = 16     # filled bands aimed for (the step is rounded to be nice)
 
 
@@ -545,6 +575,28 @@ def band_image(field: np.ndarray, levels: np.ndarray, cmap: str | None) -> np.nd
     return rgba.astype("float32")
 
 
+def _nearest(sorted_values: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """For each of ``q``, the index of the nearest of ``sorted_values``."""
+    if len(sorted_values) < 2:
+        return np.zeros(len(q), dtype=np.intp)
+    i = np.clip(np.searchsorted(sorted_values, q), 1, len(sorted_values) - 1)
+    left, right = sorted_values[i - 1], sorted_values[i]
+    return np.where(q - left <= right - q, i - 1, i)
+
+
+def _steps(col: str, sub):
+    """``col`` put into CONTOUR_STEPS equal steps (each value replaced by its
+    step's middle) when it has too many distinct values for a grid."""
+    import polars as pl
+
+    if sub[col].n_unique() <= CONTOUR_MAX_STEPS:
+        return pl.col(col)
+    lo, hi = float(sub[col].min()), float(sub[col].max())
+    width = (hi - lo) / CONTOUR_STEPS
+    k = ((pl.col(col).cast(pl.Float64) - lo) / width).floor().clip(0, CONTOUR_STEPS - 1)
+    return (lo + (k + 0.5) * width).alias(col)
+
+
 def _interpolate(xs, ys, grid, px, py, pz, fx, fy) -> np.ndarray:
     """z over the fine grid (``fx`` x ``fy``) from the measured points.
 
@@ -578,9 +630,7 @@ def _interpolate(xs, ys, grid, px, py, pz, fx, fy) -> np.ndarray:
         out = None
     if out is None:
         # Fallback: each fine sample takes its nearest measured cell.
-        ix = np.abs(fx[:, None] - xs[None, :]).argmin(axis=1)
-        iy = np.abs(fy[:, None] - ys[None, :]).argmin(axis=1)
-        out = grid[np.ix_(iy, ix)].astype("float64")
+        out = grid[np.ix_(_nearest(ys, fy), _nearest(xs, fx))].astype("float64")
     if len(pz):
         out = np.clip(out, float(np.min(pz)), float(np.max(pz)))  # NaN stays NaN
     return out.astype("float32")
@@ -611,16 +661,16 @@ def build_contour(df, spec, *, cmap=None, scale="linear", crange=None) -> Contou
                            np.zeros((0, 2), "float32"), z, x, y, (0.0, 1.0),
                            (0.0, 1.0), 0, spec.show_points, empty)
 
+    sub = sub.with_columns(_steps(x, sub), _steps(y, sub))
     xs = np.sort(sub[x].unique().to_numpy().astype("float64"))
     ys = np.sort(sub[y].unique().to_numpy().astype("float64"))
-    xi = {float(v): i for i, v in enumerate(xs)}
-    yi = {float(v): i for i, v in enumerate(ys)}
     grid = np.full((len(ys), len(xs)), np.nan, dtype="float32")
     g = (sub.group_by([y, x], maintain_order=True)
          .agg(pl.col(z).cast(pl.Float64).mean().alias("_v"))
          .filter(pl.col("_v").is_finite()))
-    for row in g.iter_rows(named=True):
-        grid[yi[float(row[y])], xi[float(row[x])]] = row["_v"]
+    if g.height:
+        grid[np.searchsorted(ys, g[y].to_numpy().astype("float64")),
+             np.searchsorted(xs, g[x].to_numpy().astype("float64"))] = g["_v"].to_numpy()
 
     finite = np.isfinite(grid)
     if crange is not None:
@@ -763,8 +813,7 @@ def _colors(sub, spec, idx, take, n, cmap, scale, crange):
     # are spread along the colormap so every one is distinct.
     uniques = sorted(s.unique().to_list(),
                      key=lambda v: (v is None, _natural_key(v)))
-    code_of = {v: i for i, v in enumerate(uniques)}
-    codes = np.array([code_of.get(v, 0) for v in s.to_list()], dtype=int)
+    codes = _category_codes(s, uniques)
     codes = codes if idx is None else codes[idx]
     if len(uniques) <= len(_CATEGORICAL):
         pal = np.column_stack([_CATEGORICAL[:max(1, len(uniques))],

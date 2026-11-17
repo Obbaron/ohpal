@@ -86,11 +86,6 @@ def rename_names(names, old: str, new: str) -> list[str]:
     return [new if c == old else c for c in (names or [])]
 
 
-def rename_name_set(names, old: str, new: str) -> set[str]:
-    """Swap ``old`` for ``new`` in a set of plain column names (hidden set)."""
-    return {new if c == old else c for c in (names or set())}
-
-
 def rename_spec(spec, old: str, new: str):
     """Return a copy of a ``PlotSpec`` with any ``old`` channel renamed to
     ``new`` (x / y / z / color). ``None`` channels are left as-is."""

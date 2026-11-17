@@ -107,9 +107,23 @@ a = Analysis(
     runtime_hooks=[],
     # Trim weight: nothing in the app uses these (should one be installed in
     # the build environment anyway).
-    excludes=["tkinter", "matplotlib", "plotly", "IPython", "pytest"],
+    excludes=["tkinter", "matplotlib", "plotly", "IPython", "pytest",
+              "pyarrow", "pandas"],
     noarchive=False,
 )
+
+
+# Qt pieces the app never loads: the translations of Qt's own dialog text (the
+# app is English only) and the PDF module and its image plugin.
+def _unused_qt(dest: str) -> bool:
+    d = dest.replace("\\", "/")
+    name = d.rsplit("/", 1)[-1]
+    return (d.startswith("PyQt6/Qt6/translations/") or "Qt6Pdf" in name
+            or "qpdf" in name)
+
+
+a.datas = [entry for entry in a.datas if not _unused_qt(entry[0])]
+a.binaries = [entry for entry in a.binaries if not _unused_qt(entry[0])]
 pyz = PYZ(a.pure)
 
 # One file: the scripts, every library and data file go into the .exe itself

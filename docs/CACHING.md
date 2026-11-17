@@ -122,14 +122,16 @@ Parquet metadata is the actual home for params. We use file-level metadata keys:
 Inspecting a cache from the command line:
 
 ```python
-import pyarrow.parquet as pq
 import json
+import polars as pl
 
-pf = pq.ParquetFile("path/to/cluster_labels.pq")
-metadata = pf.schema_arrow.metadata
-params = json.loads(metadata[b"ampm_cluster_cache_params"])
+metadata = pl.read_parquet_metadata("path/to/cluster_labels.pq")
+params = json.loads(metadata["ampm_cluster_cache_params"])
 print(params)
 ```
+
+The caches are written with Polars. Caches written by earlier versions (with
+pyarrow) carry the same keys and still load.
 
 ## Why caches use Polars `glob=False`
 

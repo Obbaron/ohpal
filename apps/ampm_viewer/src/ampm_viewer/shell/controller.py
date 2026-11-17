@@ -25,12 +25,6 @@ from .recents import RecentStore
 from .state import BuildSession, QueryResult
 from .workers import CacheWorker, QueryWorker, release_after
 
-# Same packet-filename shape the DataStore expects.
-_PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNORECASE)
-
-# Cap the rows handed to the (non-virtualised) grid; virtualised model = Stage 3.
-STAGE1_ROW_CAP = 5000
-
 # Row budget for a plot query. A plot span can be the whole build (tens of
 # millions of rows) but a scatter only draws ~150k points; the query is
 # downsampled to this many rows to cap memory (derived group-stats like a
@@ -41,13 +35,6 @@ _PLOT_SAMPLE_ROWS = 1_000_000
 # and the source column an "override" writes back to. See ohpal.ampm.correction.
 _CORR_SOURCE = "MeltVIEW melt pool (mean)"
 _CORR_INPUTS = ("Demand X", "Demand Y", "LaserVIEW (mean)", _CORR_SOURCE)
-
-
-def _has_packets(path: Path) -> bool:
-    try:
-        return any(_PACKET_RE.match(p.name) for p in path.iterdir() if p.is_file())
-    except OSError:
-        return False
 
 
 class AppController(QObject):
@@ -439,30 +426,6 @@ class AppController(QObject):
         self._start_cache(store, layers, self._setup_force)
 
     # -- config helpers ------------------------------------------------
-    def _ensure_and_load_config(self, build_root: Path) -> dict:
-        def work() -> dict:
-            if not (build_root / "config.toml").exists():
-                from ohpal.ampm.setup_build import create_config
-
-                create_config(build_root)
-            return self._load_config(build_root)
-
-        return self._guarded(work)
-
-    @staticmethod
-    def _load_config(build_root: Path) -> dict:
-        from ohpal.ampm.config import load_config
-
-        return load_config(build_root)
-
-    @staticmethod
-    def _guarded(fn):
-        """Run fn, turning ohpal's sys.exit() into a RuntimeError."""
-        try:
-            return fn()
-        except SystemExit as exc:
-            raise RuntimeError(str(exc)) from exc
-
     @staticmethod
     def _construct_store(source_dir: Path, layer_thickness: float):
         from ohpal.ampm import DataStore
@@ -1531,12 +1494,6 @@ class AppController(QObject):
         )
         self._refresh_derived()
         return None
-
-    def remove_derivation(self, name: str) -> None:
-        self.session.derivations = [
-            d for d in self.session.derivations if d["name"] != name
-        ]
-        self._refresh_derived()
 
     # -- remove / restore columns --------------------------------------
     def remove_columns(self, names: list[str]) -> list[str]:

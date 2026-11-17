@@ -15,8 +15,8 @@ license = {text = "All rights reserved"}
 dependencies = [
     "ohpal-core",
     "ohpal-samples",
-    "polars>=1.0,<2",
-    "pyarrow>=14,<25",
+    # 1.30+: Parquet key-value metadata (the mask and cluster caches).
+    "polars>=1.30,<2",
     "trimesh>=4.0,<5",
     "shapely>=2.0,<3",
     # trimesh uses these to turn an STL slice into layer outlines (masking).
