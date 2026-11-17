@@ -22,17 +22,11 @@ Usage
     # 1. Tune eps_xy by inspecting the k-distance curve (rank vs distance;
     #    AMPM Analyzer draws it as its K-Distance Curve plot)
     kdc = k_distance_curve(df, k=10, mode="3d", eps_xy=1.0, eps_z=0.1)
-    fig.show()
 
-    # 2. Cluster
+    # 2. Cluster: a 'cluster' column per row (-1 = noise)
     clustered = cluster_dbscan(
         df, eps_xy=2.0, eps_z=0.1, min_samples=10, mode="3d",
     )
-
-    # 3. Plot
-    fig = scatter3d(clustered, x="Demand X", y="Demand Y", z="Z",
-                    color="cluster", colorscale="Turbo")
-    fig.show()
 """
 
 from __future__ import annotations

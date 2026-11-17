@@ -8,6 +8,7 @@ from . import (
     parts,
     sampling,
     setup_build,
+    stacked,
     stats,
 )
 from .config import create_or_load_config, load_config
@@ -27,4 +28,5 @@ __all__ = [
     "correction",
     "config",
     "setup_build",
+    "stacked",
 ]

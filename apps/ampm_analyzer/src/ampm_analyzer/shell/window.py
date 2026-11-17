@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
         self.backstage = Backstage()
         self.backstage.newRequested.connect(self.controller.new_build)
         self.backstage.openRequested.connect(self.controller.open_build)
+        self.backstage.stackRequested.connect(self.controller.new_stack)
         self.backstage.openRecentRequested.connect(self.controller.open_recent)
         self.backstage.createExcelRequested.connect(self.controller.create_excel)
         self.backstage.datastoreBuildRequested.connect(self._on_build_requested)

@@ -12,14 +12,13 @@ Stage 2 adds the New / Open flows and the parquet-cache build:
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtWidgets import QFileDialog, QWidget
 
-from . import colref, derive, uistate
+from . import colref, derive, stackbuild, uistate
 from .message_dialog import ask as _ask, tell as _tell
 from .datastore_settings import REQUIRED_COLUMNS
 from .recents import RecentStore
@@ -103,6 +102,26 @@ class AppController(QObject):
 
     def open_build(self) -> None:
         self._start("open")
+
+    def new_stack(self) -> None:
+        """Make a stacked build (several step builds read as one) and open it
+        like a new build: its setup page comes next."""
+        if self._busy:
+            return
+        dlg = stackbuild.NewStackDialog(
+            self._window, start_dir=self._recents.start_dir())
+        if not dlg.exec() or dlg.chosen() is None:
+            return
+        folder, name, steps = dlg.chosen()
+        if stackbuild.is_stack_folder(folder) and not _ask(
+            self._window, "Replace the stacked build?",
+            f"{folder.name} already holds a stacked build. Replace its steps "
+            "with these? Its plots and settings are kept.",
+            ok_text="Replace", cancel_text="Cancel",
+        ):
+            return
+        self._recents.set_last_browse_dir(str(folder.parent))
+        self._load(folder, "new", stack=(name, steps))
 
     def open_recent(self, path: str) -> None:
         """Open a build chosen from the Recent list (treated like Open)."""
@@ -210,15 +229,17 @@ class AppController(QObject):
         _tell(self._window, "Couldn't create the Excel", message)
 
     # -- load/prepare --------------------------------------------------
-    def _load(self, build_root: Path, mode: str) -> None:
+    def _load(self, build_root: Path, mode: str, stack=None) -> None:
         """Begin loading a build. The expensive part — loading/creating the config
         and constructing the DataStore, where the ~2s cold ``import ohpal`` (->
         polars) happens — runs on a worker thread so the window never freezes. The
         rest resumes on the main thread in ``_on_load_done``."""
         self._busy = True
         # A build with no config.toml needs one created. For Open, confirm first
-        # (on the main thread, before the worker starts).
-        create = not (build_root / "config.toml").exists()
+        # (on the main thread, before the worker starts). A stacked build has
+        # none of its own (its steps' are made as they're needed).
+        create = (stack is None and not stackbuild.is_stack_folder(build_root)
+                  and not (build_root / "config.toml").exists())
         if mode == "open" and create and not self._confirm(
             "No DataStore found for this build.\n\n"
             "Would you like to create one?",
@@ -228,13 +249,14 @@ class AppController(QObject):
             return
         self.session.begin_load(build_root.name)
         self._pump()  # paint "Loading <build>…" before the (threaded) heavy work
-        self._start_load(build_root, mode, create)
+        self._start_load(build_root, mode, create, stack)
 
-    def _start_load(self, build_root: Path, mode: str, create: bool) -> None:
+    def _start_load(self, build_root: Path, mode: str, create: bool,
+                    stack=None) -> None:
         from .workers import LoadWorker
 
         thread = QThread(self)
-        worker = LoadWorker(build_root, create=create)
+        worker = LoadWorker(build_root, create=create, stack=stack)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(
@@ -279,7 +301,8 @@ class AppController(QObject):
         # Record this build in the recents list (before set_store so the backstage
         # refresh triggered by the load already sees it).
         self._recents.record(build_root, has_cache=cached > 0)
-        self.session.set_store(store, source_dir, build_root.name, thickness)
+        name = store.name if stackbuild.is_stack(store) else build_root.name
+        self.session.set_store(store, source_dir, name, thickness)
         # Apply the configured assignment so builds opened straight from cache
         # (no setup page) still surface part_id; a later build overrides it.
         self._apply_part_assignment(store, self._config.get("METHOD"))
@@ -306,7 +329,13 @@ class AppController(QObject):
             return
 
         # mode == "new"
-        if exists:
+        if exists and stackbuild.is_stack(store):
+            # A new stack over steps already in their DataStores: set it up
+            # (one setup for every step); the layers built stay as they are.
+            self._setup_force = False
+            self._finish_idle(None)
+            self.session.require_setup(config, store.layers, store.columns, True)
+        elif exists:
             if self._confirm(
                 "Existing DataStore found for this build.\n\n"
                 "Would you like to overwrite it?",
@@ -336,6 +365,7 @@ class AppController(QObject):
         # (and later queries, where Z = layer × thickness) use it.
         if (
             thickness
+            and not stackbuild.is_stack(store)  # each step has its own
             and self.session.source_dir is not None
             and abs(thickness - self.session.layer_thickness) > 1e-9
         ):
@@ -430,6 +460,9 @@ class AppController(QObject):
         """
         m = (method or "").lower()
         self._dbscan_wanted = None
+        if stackbuild.is_stack(store):
+            self._apply_stack_parts(store, m)
+            return
         if m == "dbscan" and (self._config or {}).get("PARTS_CSV"):
             store.set_part_assignment(None)
             self._part_ids = None
@@ -465,6 +498,30 @@ class AppController(QObject):
         store.set_part_assignment(None)
         self._part_ids = None
 
+    def _apply_stack_parts(self, store, method: str) -> None:
+        """A stacked build's part assignment: each step's own parts (its own
+        parts CSV / .dhxml), named ``S<step> <part>``. DBSCAN isn't offered
+        for a stack."""
+        ids: set[str] = set()
+        failed = []
+        for step in store.steps:
+            try:
+                found = stackbuild.step_part_table(step.config, method)
+            except Exception as exc:  # noqa: BLE001 - that step goes without
+                failed.append(f"{step.label}: {exc}")
+                found = None
+            if found is None:
+                store.set_step_part_assignment(step.index, None)
+                continue
+            table, options = found
+            store.set_step_part_assignment(step.index, table, **options)
+            ids |= {derive.norm_key(f"{step.label} {v}")
+                    for v in table["part_id"].to_list() if v is not None}
+        if failed:
+            self.session.fail("Could not load the parts of "
+                              + "; ".join(failed))
+        self._part_ids = ids or None
+
     def _note_part_ids(self, table) -> None:
         try:
             self._part_ids = {
@@ -492,18 +549,9 @@ class AppController(QObject):
 
     @staticmethod
     def _cache_status(store) -> tuple[int, int]:
-        """(cached_layers, total_layers). One directory read instead of a
-        ``.exists()`` stat per layer — far cheaper as the layer count grows."""
-        import os
-
-        layers = store.layers
-        try:
-            present = {e.name for e in os.scandir(store.cache_dir)
-                       if e.name.endswith(".parquet")}
-        except OSError:
-            present = set()
-        cached = sum(1 for L in layers if store._cache_path(L).name in present)
-        return cached, len(layers)
+        """(cached_layers, total_layers). One directory read (per step, for a
+        stacked build) instead of a ``.exists()`` stat per layer."""
+        return len(store.cached_layers()), len(store.layers)
 
     @staticmethod
     def _pump() -> None:
@@ -871,17 +919,40 @@ class AppController(QObject):
 
         Returns the frame, or raises with a clear message. The caller joins the
         parameter columns onto the grid via ``add_join_derivation``."""
+        import polars as pl
+
+        from ohpal.ampm.parts import QuantAMParts
+
+        frames = [
+            stackbuild.prefix_part_ids(
+                QuantAMParts.from_path(path).volume_parameters_with_speed(
+                    variant=variant), prefix)
+            for prefix, path in self._parts_csvs()]
+        return frames[0] if len(frames) == 1 else pl.concat(
+            frames, how="diagonal_relaxed")
+
+    def _parts_csvs(self) -> list[tuple[str, str]]:
+        """``(part_id prefix, parts CSV)`` for this build: its one CSV, or
+        each step's own for a stacked build (whose part ids carry the step).
+        Raises when there's none."""
+        store = self.session.store
+        if store is not None and stackbuild.is_stack(store):
+            out = [(f"{s.label} ", s.config.get("PARTS_CSV")) for s in store.steps]
+            missing = [p.strip() for p, path in out if not path]
+            if missing:
+                raise ValueError(
+                    f"Step {', '.join(missing)} of this stacked build has no "
+                    "parts CSV.")
+            return out
         path = (self._config or {}).get("PARTS_CSV")
         if not path:
             raise ValueError("This build has no parts CSV configured.")
-        from ohpal.ampm.parts import QuantAMParts
-
-        return QuantAMParts.from_path(path).volume_parameters_with_speed(
-            variant=variant)
+        return [("", path)]
 
     def parts_csv_sections(self, *, variant: str = "1"):
         """Every section of the QuantAM parts CSV as ``(name, body_df)`` pairs,
-        for the Import-parts-CSV picker.
+        for the Import-parts-CSV picker. (A stacked build: each step's, with
+        its part ids taking the step, ``S2 Part(3)``, joined per section.)
 
         Each ``body_df`` is keyed by ``part_id`` with the section's own data
         columns; support rows (the ``.s`` variant of "Sr. No.") are dropped,
@@ -896,11 +967,22 @@ class AppController(QObject):
         back to its bare name."""
         import polars as pl
 
+        merged: dict[str, list] = {}
+        for prefix, path in self._parts_csvs():
+            for name, body in self._csv_sections(path, variant):
+                merged.setdefault(name, []).append(
+                    stackbuild.prefix_part_ids(body, prefix))
+        return [(name, bodies[0] if len(bodies) == 1
+                 else pl.concat(bodies, how="diagonal_relaxed"))
+                for name, bodies in merged.items()]
+
+    @staticmethod
+    def _csv_sections(path, variant: str):
+        """``parts_csv_sections`` for one parts CSV."""
+        import polars as pl
+
         from ohpal.ampm.parts import QuantAMParts, SECTION_PARENT
 
-        path = (self._config or {}).get("PARTS_CSV")
-        if not path:
-            raise ValueError("This build has no parts CSV configured.")
         qp = QuantAMParts.from_path(path)
         try:  # instance number -> the grid's part id
             ids = qp.part_ids_by_instance().rename(
@@ -1005,13 +1087,9 @@ class AppController(QObject):
         them is cached yet."""
         store = store or self.session.store
         avail = self.available_layers() or list(store.layers)
-        try:
-            present = {e.name for e in os.scandir(store.cache_dir)
-                       if e.name.endswith(".parquet")}
-        except OSError:
-            present = set()
+        present = store.cached_layers()
         for layer in avail:
-            if store._cache_path(layer).name in present:
+            if layer in present:
                 return layer
         return avail[0]
 
@@ -1040,6 +1118,9 @@ class AppController(QObject):
             self._mask_geom = None
             self._mask_key = None
             return
+        if stackbuild.is_stack(store):
+            self._ensure_stack_mask(store)
+            return
         stl = (self._config or {}).get("STL")
         if not stl:
             # Nothing to mask with — treat masking as off for this build.
@@ -1057,12 +1138,31 @@ class AppController(QObject):
         cache_path = Path(store.cache_dir) / "mask.pkl"
         self._start_mask(stl, list(layers), thickness, cache_path, key)
 
-    def _start_mask(self, stl, layers, thickness, cache_path, key) -> None:
+    def _ensure_stack_mask(self, store) -> None:
+        """A stacked build's mask: each step's STL sliced at its own layers
+        and thickness, keyed by stacked layer (every step needs an STL)."""
+        jobs = stackbuild.mask_jobs(store)
+        if not jobs:
+            self._apply_mask = False
+            self._mask_geom = None
+            self._mask_key = None
+            return
+        key = ("stack", tuple((str(j[0]), j[4]) for j in jobs),
+               tuple(store.layers))
+        if self._mask_geom is not None and self._mask_key == key:
+            return
+        if self._mask_thread is not None:
+            return
+        self._start_mask(None, [], 0.0, None, key, jobs=jobs)
+
+    def _start_mask(self, stl, layers, thickness, cache_path, key,
+                    jobs=None) -> None:
         from .workers import MaskWorker
 
         thread = QThread(self)
         worker = MaskWorker(
-            stl, layers, layer_thickness=thickness, cache_path=cache_path)
+            stl, layers, layer_thickness=thickness, cache_path=cache_path,
+            jobs=jobs)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(lambda m, k=key: self._on_mask_done(m, k))
@@ -1293,6 +1393,8 @@ class AppController(QObject):
         # Cache built — show the first layer that carries data. With a cached
         # mask already in hand this is the first masked layer; otherwise the
         # first layer, and _on_mask_done re-lands once the mask arrives.
+        if stackbuild.is_stack(store):
+            store.forget_times()  # Build time from the layers just built
         first = self._landing_layer(store)
         self._busy = False
         self._request((first, first), self._deliver_grid, f"layer {first}",
@@ -1303,12 +1405,8 @@ class AppController(QObject):
     def _start_dbscan_if_wanted(self, store) -> None:
         if not self._dbscan_wanted or self._dbscan_thread is not None:
             return  # nothing asked for / one is running (retried when it ends)
-        try:
-            present = {e.name for e in os.scandir(store.cache_dir)
-                       if e.name.endswith(".parquet")}
-        except OSError:
-            present = set()
-        layers = [L for L in store.layers if store._cache_path(L).name in present]
+        present = store.cached_layers()
+        layers = [L for L in store.layers if L in present]
         if not layers:
             return
         mode, self._dbscan_wanted = self._dbscan_wanted, None

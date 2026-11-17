@@ -162,7 +162,8 @@ class DataStoreSettings(QWidget):
         self.lbl_dhxml = _value_label(_MISSING)
         self.lbl_stl = _value_label(_MISSING)
         self.lbl_csv = _value_label(_MISSING)
-        f.addRow("Packet source", self.lbl_source)
+        self.lbl_source_key = QLabel("Packet source")
+        f.addRow(self.lbl_source_key, self.lbl_source)
         f.addRow("DHXML", self.lbl_dhxml)
         f.addRow("STL", self.lbl_stl)
         f.addRow("Parts CSV", self.lbl_csv)
@@ -432,15 +433,28 @@ class DataStoreSettings(QWidget):
                 included=set(included) if included else None, renames=renames)
         else:
             self._apply_column_state(
-                included=set(_DEFAULT_IMPORT) | set(_ALWAYS),
+                # A stacked build's step and Build time come by default.
+                included=(set(_DEFAULT_IMPORT) | set(_ALWAYS)
+                          | ({"step", "Build time"} if config.get("STACK")
+                             else set())),
                 renames=_DEFAULT_RENAMES)
 
+        # A stacked build: its steps, and per input whether every step has
+        # its own (an input some step lacks isn't used).
+        stack = bool(config.get("STACK"))
+        notes = config.get("STACK_INPUTS") or {}
+        self.lbl_source_key.setText("Steps" if stack else "Packet source")
         self.lbl_source.setText(shown(config.get("SOURCE")))
-        self.lbl_dhxml.setText(shown(config.get("DHXML")))
-        self.lbl_stl.setText(shown(config.get("STL")))
-        self.lbl_csv.setText(shown(config.get("PARTS_CSV")))
+        self.lbl_dhxml.setText(shown(notes.get("DHXML") or config.get("DHXML")))
+        self.lbl_stl.setText(shown(notes.get("STL") or config.get("STL")))
+        self.lbl_csv.setText(shown(notes.get("PARTS_CSV") or config.get("PARTS_CSV")))
         lt = config.get("LAYER_THICKNESS")
         self.thickness_spin.setValue(float(lt) if lt else _DEFAULT_THICKNESS)
+        # Each step builds at its own config's thickness.
+        self.thickness_spin.setEnabled(not stack)
+        self.thickness_spin.setToolTip(
+            "Each step uses the layer thickness in its own config.toml"
+            if stack else "")
 
         if layers:
             lo, hi = min(layers), max(layers)
@@ -462,7 +476,8 @@ class DataStoreSettings(QWidget):
         has_dhxml = bool(config.get("DHXML"))
         self._set_part_option_enabled(0, has_parts)   # Direct
         self._set_part_option_enabled(1, has_dhxml)   # DHXML
-        self._set_part_option_enabled(2, has_parts)   # DBSCAN
+        # DBSCAN clusters one build's points; not offered across steps.
+        self._set_part_option_enabled(2, has_parts and not stack)   # DBSCAN
         parts_available = has_parts or has_dhxml
         self.chk_parts.setEnabled(parts_available)
         self.chk_parts.setChecked(parts_available)

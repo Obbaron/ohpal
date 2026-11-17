@@ -67,15 +67,25 @@ class LoadWorker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, build_root, *, create: bool) -> None:
+    def __init__(self, build_root, *, create: bool, stack=None) -> None:
         super().__init__()
         self._build_root = Path(build_root)
         self._create = create
+        self._stack = stack  # (name, step folders): write this stack first
 
     @pyqtSlot()
     def run(self) -> None:
         t = time.perf_counter()
         try:
+            from .stackbuild import is_stack_folder
+
+            if self._stack is not None:
+                from ohpal.ampm.stacked import write_stack
+
+                write_stack(self._build_root, *self._stack)
+            if is_stack_folder(self._build_root):
+                self._load_stack(t)
+                return
             if self._create and not (self._build_root / "config.toml").exists():
                 from ohpal.ampm.setup_build import create_config
 
@@ -96,6 +106,19 @@ class LoadWorker(QObject):
             self.finished.emit(
                 (config, store, source_dir, thickness,
                  (time.perf_counter() - t) * 1000))
+
+    def _load_stack(self, t: float) -> None:
+        """A stacked build: every step's config (made where missing: a step
+        is an ordinary build folder) and DataStore, read as one."""
+        from ohpal.ampm.stacked import load_stack
+
+        from .stackbuild import stack_config
+
+        store = load_stack(self._build_root, create_configs=True)
+        config = stack_config(store)
+        self.finished.emit(
+            (config, store, self._build_root, store.layer_thickness,
+             (time.perf_counter() - t) * 1000))
 
 
 def find_build_inputs(build_root: Path) -> tuple[Path | None, Path | None]:
@@ -475,25 +498,27 @@ class MaskWorker(QObject):
     error = pyqtSignal(str)
 
     def __init__(
-        self, stl_path, layers, *, layer_thickness: float, cache_path
+        self, stl_path=None, layers=(), *, layer_thickness: float = 0.03,
+        cache_path=None, jobs=None,
     ) -> None:
         super().__init__()
-        self._stl_path = stl_path
-        self._layers = list(layers)
-        self._thickness = layer_thickness
-        self._cache_path = cache_path
+        # ``jobs``: one (stl, layers, thickness, cache_path, layer offset)
+        # each, merged into one mask keyed by layer + offset (a stacked
+        # build's steps); else the one build's STL.
+        self._jobs = list(jobs) if jobs is not None else [
+            (stl_path, list(layers), layer_thickness, cache_path, 0)]
 
     @pyqtSlot()
     def run(self) -> None:
         try:
             from ohpal.ampm.masking import build_mask
 
-            mask = build_mask(
-                self._stl_path,
-                self._layers,
-                layer_thickness=self._thickness,
-                cache_path=self._cache_path,
-            )
+            mask = {}
+            for stl, layers, thickness, cache_path, offset in self._jobs:
+                part = build_mask(
+                    stl, list(layers), layer_thickness=thickness,
+                    cache_path=cache_path)
+                mask.update({int(L) + offset: g for L, g in part.items()})
         except SystemExit as exc:  # ohpal helpers can call sys.exit()
             self.error.emit(f"Mask build aborted: {exc}")
         except Exception:  # noqa: BLE001 - surface any failure as a message

@@ -134,6 +134,19 @@ class DataStore:
         """Return the Parquet path for a given layer."""
         return self.cache_dir / f"layer={layer:05d}.parquet"
 
+    def cached_layers(self) -> set[int]:
+        """The layers whose Parquet is in the cache (present, not checked for
+        being up to date). One directory read, however many layers."""
+        import os
+
+        try:
+            present = {e.name for e in os.scandir(self.cache_dir)
+                       if e.name.endswith(".parquet")}
+        except OSError:
+            return set()
+        return {L for L in self._source_files
+                if self._cache_path(L).name in present}
+
     @property
     def layers(self) -> list[int]:
         """Sorted list of layer numbers discovered in source_dir."""

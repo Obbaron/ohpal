@@ -29,7 +29,9 @@ The two expensive stages are cached: `mask_cache.mask_or_load` and
 `cluster_cache.cluster_or_load` memoise results keyed on the inputs (the mask cache uses
 `stl_hash` of the geometry), so re-runs with unchanged inputs skip recomputation.
 
-Supporting modules: `sampling` (downsampling) and `setup_build` (build scaffolding).
+Supporting modules: `sampling` (downsampling), `setup_build` (build scaffolding) and
+`stacked` (a stepped build: several build folders read as one continuous build, with
+`layer`, `Z` and a `Build time` column carried on from step to step; `load_stack`).
 Plots are drawn by the [`ampm_analyzer`](../../apps/ampm_analyzer/README.md) app.
 
 ### Inputs
@@ -64,6 +66,7 @@ from ohpal.ampm.parts import QuantAMParts, BuildStartedDHXML
 from ohpal.ampm.clustering import cluster_dbscan_chunked
 from ohpal.ampm.correction import MeltPoolCorrection
 from ohpal.ampm.stats import compute_cov, CovMode
+from ohpal.ampm.stacked import load_stack, write_stack
 ```
 
 See the module docstrings and source for full signatures.

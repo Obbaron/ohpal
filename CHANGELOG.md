@@ -19,6 +19,13 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   panel, light and dark themes, and frameless, draggable dialogs throughout.
 - **File tab.** Open or create a build, recent builds, and **Create Excel from
   AMPM** for one build, written to `<build>/exports/`.
+- **Stacked builds.** **New stacked build** reads a stepped build (separate
+  jobs printed one on top of another, each its own build folder) as one:
+  `layer` and `Z` carry on from step to step, a `step` column says which step a
+  row came from, a `Build time` column runs through every layer and step, and
+  part ids take the step (`S2 Part(3)`). Kept in its own folder
+  (`stacked.toml`) with its own settings and plots; one setup for every step,
+  with each step's own STL, parts CSV and .dhxml.
 - **DataStore setup.** Choose and rename the imported columns, and the load recipe:
   mask (STL), part assignment (Direct, DHXML, or DBSCAN) and correction. Built off
   the UI thread with progress and a **Cancel** that stops after the current layer

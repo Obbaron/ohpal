@@ -35,6 +35,7 @@ UI = {
     "win_restore": "custom/win-restore", "win_close": "close",
     # backstage
     "load_packet": "data--base", "create_excel": "XLS", "open": "folder",
+    "stacked_build": "layers",
     "export": "export", "info": "information", "close": "close",
     "datastore": "datastore", "recent": "recently-viewed",
     "favourites": "favorite", "shared": "share", "search": "search",

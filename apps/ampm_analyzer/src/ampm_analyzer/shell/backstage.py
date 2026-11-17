@@ -63,7 +63,7 @@ def _humanize(iso: str) -> str:
 def _tile(title: str, subtitle: str) -> QPushButton:
     btn = QPushButton()
     btn.setProperty("class", "Tile")
-    btn.setMinimumSize(260, 120)
+    btn.setMinimumSize(220, 120)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     lay = QVBoxLayout(btn)
     lay.setContentsMargins(18, 16, 18, 16)
@@ -80,6 +80,7 @@ def _tile(title: str, subtitle: str) -> QPushButton:
 
 class Backstage(QWidget):
     newRequested = pyqtSignal()       # prepare a fresh build
+    stackRequested = pyqtSignal()     # make a stacked (stepped) build
     openRequested = pyqtSignal()      # open a build that already has a cache
     createExcelRequested = pyqtSignal()
     datastoreBuildRequested = pyqtSignal()  # Build/Rebuild on the setup page
@@ -123,6 +124,7 @@ class Backstage(QWidget):
 
         self.btn_new = add("New", primary=True)
         self.btn_open = add("Open", primary=True)
+        self.btn_stack = add("New stacked build", primary=True)
         self.btn_excel = add("Create Excel from AMPM", primary=True)
         self.btn_library = add("Plot library", primary=True)
         lay.addSpacing(8)
@@ -136,6 +138,7 @@ class Backstage(QWidget):
 
         self.btn_new.clicked.connect(self.newRequested)
         self.btn_open.clicked.connect(self.openRequested)
+        self.btn_stack.clicked.connect(self.stackRequested)
         self.btn_excel.clicked.connect(self.createExcelRequested)
         self.btn_library.clicked.connect(self.show_library_page)
         self.btn_datastore.clicked.connect(self.show_datastore_page)
@@ -172,15 +175,21 @@ class Backstage(QWidget):
         self.tile_open = _tile(
             "Open", "Open a build that already has a DataStore and explore it."
         )
+        self.tile_stack = _tile(
+            "Stacked build",
+            "Read stepped builds as one: layers, Z and time carry on.",
+        )
         self.tile_excel = _tile(
             "Create Excel from AMPM",
             "Generate samples-template workbooks from a build directory.",
         )
         self.tile_new.clicked.connect(self.newRequested)
         self.tile_open.clicked.connect(self.openRequested)
+        self.tile_stack.clicked.connect(self.stackRequested)
         self.tile_excel.clicked.connect(self.createExcelRequested)
         tiles.addWidget(self.tile_new)
         tiles.addWidget(self.tile_open)
+        tiles.addWidget(self.tile_stack)
         tiles.addWidget(self.tile_excel)
         tiles.addStretch(1)
         lay.addLayout(tiles)
@@ -423,7 +432,8 @@ class Backstage(QWidget):
 
     def set_loading(self, loading: bool) -> None:
         """Disable the load entry points while a load is in flight."""
-        for w in (self.btn_new, self.btn_open, self.tile_new, self.tile_open):
+        for w in (self.btn_new, self.btn_open, self.btn_stack,
+                  self.tile_new, self.tile_open, self.tile_stack):
             w.setEnabled(not loading)
 
     def apply_icons(self, color: str) -> None:
@@ -431,6 +441,7 @@ class Backstage(QWidget):
         mapping = {
             self.btn_new: "load_packet",
             self.btn_open: "open",
+            self.btn_stack: "stacked_build",
             self.btn_excel: "create_excel",
             self.btn_library: "plot_library",
             self.btn_datastore: "datastore",

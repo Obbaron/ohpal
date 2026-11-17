@@ -22,6 +22,9 @@ inside.
 Both buttons open a folder picker: choose the build's folder (the one that
 contains the exported packets), not a file inside it.
 
+A build printed in steps, one job on top of another, can be read as one: see
+[Stacked builds](help:stacked-builds).
+
 ## What a build folder contains
 
 | Input | Needed for |
@@ -47,4 +50,5 @@ row to open it.
 ## See also
 
 - [Setting up the DataStore](help:datastore-setup)
+- [Stacked builds](help:stacked-builds)
 - [Create Excel from AMPM](help:create-excel)
