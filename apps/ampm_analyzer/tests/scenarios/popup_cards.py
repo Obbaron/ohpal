@@ -91,4 +91,36 @@ for mod in (wmod, pwmod, lcmod):
     src = inspect.getsource(mod)
     assert "QMessageBox" not in src, f"{mod.__name__} still references QMessageBox"
 print("no native QMessageBox left in window / plot_window / logconsole")
+
+# --- the log and help windows resize from their edges and corners ------------------
+from ampm_analyzer.shell.help_window import HelpWindow
+lw = logconsole.LogWindow(logconsole.LogBus()); lw.show(); app.processEvents()
+def send(win, kind, x, y, buttons):
+    pos = QPointF(x, y); gp = QPointF(win.mapToGlobal(pos.toPoint()))
+    button = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove else Qt.MouseButton.LeftButton
+    QApplication.sendEvent(win, QMouseEvent(kind, pos, gp, button, buttons, Qt.KeyboardModifier.NoModifier))
+W, H = lw.width(), lw.height()
+send(lw, QEvent.Type.MouseMove, W - 2, H / 2, Qt.MouseButton.NoButton)
+assert lw.cursor().shape() == Qt.CursorShape.SizeHorCursor, "the edge shows a resize cursor"
+send(lw, QEvent.Type.MouseMove, W - 2, H - 2, Qt.MouseButton.NoButton)
+assert lw.cursor().shape() == Qt.CursorShape.SizeFDiagCursor, "and the corner a diagonal one"
+send(lw, QEvent.Type.MouseButtonPress, W - 2, H / 2, Qt.MouseButton.LeftButton)
+send(lw, QEvent.Type.MouseMove, W + 78, H / 2, Qt.MouseButton.LeftButton)
+send(lw, QEvent.Type.MouseButtonRelease, W + 78, H / 2, Qt.MouseButton.NoButton)
+assert (lw.width(), lw.height()) == (W + 80, H), (lw.width(), lw.height())
+x0 = lw.x(); h0 = lw.height()
+send(lw, QEvent.Type.MouseButtonPress, 2, h0 - 2, Qt.MouseButton.LeftButton)   # bottom-left corner
+send(lw, QEvent.Type.MouseMove, -48, h0 + 48, Qt.MouseButton.LeftButton)
+send(lw, QEvent.Type.MouseButtonRelease, 0, 0, Qt.MouseButton.NoButton)
+assert lw.x() == x0 - 50 and lw.width() == W + 130 and lw.height() == h0 + 50, lw.geometry()
+send(lw, QEvent.Type.MouseButtonPress, lw.width() - 2, 100, Qt.MouseButton.LeftButton)
+send(lw, QEvent.Type.MouseMove, -3000, 100, Qt.MouseButton.LeftButton)
+send(lw, QEvent.Type.MouseButtonRelease, 0, 0, Qt.MouseButton.NoButton)
+assert lw.width() == lw.minimumWidth(), "never below its minimum"
+lw.resize(760, 420); app.processEvents()
+grip, card = lw._grip.geometry(), lw._grip_card
+assert grip.right() >= card.width() - 6 and grip.bottom() >= card.height() - 6, "the grip sits in the card's corner"
+hw = HelpWindow(); hw.show(); app.processEvents()
+assert hw._resize_rim and hw._grip is not None and isinstance(hw, DraggableCard)
+print("log and help windows: edges and corners resize; the grip is in the card's corner")
 print("ALL CARD CHECKS PASS")

@@ -80,7 +80,8 @@ in-app guide. The `ohpal.ampm` pipeline underneath is unchanged.
   shown in a dialog; the app keeps running. Hard crashes are recorded in
   `fatal.log` in the same folder.
 - The version is shown in Help and in crash reports.
-- Log window: captured console output, exportable.
+- Log window: captured console output, exportable. The log and help windows
+  resize from their edges and corners.
 
 ### Changed
 

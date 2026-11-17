@@ -39,7 +39,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSizeGrip,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
@@ -51,6 +50,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import help as helpdocs
+from .card import DraggableCard
 
 _ID_ROLE = Qt.ItemDataRole.UserRole            # article id ("" for a heading)
 _EXCERPT_ROLE = Qt.ItemDataRole.UserRole + 1   # search-hit excerpt
@@ -138,7 +138,7 @@ class _ArticleDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class HelpWindow(QWidget):
+class HelpWindow(DraggableCard, QWidget):
     """Articles on the left (with search), the selected one on the right."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -235,9 +235,7 @@ class HelpWindow(QWidget):
         self.close_btn = QPushButton("Close")
         self.close_btn.clicked.connect(self.close)
         buttons.addWidget(self.close_btn)
-        buttons.addWidget(
-            QSizeGrip(self), 0,
-            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        buttons.addSpacing(8)  # clear of the corner grip
         ml.addLayout(buttons)
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -249,6 +247,8 @@ class HelpWindow(QWidget):
         split.setSizes([270, 700])
         split.setChildrenCollapsible(False)
         lay.addWidget(split)
+        # Edges and corners resize the frameless window; a grip in its corner.
+        self.enable_resize(outer, card)
 
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self._focus_search)
         QShortcut(QKeySequence("Esc"), self, activated=self._escape)
@@ -274,7 +274,8 @@ class HelpWindow(QWidget):
         (Controls in the strip take their own clicks and never get here.)"""
         handle = self.windowHandle()
         if (event.button() == Qt.MouseButton.LeftButton and handle is not None
-                and event.position().y() <= _DRAG_STRIP_PX):
+                and event.position().y() <= _DRAG_STRIP_PX
+                and not self._edges_at(event.position().toPoint())):
             handle.startSystemMove()
             event.accept()
             return

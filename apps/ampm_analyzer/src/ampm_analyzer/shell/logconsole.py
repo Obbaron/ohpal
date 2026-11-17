@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QSizeGrip,
     QVBoxLayout,
     QWidget,
 )
@@ -135,10 +134,10 @@ class LogWindow(DraggableCard, QWidget):
         close = QPushButton("Close")
         close.clicked.connect(self.close)
         row.addWidget(close)
-        # A corner grip to resize the frameless window.
-        row.addWidget(QSizeGrip(self), 0,
-                      Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        row.addSpacing(8)  # clear of the corner grip
         lay.addLayout(row)
+        # Edges and corners resize the frameless window; a grip in its corner.
+        self.enable_resize(outer, card)
 
         bus.message.connect(self._append)
 
