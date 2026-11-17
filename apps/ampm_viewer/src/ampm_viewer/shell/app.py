@@ -49,12 +49,6 @@ def main() -> None:
     app.setOrganizationName("AMPM")
     app.setApplicationName("AMPM Viewer")
     app.setApplicationVersion(crash.version())
-    try:
-        from .settings import carry_over
-
-        carry_over()  # settings kept under the app's old name, once
-    except Exception:  # noqa: BLE001 - never stop the app starting
-        pass
     apply_theme(app, initial_scheme(app))  # follow the OS light/dark at launch
 
     # Capture console output (incl. ohpal's prints) into the in-app log.

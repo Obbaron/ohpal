@@ -131,10 +131,8 @@ Plotly figure builders, which the app replaces.
 
 - **Renamed to AMPM Viewer** (was AMPM Analyzer): the window, the executable
   (`AMPM-Viewer.exe`), the `ampm-viewer` distribution and script, the
-  `ampm_viewer` package and the `apps/ampm_viewer` folder. On first start the
-  app carries over the old name's settings (recent builds, Settings choices,
-  plot defaults).
-- **One AMPM folder** for what the app keeps (its settings, `AMPM Viewer.conf`;
+  `ampm_viewer` package and the `apps/ampm_viewer` folder.
+- **One AMPM folder** for what the app keeps (its settings, `ampm-viewer.conf`;
   the default builds folder, `Builds`; the macro folder, the plot library and
   crash reports): `%APPDATA%\AMPM` on Windows,
   `~/Library/Application Support/AMPM` on macOS and `$XDG_DATA_HOME/AMPM` on
@@ -158,8 +156,7 @@ Plotly figure builders, which the app replaces.
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).
-- Settings are kept in `AMPM Viewer.conf` in the AMPM folder (not the registry);
-  on first start the app copies them from where earlier versions kept them.
+- Settings are kept in `ampm-viewer.conf` in the AMPM folder (not the registry).
   `AMPM_SETTINGS_DIR` names another folder for them (the tests do).
 
 ### Removed

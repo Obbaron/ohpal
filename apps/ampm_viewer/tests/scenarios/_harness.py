@@ -1,7 +1,7 @@
 """Imported first by every scenario: keeps a run away from your real setup.
 
 - Settings go to an INI file in a temp folder (``AMPM_SETTINGS_DIR``; the
-  app would otherwise use ``AMPM Viewer.conf`` in your AMPM folder).
+  app would otherwise use ``ampm-viewer.conf`` in your AMPM folder).
 - The AMPM folder (``AMPM_DATA_DIR``: macros, the plot library, crash
   reports) and Qt's standard folders (Documents, app data, config, cache)
   point into the same temp folder, so nothing is created in your profile.

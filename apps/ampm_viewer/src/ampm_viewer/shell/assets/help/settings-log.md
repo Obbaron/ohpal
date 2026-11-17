@@ -37,7 +37,7 @@ changes until you press **OK**; **Cancel** leaves everything as it was.
 - **Files**: where the app keeps its files, each with **Open**: the AMPM
   folder (`%APPDATA%\AMPM` on Windows: your settings, and by default the
   builds folder, macros, the plot library and crash reports), the crash
-  reports, and the settings file, `AMPM Viewer.conf`.
+  reports, and the settings file, `ampm-viewer.conf`.
 
 ## Status bar
 
