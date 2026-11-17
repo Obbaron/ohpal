@@ -91,10 +91,19 @@ assert dlg.changes() == {"plot_folder": None, "macro_folder": None, "builds_fold
 w._apply_settings(dlg.changes())
 assert macros.is_default_folder() and plot_library.is_default_folder()
 assert RecentStore().projects_root() is None
+assert RecentStore().builds_folder() == data_dir() / "Builds"
+assert dlg.builds_row.path.text() == f"{data_dir() / 'Builds'}  (default)"
 texts = [l.text() for l in dlg.pages.widget(3).findChildren(type(dlg.lbl_styles))]
 assert any(t.startswith(str(data_dir())) for t in texts), texts
-assert app_settings().fileName() in texts
+from ampm_viewer.shell.settings import settings_file
+assert str(settings_file()) in texts and app_settings().fileName() == str(settings_file())
 print("defaults again; Files shows the AMPM folder and the settings file")
+
+# With no recent build and no folder chosen, New and Open start in the
+# default builds folder (made for them).
+RecentStore().clear()
+assert RecentStore().start_dir() == str(data_dir() / "Builds") and (data_dir() / "Builds").is_dir()
+print("builds folder: Builds in the AMPM folder by default")
 
 # The next start keeps the theme.
 w.close(); w2 = MainWindow(); pump()

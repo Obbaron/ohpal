@@ -31,7 +31,7 @@ assert set(top("dbscan", 2)) == {"datastore-setup", "plot-kdistance"} and top("f
 assert top("violin")[0] == "plot-distributions" and top("eps")[0] == "plot-kdistance"
 assert top("undo")[0] == "undo-redo" and top("contour")[0] == "plot-contour"
 assert top("filt")[0] == "filters", "prefix match"
-assert "parts" in top("laser parameters") and "plot-cov" in top("drift")
+assert "parts" in top("import from parts csv") and "plot-cov" in top("drift")
 assert hd.search(arts, "zzzqqq") == [] and hd.search(arts, "") == arts
 assert all("cov" in (a._plain + a.title.lower() + " ".join(a.keywords)) for a in hd.search(arts, "cov"))
 assert "chip" in hd.excerpt(hd.find(arts, "filters"), "chip").lower()

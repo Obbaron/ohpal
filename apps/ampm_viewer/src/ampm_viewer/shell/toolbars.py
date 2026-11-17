@@ -161,9 +161,8 @@ def populate_data(
     on_restore_column=None,
     on_reset_selection=None,
     has_parts=False,
-    part_has_params=False,
+    part_has_csv=False,
     on_part_calc=None,
-    on_part_params=None,
     on_part_import=None,
     on_filter=None,
     on_remove_filter=None,
@@ -252,14 +251,8 @@ def populate_data(
         pcalc = parts_btn.menu().addAction("Per-part calculation…")
         if on_part_calc is not None:
             pcalc.triggered.connect(lambda: on_part_calc())
-        pparams = parts_btn.menu().addAction("Add laser parameters…")
-        if on_part_params is not None and part_has_params:
-            pparams.triggered.connect(lambda: on_part_params())
-        else:
-            pparams.setEnabled(False)  # no parts CSV configured for this build
-            pparams.setToolTip("No QuantAM parts CSV configured for this build.")
-        pimport = parts_btn.menu().addAction("Import parts CSV…")
-        if on_part_import is not None and part_has_params:
+        pimport = parts_btn.menu().addAction("Import from parts CSV…")
+        if on_part_import is not None and part_has_csv:
             pimport.triggered.connect(lambda: on_part_import())
         else:
             pimport.setEnabled(False)  # contextual: needs a parts CSV

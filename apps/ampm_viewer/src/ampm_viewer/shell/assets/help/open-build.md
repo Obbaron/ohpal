@@ -39,7 +39,7 @@ than the landing page and leads back to it.
 | Input | Needed for |
 | --- | --- |
 | **Packet source**: the folder of exported layer packets | Everything. This is the data. |
-| **Parts CSV**: the QuantAM parts export | Part assignment, laser parameters, importing part columns, the Excel template. |
+| **Parts CSV**: the QuantAM parts export | Part assignment, importing part columns (laser parameters among them), the Excel template. |
 | **DHXML**: the `BuildStarted` file | Part assignment by bounding box, the full Excel template. |
 | **STL**: the full-plate export | Masking. |
 

@@ -26,26 +26,24 @@ It writes an ordinary [calculated column](help:columns-calculation)
 (`mean([Meltpool]) by [part_id]`), so you can do the same by hand with any
 formula.
 
-## Add laser parameters
-
-Adds the laser parameters each part was built with as columns, read from the
-build's parts CSV: hatch power, point distance, exposure time, the derived
-**Hatch Speed** and the rest of the numeric scan-volume settings.
-The message afterwards says how many of the build's parts were matched.
-
-These columns make parameter studies possible: plot the mean melt pool per
-part against hatch speed and power in a [contour plot](help:plot-contour).
-
-## Import parts CSV
+## Import from parts CSV
 
 Opens the parts CSV section by section (Strategy, Scan Volume, …; the
 Parent Parts section is the CSV's own index of parts and isn't offered). Tick
 the columns you want from any section; the count at the bottom shows how many
-are staged. **Import** adds them all in one step. Drag the window's edges or
+are staged. **Import** adds them all in one step, and the message afterwards
+says how many of the build's parts were matched. Drag the window's edges or
 its corner to make it bigger.
 
-Both this and **Add laser parameters** need the parts CSV; without one they
-are greyed out.
+The laser parameters each part was built with are in the **Scan Volume**
+section: *Hatches Power*, *Hatches Point Distance*, *Hatches Exposure Time*
+and the border and contour settings. Hatch speed is the point distance over
+the exposure time: a [calculated column](help:columns-calculation) such as
+`[Hatches Point Distance] / [Hatches Exposure Time] * 1000` gives it in mm/s.
+These columns make parameter studies possible: plot the mean melt pool per
+part against hatch speed and power in a [contour plot](help:plot-contour).
+
+This needs the parts CSV; without one it is greyed out.
 
 ## Parts with the same name
 

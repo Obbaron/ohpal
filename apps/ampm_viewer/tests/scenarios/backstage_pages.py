@@ -135,7 +135,12 @@ assert f.recipe()["dbscan"]["layers_per_chunk"] == 20 and f.recipe()["dbscan"]["
 f.cmb_parts.setCurrentText("Direct"); pump()
 assert not f.part_filter.is_expanded() and f.parts_list.count() == 0, "closed, listed on opening"
 f.part_filter.button.click(); pump()
-names = [f.parts_list.item(i).text() for i in range(f.parts_list.count())]
+names = [f.parts_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(f.parts_list.count())]
+texts = [f.parts_list.item(i).text() for i in range(f.parts_list.count())]
+# Each part with where it sits: its centre (mm), from the parts CSV.
+assert texts[0] == "Part(1) @ -26.8 -11.6", texts[0]
+assert all(t.startswith(n + " @ ") and len(t.split(" @ ")[1].split()) == 2
+           for n, t in zip(names, texts)), texts[:3]
 assert len(names) == 20 and names[0] == "Part(1)", names
 f.btn_parts_none.click(); assert f.excluded_parts() == sorted(names)
 f.btn_parts_all.click(); assert f.excluded_parts() == []

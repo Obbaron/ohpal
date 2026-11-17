@@ -14,7 +14,7 @@ undo or redo.
 ## What can be undone
 
 - Adding, overwriting, removing and restoring columns: calculations, labels,
-  per-part calculations, laser parameters, parts CSV and Excel imports.
+  per-part calculations, parts CSV and Excel imports.
 - Renaming a column, including the rename it caused in formulas and plots.
 - Showing and hiding columns.
 - Adding, editing and removing filters.

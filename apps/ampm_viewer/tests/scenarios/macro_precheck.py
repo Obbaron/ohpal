@@ -84,7 +84,6 @@ cases = [
     [step("derive", name="q1", expr="[layer] * 2"), step("part_calc", signal="q1", reducer="cov", name="q cov")],
     [step("label", name="q2", rules=[{"cond": "[layer] > 2", "label": "hi"}], default="lo")],
     [step("parts_csv_import", items=[[sec, csv_col]])],
-    [step("laser_params")],
     [step("remove", names=["Demand focus", "have"]), step("restore", name="Demand focus")],
     [step("filter_add", condition="[layer] > 0"), step("filter_reset")],
     [step("derive", name="have", expr="[layer]", overwrite=True)],
@@ -105,19 +104,19 @@ for steps in cases:
         assert failed is None, f"check passed but run failed: {steps} -> {msg}"
     agree += 1
 print(f"check ↔ run agreement on {agree} macros (clean check ⇒ run succeeds)")
-clean = sum(1 for steps in cases if not check(steps)); assert clean == 7, clean
+clean = sum(1 for steps in cases if not check(steps)); assert clean == 6, clean
 
 # --- 4. part prerequisites and part matching -------------------------------
-real_has, real_csv, real_ids = c.has_part_assignment, c.has_laser_parameters, c.assigned_part_ids
-parts = [step("part_calc", signal=SRC, reducer="mean", name="pm"), step("laser_params"),
+real_has, real_csv, real_ids = c.has_part_assignment, c.has_parts_csv, c.assigned_part_ids
+parts = [step("part_calc", signal=SRC, reducer="mean", name="pm"),
          step("parts_csv_import", items=[[sec, csv_col]])]
 c.has_part_assignment = lambda: False
-got = check(parts); assert [i for i, _ in got] == [0, 1, 2] and all("no part assignment" in m for _, m in got), got
-c.has_part_assignment = real_has; c.has_laser_parameters = lambda: False
-got = check(parts); assert [i for i, _ in got] == [1, 2] and all("no parts CSV" in m for _, m in got), got
-c.has_laser_parameters = real_csv
+got = check(parts); assert [i for i, _ in got] == [0, 1] and all("no part assignment" in m for _, m in got), got
+c.has_part_assignment = real_has; c.has_parts_csv = lambda: False
+got = check(parts); assert [i for i, _ in got] == [1] and all("no parts CSV" in m for _, m in got), got
+c.has_parts_csv = real_csv
 c.assigned_part_ids = lambda: {"Widget(1)", "Widget(2)"}          # ids that match nothing
-got = check(parts); assert [i for i, _ in got] == [1, 2] and "None of the build's 2 parts" in got[0][1], got
+got = check(parts); assert [i for i, _ in got] == [1] and "None of the build's 2 parts" in got[0][1], got
 total = len(real_ids())
 c.assigned_part_ids = lambda: real_ids() | {"Extra(1)", "Extra(2)"}   # partial match
 assert check(parts) == []
@@ -127,15 +126,18 @@ w._undo()
 out = w._run("parts_csv_import", items=[[sec, csv_col]])
 assert f"Matched {total} of {total + 2} parts." in out.message, out.message
 w._undo(); c.assigned_part_ids = real_ids
-out = w._run("laser_params"); assert f"Matched {total} of {total} parts." in out.message, out.message
+out = w._run("parts_csv_import", items=[[sec, csv_col]])
+assert f"Matched {total} of {total} parts." in out.message, out.message
 print("part prerequisites, zero-match issue and partial-match report:", out.message[-28:])
 
-# laser parameters already present on the build → every clash listed
-got = check([step("laser_params")]); assert got and all("already exists" in m for _, m in got), got[:2]
-# ...but a macro that adds them itself and then imports an overlapping column is fine
+# a parts-CSV column already on the build -> the clash is listed
+got = check([step("parts_csv_import", items=[[sec, csv_col]])])
+assert got and all("already exists" in m for _, m in got), got[:2]
+# ...but a macro that imports a column itself and then imports it again is fine
 w._undo()
-both = [step("laser_params"), step("parts_csv_import", items=[["Scan Volume", "Hatches Power"]])]
-if "Scan Volume" in dict(c.parts_csv_sections()): assert check(both) == [], check(both)
+both = [step("parts_csv_import", items=[[sec, csv_col]]),
+        step("parts_csv_import", items=[[sec, csv_col]])]
+assert check(both) == [], check(both)
 # hand-edited step with wrong settings is an issue, not a crash
 got = check([step("derive", nam="x", expr="1")]); assert got and "settings aren't valid" in got[0][1]
 print("ALL STAGE-3 CHECKS PASS")

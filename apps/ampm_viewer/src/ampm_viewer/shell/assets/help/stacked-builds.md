@@ -51,7 +51,7 @@ every step. Each step reads its own inputs:
 - **Masking** slices each step's own STL at that step's layers.
 - **Part assignment** (Direct or DHXML) uses each step's own parts CSV or
   .dhxml. A part never spans steps.
-- **Laser parameters** and **Import parts CSV** read each step's parts CSV.
+- **Import from parts CSV** reads each step's parts CSV.
 
 An input is offered only when every step has one (the setup page says which
 step is missing it). Each step keeps the layer thickness in its own

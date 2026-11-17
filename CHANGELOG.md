@@ -24,8 +24,8 @@ Plotly figure builders, which the app replaces.
   (File, Data, one tab per plot), a toolbar that changes with the tab, a side
   panel, light and dark themes, and frameless, draggable dialogs throughout.
 - **Settings window** (the gear), laid out like Excel's Options: General
-  (theme, kept between starts; the builds folder New and Open start in; clear
-  the Recent list), Plots (the plot library folder; reset plot style
+  (theme, kept between starts; the builds folder New and Open start in, by
+  default `Builds` in the AMPM folder; clear the Recent list), Plots (the plot library folder; reset plot style
   defaults), Macros (the macro folder; clear recent macros) and Files (the
   AMPM folder, crash reports and settings, each with Open). Changes apply on
   **OK**.
@@ -61,7 +61,8 @@ Plotly figure builders, which the app replaces.
   with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
   if / elif / else rules; filters; a column from Excel; export to Excel.
 - **Parts.** When parts are assigned: per-part calculations (CoV as mean, std and
-  their ratio), laser parameters, and any section of the QuantAM parts CSV.
+  their ratio), and **Import from parts CSV**: any column of any section of the
+  QuantAM parts CSV (the laser parameters are in its Scan Volume section).
 - **Plots** (VisPy): 2D and 3D scatter, Layer Viewer (scrub layer by layer),
   Single Layer, Bar, Histogram, CoV Summary, Contour (filled-contour look), KDE,
   Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
@@ -133,8 +134,9 @@ Plotly figure builders, which the app replaces.
   `ampm_viewer` package and the `apps/ampm_viewer` folder. On first start the
   app carries over the old name's settings (recent builds, Settings choices,
   plot defaults).
-- **One AMPM folder** for what the app keeps (the macro folder, the plot library
-  and crash reports): `%APPDATA%\AMPM` on Windows,
+- **One AMPM folder** for what the app keeps (its settings, `AMPM Viewer.conf`;
+  the default builds folder, `Builds`; the macro folder, the plot library and
+  crash reports): `%APPDATA%\AMPM` on Windows,
   `~/Library/Application Support/AMPM` on macOS and `$XDG_DATA_HOME/AMPM` on
   Linux (`AMPM_DATA_DIR` overrides it).
 - The version is defined once, as `__version__` in `ampm_viewer/__init__.py`;
@@ -156,8 +158,9 @@ Plotly figure builders, which the app replaces.
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).
-- Settings can be kept in an INI file instead of the registry by setting
-  `AMPM_SETTINGS_DIR` to a folder (the tests do; also useful for a portable copy).
+- Settings are kept in `AMPM Viewer.conf` in the AMPM folder (not the registry);
+  on first start the app copies them from where earlier versions kept them.
+  `AMPM_SETTINGS_DIR` names another folder for them (the tests do).
 
 ### Removed
 

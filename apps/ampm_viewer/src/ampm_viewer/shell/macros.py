@@ -10,8 +10,8 @@ Record and Stop. Three rules make a recording replayable on another build:
   original -> the target build's display name when run (:func:`resolve`).
   Columns the macro itself creates are not source columns, so they pass
   through by name.
-- **Build-specific data is never stored.** A parts-CSV / laser-parameter step
-  records only *which* columns to import and re-reads the target build's CSV.
+- **Build-specific data is never stored.** A parts-CSV step records only
+  *which* columns to import and re-reads the target build's CSV.
   An Excel-import step records the sheet + column headers and asks for the
   file when run; its key/value table is dropped from the file.
 - **Showing / hiding a column is a step**; undo/redo themselves are not: an
@@ -60,7 +60,6 @@ _SCHEMA: dict[str, dict] = {
     "label": {"names": ("name",), "rules": ("rules",)},
     "excel_import": {"names": ("name", "key"), "drop": ("mapping",)},
     "part_calc": {"names": ("signal", "name")},
-    "laser_params": {},
     "parts_csv_import": {},
     "rename": {"names": ("old",)},  # "new" is the literal new name
     "remove": {"lists": ("names",)},
@@ -241,8 +240,6 @@ def describe(op: str, p: dict) -> str:
     if op == "part_calc":
         return (f"Per-part {p.get('reducer')} of '{p.get('signal')}' "
                 f"→ '{p.get('name')}'")
-    if op == "laser_params":
-        return "Add laser parameters from the parts CSV"
     if op == "parts_csv_import":
         items = p.get("items") or []
         shown = ", ".join(f"{s} / {c}" for s, c in items[:3])

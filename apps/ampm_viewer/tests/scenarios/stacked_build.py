@@ -129,13 +129,11 @@ assert c.available_layers() == list(range(1, 15))
 print("mask: each step's STL at its own layers, keyed by stacked layer")
 
 # -- the parts CSV: each step's, with the step on its part ids ----------------
-assert c.has_laser_parameters()
-lp = c.part_laser_parameters()
-pids = lp["part_id"].to_list()
-assert any(p.startswith("S1 ") for p in pids) and any(p.startswith("S2 ") for p in pids)
+assert c.has_parts_csv()
 secs = c.parts_csv_sections()
+assert secs and all(any(v.startswith("S1 ") for v in b["part_id"].to_list()) for _, b in secs)
 assert secs and all(any(v.startswith("S2 ") for v in b["part_id"].to_list()) for _, b in secs)
-print("parts CSV: laser parameters and sections per step:", len(secs), "sections")
+print("parts CSV: sections per step:", len(secs), "sections")
 
 # -- reopen: straight to the data, with the setup kept --------------------------
 wait(s.queryReady, lambda: c.open_recent(str(stack))); drain()

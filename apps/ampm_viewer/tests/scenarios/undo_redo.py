@@ -69,7 +69,6 @@ check("part_calc", signal=num, reducer="mean", name="pm")
 n0 = len(s.derivations)
 check("part_calc", signal=num, reducer="cov", name="pcov")
 assert len(s.derivations) == n0 + 3, "CoV should add mean/std/ratio"
-out = check("laser_params"); print(" laser:", out.message[:70])
 secs = c.parts_csv_sections()
 sec, body = secs[0]
 item = [sec, next(x for x in body.columns if x != "part_id")]

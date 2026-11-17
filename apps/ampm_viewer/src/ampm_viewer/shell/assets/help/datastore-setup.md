@@ -79,7 +79,8 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
     Changing them means a rebuild. A
     [K-distance curve](help:plot-kdistance) helps choose the radius.
   - **Part filter** (fold it open): the parts to keep in the DataStore, all
-    ticked to start with. Untick a part, or use **All** / **None**, and its
+    ticked to start with. Each part shows where it sits, its centre's X and Y
+    in mm (`Part(1) @ -26.8 -11.6`). Untick a part, or use **All** / **None**, and its
     points are left out of the data; points with no part stay. The choice is
     kept with the build.
 - **Apply correction**: removes the position-dependent bias of the MeltVIEW

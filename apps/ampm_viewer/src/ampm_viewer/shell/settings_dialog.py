@@ -8,7 +8,8 @@ Explorer) act at once, as they change nothing.
 
 Categories:
 
-- **General**: the theme; where New and Open start; the recent builds list.
+- **General**: the theme; the builds folder (where New and Open start); the
+  recent builds list.
 - **Plots**: the plot library folder; the plot style defaults saved with
   *Set as default*.
 - **Macros**: the macro folder; the recent macros list.
@@ -286,15 +287,15 @@ class SettingsDialog(DraggableCard, QDialog):
             row.addWidget(rb)
             v.addLayout(row)
 
-        v.addWidget(_heading("Opening builds"))
+        v.addWidget(_heading("Builds folder"))
         note = _note("New and Open start in the folder of the build opened "
                      "last. With no recent build, they start in this builds "
                      "folder.")
         note.setContentsMargins(16, 0, 0, 0)
         v.addWidget(note)
         builds = st.get("builds_folder")
-        self.builds_row = _PathRow(builds, None, chosen=bool(builds),
-                                   title="Builds folder", default_text="Clear")
+        self.builds_row = _PathRow(builds, st.get("builds_default"),
+                                   chosen=bool(builds), title="Builds folder")
         v.addWidget(self.builds_row)
 
         v.addWidget(_heading("Recent builds"))
@@ -369,8 +370,8 @@ class SettingsDialog(DraggableCard, QDialog):
         st = self._state
         for heading, key, text in (
             ("AMPM folder", "data_dir",
-             "The macro folder, the plot library and crash reports live here "
-             "by default."),
+             "Your settings, and by default the builds folder, the macro "
+             "folder, the plot library and crash reports, live here."),
             ("Crash reports", "crash_dir",
              "A report is written here for each unexpected error (the newest "
              "30 are kept), with fatal.log for hard crashes."),
@@ -384,7 +385,8 @@ class SettingsDialog(DraggableCard, QDialog):
         v.addWidget(_heading("Settings"))
         where = st.get("settings_file") or ""
         note = _note("Your settings (this window's, recent builds and macros, "
-                     "plot style defaults) are kept in:")
+                     "plot style defaults) are kept in this file, in the AMPM "
+                     "folder:")
         note.setContentsMargins(16, 0, 0, 0)
         v.addWidget(note)
         lab = QLabel(where)

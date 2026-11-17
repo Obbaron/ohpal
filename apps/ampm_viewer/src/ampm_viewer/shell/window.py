@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         self.backstage.infoRequested.connect(self._show_build_info)
         self.backstage.revealRequested.connect(self._reveal_folder)
         self.backstage.ds_form.browseRequested.connect(self._browse_input)
-        self.backstage.ds_form.part_lister = self.controller.part_names
+        self.backstage.ds_form.part_lister = self.controller.part_positions
         self.backstage.apply_icons(color)
         self._add_page(self.backstage, "File", closable=False)
 
@@ -1344,7 +1344,7 @@ class MainWindow(QMainWindow):
 
     def _settings_dialog(self, page: str | None = None):
         from . import crash, plot_elements
-        from .settings import data_dir
+        from .settings import data_dir, default_builds_dir, settings_file
         from .settings_dialog import SettingsDialog
 
         recents = RecentStore()
@@ -1352,6 +1352,7 @@ class MainWindow(QMainWindow):
         state = {
             "theme": self._theme_choice,
             "builds_folder": recents.projects_root(),
+            "builds_default": default_builds_dir(),
             "recent_builds": len(entries),
             "favourites": sum(1 for e in entries if e.favourite),
             "plot_folder": plot_library.folder(),
@@ -1364,7 +1365,7 @@ class MainWindow(QMainWindow):
             "recent_macros": len(macros.recent()),
             "data_dir": data_dir(),
             "crash_dir": crash.report_dir(),
-            "settings_file": app_settings().fileName(),
+            "settings_file": str(settings_file()),
         }
         return SettingsDialog(state, self, icon_color=self._icon_color(),
                               page=page)
@@ -1490,9 +1491,8 @@ class MainWindow(QMainWindow):
                 on_restore_column=self._restore_column,
                 on_reset_selection=self._reset_selection,
                 has_parts=self.controller.has_part_assignment(),
-                part_has_params=self.controller.has_laser_parameters(),
+                part_has_csv=self.controller.has_parts_csv(),
                 on_part_calc=self._add_part_calc,
-                on_part_params=self._add_laser_parameters,
                 on_part_import=self._import_parts_csv,
                 on_filter=self._on_filter,
                 on_remove_filter=self._on_remove_last_filter,
@@ -1672,11 +1672,6 @@ class MainWindow(QMainWindow):
             return
         name, signal, reducer = dlg.result_values()
         self._run("part_calc", signal=signal, reducer=reducer, name=name)
-
-    def _add_laser_parameters(self) -> None:
-        """Join the QuantAM per-part scan-volume laser parameters onto the grid."""
-        if self._data_tab is not None:
-            self._run("laser_params")
 
     def _import_parts_csv(self) -> None:
         """Open the parts-CSV section picker and join the staged columns onto the

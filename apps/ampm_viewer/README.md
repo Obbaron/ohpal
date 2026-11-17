@@ -39,8 +39,9 @@ platform, traceback, recent log) in the AMPM folder and shown in a dialog, and t
 app keeps running. The reports are in `crash-reports` there (newest 30 kept), with
 `fatal.log` for hard crashes. See `src/ampm_viewer/shell/crash.py`.
 
-The **AMPM folder** holds what the app keeps: `Macros`, `Plots` (the plot library)
-and `crash-reports`. It is `%APPDATA%\AMPM` on Windows,
+The **AMPM folder** holds what the app keeps: its settings (`AMPM Viewer.conf`),
+`Builds` (the default builds folder), `Macros`, `Plots` (the plot library) and
+`crash-reports`. It is `%APPDATA%\AMPM` on Windows,
 `~/Library/Application Support/AMPM` on macOS and `$XDG_DATA_HOME/AMPM`
 (`~/.local/share/AMPM`) on Linux; set `AMPM_DATA_DIR` to use another folder. See
 `settings.data_dir` in `src/ampm_viewer/shell/settings.py`.

@@ -33,7 +33,7 @@ the plot as it ended up, also after popping it out or docking it back in.
 | Recorded | Not recorded |
 | --- | --- |
 | Calculated and label columns | Moving between layers |
-| Per-part calculations, laser parameters, parts CSV imports | Reordering and resizing columns |
+| Per-part calculations, parts CSV imports | Reordering and resizing columns |
 | Excel imports | Plot text and styling, the view (zoom, axes, grid, legend), equal axes |
 | Renaming, removing, restoring, showing and hiding columns | The DataStore setup (mask, correction, columns) |
 | Filters | Plots made before you pressed Record |
@@ -63,8 +63,8 @@ written.
 - **Columns are matched by their original names.** If you renamed
   *MeltVIEW melt pool (mean)* to *Meltpool* in one build and *MP* in another,
   the macro still finds it.
-- **Part data is read fresh.** Laser-parameter and parts-CSV steps record
-  which columns you chose and read them from each build's own CSV.
+- **Part data is read fresh.** Parts-CSV steps record which columns you
+  chose and read them from each build's own CSV.
 - **Excel imports ask for the file** every time, so each build can use its own
   workbook.
 - **Exports ask where to save** before the macro starts.

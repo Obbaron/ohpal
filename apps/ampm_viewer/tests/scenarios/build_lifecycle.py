@@ -78,8 +78,10 @@ assert "part_id" in df.columns and df["part_id"].null_count() == 0 and c.has_par
 n_parts = len(c.assigned_part_ids()); assert n_parts == 20, n_parts
 assert "DBSCAN assigned 20 parts" in w._log._full, w._log._full
 out = w._run("part_calc", signal="MeltVIEW melt pool (mean)", reducer="mean", name="pm"); assert out.ok, out
-out = w._run("laser_params"); assert "Matched 20 of 20 parts" in out.message, out.message
-print("DBSCAN build:", w._log._full if "DBSCAN" in w._log._full else "", "| per-part calc + laser params OK")
+sec, body = c.parts_csv_sections()[0]
+col = next(x for x in body.columns if x != "part_id")
+out = w._run("parts_csv_import", items=[[sec, col]]); assert "Matched 20 of 20 parts" in out.message, out.message
+print("DBSCAN build:", w._log._full if "DBSCAN" in w._log._full else "", "| per-part calc + parts CSV import OK")
 
 # reopen: the saved result is read back, no re-clustering
 t0 = time.time(); wait_ready(lambda: c.open_recent(BUILD)); drain(); took = time.time() - t0

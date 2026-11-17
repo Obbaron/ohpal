@@ -29,6 +29,7 @@ old.setValue("window/theme", "dark")
 old.sync()
 
 assert settings.app_settings().fileName().endswith("AMPM Viewer.ini")
+assert settings.settings_file() == ini / "AMPM Viewer.ini"
 assert settings.carry_over() is True
 new = settings.app_settings()
 assert new.value("recent/builds") == '["C:/builds/JR299"]'
@@ -50,4 +51,23 @@ print("only once; the old store is left alone")
 assert settings.carry_over() is False
 assert macros.folder() == data / "Macros" and macros.is_default_folder()
 print("fresh install: the AMPM folder")
+# -- without AMPM_SETTINGS_DIR: AMPM Viewer.conf in the AMPM folder, filled
+#    once from where the settings were kept before (Qt's native store) -------
+import os
+saved_env = os.environ.pop("AMPM_SETTINGS_DIR")
+try:
+    assert settings.settings_file() == data / "AMPM Viewer.conf"
+    assert settings.app_settings().fileName() == str(data / "AMPM Viewer.conf")
+    native = QSettings("AMPM", "AMPM Viewer")      # the store 2.0 betas used
+    native.setValue("recents/projects_root", "/builds"); native.sync()
+    assert str(_harness.ROOT) in native.fileName(), "the test's own home"
+    assert settings.carry_over() is True
+    conf = settings.app_settings()
+    assert conf.value("recents/projects_root") == "/builds"
+    assert (data / "AMPM Viewer.conf").is_file()
+    assert settings.carry_over() is False, "once"
+    assert settings.default_builds_dir() == data / "Builds"
+finally:
+    os.environ["AMPM_SETTINGS_DIR"] = saved_env
+print("settings file: AMPM Viewer.conf in the AMPM folder, carried over from the native store")
 print("ALL OK")

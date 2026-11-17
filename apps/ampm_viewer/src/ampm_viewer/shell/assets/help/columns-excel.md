@@ -32,4 +32,4 @@ In a [macro](help:macros), this step asks for the file again each time the
 macro runs, so the same macro can use a different workbook for each build.
 
 To bring in the columns of the build's own parts CSV, use
-[Parts ▸ Import parts CSV](help:parts) instead.
+[Parts ▸ Import from parts CSV](help:parts) instead.

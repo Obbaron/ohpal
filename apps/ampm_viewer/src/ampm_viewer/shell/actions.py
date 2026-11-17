@@ -328,7 +328,7 @@ class Actions(QObject):
         if not self._c.has_part_assignment():
             out.append("This build has no part assignment, so there is no "
                        "part column to work with.")
-        if need_csv and not self._c.has_laser_parameters():
+        if need_csv and not self._c.has_parts_csv():
             out.append("This build has no parts CSV.")
         return out
 
@@ -390,33 +390,6 @@ class Actions(QObject):
         elif name in names:
             out.append(self._exists(name))
         sim.add(name)
-        return out
-
-    def _check_laser_params(self, sim, ctx) -> list[str]:
-        out = self._parts_ready(need_csv=True)
-        if out:
-            return out
-        try:
-            params = self._c.part_laser_parameters()
-        except Exception as exc:  # noqa: BLE001
-            return [f"Couldn't load laser parameters: {exc}"]
-        if params is None or "part_id" not in params.columns:
-            return ["The parts CSV has no part_id column."]
-        taken = sim.taken()
-        for col in (c for c in params.columns if c != "part_id"):
-            if not params[col].dtype.is_numeric():
-                continue
-            if col in taken:
-                if col in sim.pre_existing:  # made earlier in this macro: skipped
-                    out.append(self._exists(col))
-                continue
-            sim.add(col)
-        keys = {derive.norm_key(k) for k in params["part_id"].to_list()
-                if k is not None}
-        got = self._match(keys)
-        if got is not None and got[0] == 0:
-            out.append(f"None of the build's {got[1]} parts match the parts CSV "
-                       "— the imported columns would be empty.")
         return out
 
     def _check_parts_csv_import(self, sim, ctx, items) -> list[str]:
@@ -731,50 +704,6 @@ class Actions(QObject):
             f"Added per-part CoV '{name}' (+ {mean_name!r}, {std_name!r}).",
             f"Add per-part CoV '{name}'")
 
-    def _do_laser_params(self) -> Outcome:
-        """Join the QuantAM per-part scan-volume laser parameters onto the grid,
-        keyed on the (rename-aware) part_id — one join per numeric column;
-        existing names are skipped."""
-        import polars as pl
-
-        pid = self._c.part_id_display()
-        try:
-            params = self._c.part_laser_parameters()
-        except Exception as exc:  # noqa: BLE001 — surfaced, non-fatal
-            return Outcome(False, f"Couldn't load laser parameters: {exc}")
-        if params is None or "part_id" not in params.columns:
-            return Outcome(False, "The parts CSV has no part_id column.")
-        keys = params["part_id"].cast(pl.Utf8).to_list()
-        taken = self._taken()
-        added, skipped = [], []
-        for col in (c for c in params.columns if c != "part_id"):
-            series = params[col]
-            if col in taken or not series.dtype.is_numeric():
-                skipped.append(col)  # present already / only numerics join as f64
-                continue
-            mapping = {
-                derive.norm_key(k): float(v)
-                for k, v in zip(keys, series.to_list())
-                if k is not None and v is not None
-            }
-            if not mapping:
-                continue
-            if self._c.add_join_derivation(col, pid, mapping, "f64") is None:
-                added.append(col)
-                taken.add(col)
-            else:
-                skipped.append(col)
-        if not added:
-            return Outcome(True, "No new laser-parameter columns to add"
-                           + (" (all already present)." if skipped else "."))
-        matched, note = self._match_text(
-            {derive.norm_key(k) for k in keys if k is not None}, "Laser parameters")
-        return Outcome(
-            True,
-            f"Added {len(added)} laser-parameter column(s): "
-            f"{_names_preview(added)}.{matched}",
-            "Add laser parameters", note)
-
     def _do_parts_csv_import(self, items) -> Outcome:
         """Join each staged ``(section, column)`` of the parts CSV onto the grid,
         keyed on the (rename-aware) part_id. A name that clashes (e.g. 'Hatches
@@ -821,7 +750,7 @@ class Actions(QObject):
             True,
             f"Imported {len(added)} column(s) from the parts CSV: "
             f"{_names_preview(added)}.{matched}",
-            "Import parts CSV columns", note)
+            "Import from parts CSV", note)
 
     def _do_rename(self, old, new) -> Outcome:
         """Rename a column across the whole app: controller state (renames map /

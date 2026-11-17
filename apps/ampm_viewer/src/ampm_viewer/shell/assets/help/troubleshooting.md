@@ -15,7 +15,7 @@ Hover it: the tooltip says what is missing. The usual causes:
 | **Apply mask** | An STL in the build folder. |
 | **Assign parts** | A parts CSV or a DHXML. *Direct* and *DBSCAN* need the CSV; *DHXML* needs the DHXML. |
 | **Apply correction** | Both *MeltVIEW melt pool (mean)* and *LaserVIEW (mean)*. |
-| **Add laser parameters**, **Import parts CSV** | A parts CSV. |
+| **Import from parts CSV** | A parts CSV. |
 
 The **Parts** menu is absent altogether when the build has no part
 assignment. Rebuild the DataStore with **Assign parts** ticked.

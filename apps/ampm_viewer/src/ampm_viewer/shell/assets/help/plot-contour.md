@@ -40,8 +40,10 @@ share a combination, their mean is used.
 
 So make the value a per-part number first:
 
-1. [Parts ▸ Add laser parameters](help:parts) brings in *Hatch Speed*,
-   *Hatches Power* and the other settings, the same for every row of a part.
+1. [Parts ▸ Import from parts CSV](help:parts): tick *Hatches Power*,
+   *Hatches Point Distance* and *Hatches Exposure Time* in the **Scan Volume**
+   section (the same for every row of a part), then add a calculated column
+   *Hatch Speed* = `[Hatches Point Distance] / [Hatches Exposure Time] * 1000`.
 2. [Parts ▸ Per-part calculation](help:parts) gives each part its mean (or
    CoV) of the signal.
 3. Plot X = *Hatch Speed*, Y = *Hatches Power*, Value = the per-part column.

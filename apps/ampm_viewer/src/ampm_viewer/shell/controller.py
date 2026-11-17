@@ -549,34 +549,46 @@ class AppController(QObject):
         self._part_ids = ids or None
 
     def part_names(self, method: str) -> list[str]:
-        """The parts ``method`` assigns, for the setup page's Part filter, as
-        the data will name them (a stacked build's with their step). DBSCAN
-        matches its clusters to the parts CSV's parts."""
+        """The parts ``method`` assigns, as the data will name them (a stacked
+        build's with their step). DBSCAN matches its clusters to the parts
+        CSV's parts."""
+        return [name for name, _x, _y in self.part_positions(method)]
+
+    def part_positions(self, method: str) -> list[tuple[str, float | None, float | None]]:
+        """``(part id, x centre, y centre)`` of each part ``method`` assigns,
+        in mm, for the setup page's Part filter (None where the table has no
+        centre)."""
         m = (method or "").lower()
         store = self.session.store
-        names: list[str] = []
+        tables: list[tuple[str, object]] = []  # (id prefix, parts table)
         if store is not None and stackbuild.is_stack(store):
             for step in store.steps:
                 found = stackbuild.step_part_table(
                     step.config, "direct" if m == "dbscan" else m)
                 if found is not None:
-                    names += [f"{step.label} {v}"
-                              for v in found[0]["part_id"].to_list()
-                              if v is not None]
+                    tables.append((f"{step.label} ", found[0]))
         else:
             cfg = self._config or {}
             if m == "dhxml" and cfg.get("DHXML"):
                 from ohpal.ampm.parts import BuildStartedDHXML
 
-                table = BuildStartedDHXML.from_dhxml(cfg["DHXML"]).parts_table()
+                tables.append(("", BuildStartedDHXML.from_dhxml(
+                    cfg["DHXML"]).parts_table()))
             elif m in ("direct", "dbscan") and cfg.get("PARTS_CSV"):
                 from ohpal.ampm.parts import QuantAMParts
 
-                table = QuantAMParts.from_path(cfg["PARTS_CSV"]).parent_parts()
-            else:
-                return []
-            names = [str(v) for v in table["part_id"].to_list() if v is not None]
-        return list(dict.fromkeys(names))  # in order, once each
+                tables.append(("", QuantAMParts.from_path(
+                    cfg["PARTS_CSV"]).parent_parts()))
+        out: dict[str, tuple] = {}  # in order, once each
+        for prefix, table in tables:
+            xs = (table["x_center"].to_list() if "x_center" in table.columns
+                  else [None] * table.height)
+            ys = (table["y_center"].to_list() if "y_center" in table.columns
+                  else [None] * table.height)
+            for pid, x, y in zip(table["part_id"].to_list(), xs, ys):
+                if pid is not None:
+                    out.setdefault(f"{prefix}{pid}", (x, y))
+        return [(name, x, y) for name, (x, y) in out.items()]
 
     # -- build inputs ------------------------------------------------------
     _INPUT_FILES = {
@@ -1090,28 +1102,10 @@ class AppController(QObject):
         except Exception:  # noqa: BLE001 — never let a probe break the toolbar
             return False
 
-    def has_laser_parameters(self) -> bool:
-        """True when this build has a QuantAM parts CSV to pull per-part laser
-        parameters from. (The dhxml carries only geometry, not parameters.)"""
+    def has_parts_csv(self) -> bool:
+        """True when this build has a QuantAM parts CSV (for Import from parts
+        CSV). The dhxml carries only geometry."""
         return bool((self._config or {}).get("PARTS_CSV"))
-
-    def part_laser_parameters(self, *, variant: str = "1"):
-        """Load the per-part scan-volume laser parameters as a Polars frame
-        keyed by ``part_id`` (original name) from the QuantAM parts CSV.
-
-        Returns the frame, or raises with a clear message. The caller joins the
-        parameter columns onto the grid via ``add_join_derivation``."""
-        import polars as pl
-
-        from ohpal.ampm.parts import QuantAMParts
-
-        frames = [
-            stackbuild.prefix_part_ids(
-                QuantAMParts.from_path(path).volume_parameters_with_speed(
-                    variant=variant), prefix)
-            for prefix, path in self._parts_csvs()]
-        return frames[0] if len(frames) == 1 else pl.concat(
-            frames, how="diagonal_relaxed")
 
     def _parts_csvs(self) -> list[tuple[str, str]]:
         """``(part_id prefix, parts CSV)`` for this build: its one CSV, or

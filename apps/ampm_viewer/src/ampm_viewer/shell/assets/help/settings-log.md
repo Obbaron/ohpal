@@ -15,9 +15,10 @@ changes until you press **OK**; **Cancel** leaves everything as it was.
 - **General**
   - **Appearance**: **Auto (follow the system)**, **Light** or **Dark**. The
     choice is kept for the next start.
-  - **Opening builds**: New and Open start in the folder of the build you
-    opened last; with no recent build they start in the **builds folder** you
-    set here (**Change…**, **Open**, **Clear**).
+  - **Builds folder**: New and Open start in the folder of the build you
+    opened last; with no recent build they start in the builds folder:
+    **Builds** in the AMPM folder unless you choose another (**Change…**,
+    **Open**, **Use the default**).
   - **Recent builds**: **Clear the Recent list** empties the File tab's
     Recent list. Favourites stay.
 - **Plots**
@@ -34,8 +35,9 @@ changes until you press **OK**; **Cancel** leaves everything as it was.
   - **Recent macros**: **Clear the Recent list** empties the Run menu's
     Recent list.
 - **Files**: where the app keeps its files, each with **Open**: the AMPM
-  folder (macros, the plot library and crash reports by default), the crash
-  reports, and where your settings are stored.
+  folder (`%APPDATA%\AMPM` on Windows: your settings, and by default the
+  builds folder, macros, the plot library and crash reports), the crash
+  reports, and the settings file, `AMPM Viewer.conf`.
 
 ## Status bar
 

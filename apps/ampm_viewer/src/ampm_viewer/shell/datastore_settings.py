@@ -127,6 +127,15 @@ class _ColumnRow:
         self.rename.setText(rename or "")
 
 
+def _part_text(name: str, x, y) -> str:
+    """A Part filter row: the part, then where it sits (its centre, mm):
+    ``Part(1) @ -26.8 -11.6``."""
+    try:
+        return f"{name} @ {float(x):.1f} {float(y):.1f}"
+    except (TypeError, ValueError):
+        return name
+
+
 def _value_label(text: str) -> QLabel:
     lab = QLabel(text)
     lab.setWordWrap(True)
@@ -141,7 +150,8 @@ class DataStoreSettings(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         # Who lists the parts a method assigns, for the Part filter:
-        # ``part_lister(method) -> [part ids]`` (set by the window).
+        # ``part_lister(method) -> [(part id, x, y)]`` (or bare ids; set by
+        # the window).
         self.part_lister = None
         self._stack = False
         self._excluded: set[str] = set()
@@ -515,17 +525,23 @@ class DataStoreSettings(QWidget):
         method = self._method()
         if method == self._parts_for:
             return
-        names: list[str] = []
+        parts: list = []
         if self.part_lister is not None:
             try:
-                names = list(self.part_lister(method) or [])
+                parts = list(self.part_lister(method) or [])
             except Exception:  # noqa: BLE001 - an empty list, not a crash
-                names = []
+                parts = []
         self._parts_for = method
         self.parts_list.blockSignals(True)
         self.parts_list.clear()
-        for name in names:
-            item = QListWidgetItem(str(name), self.parts_list)
+        names = []
+        for part in parts:
+            name, x, y = (part if isinstance(part, (tuple, list))
+                          else (part, None, None))
+            name = str(name)
+            names.append(name)
+            item = QListWidgetItem(_part_text(name, x, y), self.parts_list)
+            item.setData(Qt.ItemDataRole.UserRole, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked if name in self._excluded
                                else Qt.CheckState.Checked)
@@ -545,11 +561,12 @@ class DataStoreSettings(QWidget):
     def _on_part_ticked(self, _item) -> None:
         self._read_parts()
 
+    def _part_id(self, i: int) -> str:
+        return self.parts_list.item(i).data(Qt.ItemDataRole.UserRole)
+
     def _read_parts(self) -> None:
-        listed = {self.parts_list.item(i).text()
-                  for i in range(self.parts_list.count())}
-        off = {self.parts_list.item(i).text()
-               for i in range(self.parts_list.count())
+        listed = {self._part_id(i) for i in range(self.parts_list.count())}
+        off = {self._part_id(i) for i in range(self.parts_list.count())
                if self.parts_list.item(i).checkState() != Qt.CheckState.Checked}
         # Parts not listed now (another method's) keep their choice.
         self._excluded = (self._excluded - listed) | off
@@ -566,7 +583,7 @@ class DataStoreSettings(QWidget):
     def excluded_parts(self) -> list[str]:
         """The parts left out of the DataStore (of the chosen method's)."""
         if self._parts_for == self._method():
-            return sorted(self.parts_list.item(i).text()
+            return sorted(self._part_id(i)
                           for i in range(self.parts_list.count())
                           if self.parts_list.item(i).checkState()
                           != Qt.CheckState.Checked)

@@ -93,7 +93,7 @@ class _SectionPage(QWidget):
 class ImportPartsCSVDialog(DraggableCard, QDialog):
     def __init__(self, sections, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Import parts CSV")
+        self.setWindowTitle("Import from parts CSV")
         self._sections = list(sections)  # [(name, body_df)]
         self._pages: dict[str, _SectionPage] = {}
 
@@ -116,7 +116,7 @@ class ImportPartsCSVDialog(DraggableCard, QDialog):
         lay.setContentsMargins(18, 16, 18, 14)
         lay.setSpacing(10)
 
-        title = QLabel("Import parts CSV")
+        title = QLabel("Import from parts CSV")
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         lay.addWidget(title)
 

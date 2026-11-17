@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .settings import app_settings
+from .settings import app_settings, default_builds_dir
 
 
 _ENTRIES_KEY = "recents/entries"
@@ -161,6 +161,12 @@ class RecentStore:
         return next((e for e in self.load() if e.what() != "plot"), None)
 
     # -- public: directory hints --------------------------------------
+    def builds_folder(self) -> Path:
+        """The builds folder: the one chosen in Settings, else ``Builds`` in
+        the AMPM folder."""
+        root = self.projects_root()
+        return Path(root) if root else default_builds_dir()
+
     def projects_root(self) -> str | None:
         v = self._s.value(_PROJECTS_ROOT_KEY, "")
         return v or None
@@ -181,9 +187,11 @@ class RecentStore:
 
         Tree (first match wins):
           1. the most recent build's parent, if it still exists
-          2. the configured projects root, if set and it exists
+          2. the builds folder chosen in Settings, if it exists
           3. the last directory browsed to, if it still exists
-          4. the user's home directory (the floor)
+          4. the default builds folder (``Builds`` in the AMPM folder),
+             made if needed
+          5. the user's home directory (the floor)
         """
         mr = self.most_recent()
         if mr is not None:
@@ -198,5 +206,12 @@ class RecentStore:
         last = self.last_browse_dir()
         if last and Path(last).is_dir():
             return last
+
+        default = default_builds_dir()
+        try:
+            default.mkdir(parents=True, exist_ok=True)
+            return str(default)
+        except OSError:
+            pass
 
         return str(Path.home())
