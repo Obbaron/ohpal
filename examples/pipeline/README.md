@@ -1,6 +1,6 @@
 # AMPM analysis pipeline
 
-A three-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a scaffold to demonstrate how each stage of `ampm-analyzer` works. Copy what you need into your own analysis scripts.
+A three-step pipeline for analyzing a Renishaw 500S AMPM build, broken into separate scripts so each step is independent and runnable on its own. Designed as a scaffold to demonstrate how each stage of `ampm-viewer` works. Copy what you need into your own analysis scripts.
 
 For the conceptual reference on each stage (algorithm choices, tuning tradeoffs, memory math), see [docs/PIPELINE.md](../../docs/PIPELINE.md).
 
@@ -12,7 +12,7 @@ python examples/pipeline/02a_assign_parts_direct.py /path/to/project_root  # OR 
 python examples/pipeline/03_compute_cov.py /path/to/project_root
 ```
 
-Plot the results in AMPM Analyzer (the app in `apps/ampm_analyzer`).
+Plot the results in AMPM Viewer (the app in `apps/ampm_viewer`).
 
 On first run, the script auto-detects the source data, STL, and parts CSV, writes a `config.toml` into the project root, then proceeds. Subsequent runs reuse the existing `config.toml`. See [docs/PIPELINE.md](../../docs/PIPELINE.md) for details on configuration, including how to use overrides from an IDE.
 
@@ -81,7 +81,7 @@ Uses chunked DBSCAN to identify clusters in the masked data, then matches each c
 
 **Key constants:**
 
-- `EPS_XY`: in-plane neighbor radius (mm). Use the k-distance curve (`ohpal.ampm.clustering.k_distance_curve`, or the K-Distance Curve plot in AMPM Analyzer) to find the right value for your build.
+- `EPS_XY`: in-plane neighbor radius (mm). Use the k-distance curve (`ohpal.ampm.clustering.k_distance_curve`, or the K-Distance Curve plot in AMPM Viewer) to find the right value for your build.
 - `EPS_Z`: through-thickness radius (mm), typically `2 * LAYER_THICKNESS`.
 - `MIN_SAMPLES`: density threshold (default 10).
 - `LAYERS_PER_CHUNK`: chunk size (default 11). Smaller = lower memory, more chunks.
@@ -122,7 +122,7 @@ Choosing between direct assignment (02a) and clustering (02b) to resolve part ID
 
 When in doubt, try 02a first. It's faster, has no tuning parameters, and produces equivalent results to DBSCAN when parts are well-separated. Switch to 02b only if you find 02a is assigning rows to the wrong parts (rare on real geometries).
 
-Clustering methods requires parameter tuning per build. See the K-Distance Curve plot in AMPM Analyzer and [docs/CLUSTERING.md](../../docs/CLUSTERING.md) for more information on DBSCAN tuning.
+Clustering methods requires parameter tuning per build. See the K-Distance Curve plot in AMPM Viewer and [docs/CLUSTERING.md](../../docs/CLUSTERING.md) for more information on DBSCAN tuning.
 
 ## What's cached and when
 

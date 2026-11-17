@@ -32,7 +32,7 @@ The two expensive stages are cached: `mask_cache.mask_or_load` and
 Supporting modules: `sampling` (downsampling), `setup_build` (build scaffolding) and
 `stacked` (a stepped build: several build folders read as one continuous build, with
 `layer`, `Z` and a `Build time` column carried on from step to step; `load_stack`).
-Plots are drawn by the [`ampm_analyzer`](../../apps/ampm_analyzer/README.md) app.
+Plots are drawn by the [`ampm_viewer`](../../apps/ampm_viewer/README.md) app.
 
 ### Inputs
 
@@ -101,7 +101,7 @@ uv run python -m pytest
 Core: `polars`, `pyarrow`, `numpy`, `scipy`, `scikit-learn`. Geometry: `trimesh`,
 `shapely`, with `networkx` and `rtree` (which trimesh uses to slice the STL into layer
 outlines). No plotting library: plots belong to the app. (GUI concerns such as
-PyQt6 belong to the [`ampm_analyzer`](../../apps/ampm_analyzer/README.md) app, not here —
+PyQt6 belong to the [`ampm_viewer`](../../apps/ampm_viewer/README.md) app, not here —
 this package is the headless pipeline.)
 
 ## A note on the namespace

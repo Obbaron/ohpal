@@ -20,7 +20,7 @@ Usage
     from ampm.clustering import k_distance_curve, cluster_dbscan
 
     # 1. Tune eps_xy by inspecting the k-distance curve (rank vs distance;
-    #    AMPM Analyzer draws it as its K-Distance Curve plot)
+    #    AMPM Viewer draws it as its K-Distance Curve plot)
     kdc = k_distance_curve(df, k=10, mode="3d", eps_xy=1.0, eps_z=0.1)
 
     # 2. Cluster: a 'cluster' column per row (-1 = noise)

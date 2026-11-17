@@ -1,6 +1,7 @@
 # Changelog
 
-All notable changes to AMPM Analyzer are documented in this file.
+All notable changes to AMPM Viewer (named AMPM Analyzer before 2.0.0) are
+documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0] - 2026-11-17
 
-A new application. The 1.x window (Config and Analysis tabs, Plotly plot views
-loaded from disk) is replaced by a new PyQt6 interface with fast VisPy plots, a
-data table you shape before plotting, undo / redo, macros, a plot library for
+A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
+1.x window (Config and Analysis tabs, Plotly plot views loaded from disk) is
+replaced by a new PyQt6 interface with fast VisPy plots, a data table you shape before plotting, undo / redo, macros, a plot library for
 comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
-self-contained `AMPM-Analyzer.exe`. The `ohpal.ampm` pipeline underneath keeps
+self-contained `AMPM-Viewer.exe`. The `ohpal.ampm` pipeline underneath keeps
 its API: it gains a few additions (listed under *Pipeline*) and loses only the
 Plotly figure builders, which the app replaces.
 
@@ -73,11 +74,11 @@ Plotly figure builders, which the app replaces.
   rows it draws, in one `.ampmplot` file (a Layer Viewer keeps every layer).
   **File ▸ Plot library** (or **New plot ▸ Open from the plot library…**)
   opens one beside another build's plots, or with no build open, for
-  comparing builds. The library folder (default `Documents\AMPM Analyzer\Plots`)
+  comparing builds. The library folder (default `Documents\AMPM Viewer\Plots`)
   can be changed in Settings.
 - **Undo / redo** of data shaping, and **macros**: record actions, save them to a
   file, check and run them on another build, recent macros one click away.
-  Macros live in a **macro folder** (default `Documents\AMPM Analyzer\Macros`,
+  Macros live in a **macro folder** (default `Documents\AMPM Viewer\Macros`,
   changeable in Settings, for example to a shared team folder); Save and Browse
   start there and the Run menu lists its macros.
   Showing and hiding columns are recorded, and a plot's step keeps the plot
@@ -89,7 +90,7 @@ Plotly figure builders, which the app replaces.
 - **Help.** A searchable in-app guide of 31 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,
-  traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Analyzer\crash-reports` and
+  traceback, recent log) in `%LOCALAPPDATA%\AMPM\AMPM Viewer\crash-reports` and
   shown in a dialog; the app keeps running. Hard crashes are recorded in
   `fatal.log` in the same folder.
 - The version is shown in Help and in crash reports.
@@ -109,23 +110,29 @@ Plotly figure builders, which the app replaces.
 
 ### Changed
 
-- The version is defined once, as `__version__` in `ampm_analyzer/__init__.py`;
+- **Renamed to AMPM Viewer** (was AMPM Analyzer): the window, the executable
+  (`AMPM-Viewer.exe`), the `ampm-viewer` distribution and script, the
+  `ampm_viewer` package and the `apps/ampm_viewer` folder. On first start the
+  app carries over the old name's settings (recent builds, Settings choices,
+  plot defaults) and keeps using macro and plot library folders under
+  `Documents\AMPM Analyzer` that hold files.
+- The version is defined once, as `__version__` in `ampm_viewer/__init__.py`;
   `pyproject.toml` reads it from there.
-- The app is one self-contained executable, `AMPM-Analyzer.exe` (PyInstaller
+- The app is one self-contained executable, `AMPM-Viewer.exe` (PyInstaller
   one-file: no `_internal` folder beside it). Its Windows file properties carry
   the app's name and version.
 - The app icon is on the executable and on every window (title bar, taskbar,
   floating plots, help, log); on Windows the taskbar groups the app's windows
   under it.
 - `just verify` / `make verify` import the new application.
-- The `ampm-analyzer` script now points at `ampm_analyzer:main`; the packaged app
+- The `ampm-viewer` script points at `ampm_viewer:main`; the packaged app
   also accepts `--dbscan-job <job.json>` (used internally to run DBSCAN).
 - `ohpal.ampm.clustering.cluster_dbscan_chunked` takes an optional
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
   current API; `just test` runs every package's tests (579 in all). The app has 28 GUI
-  scenarios in `apps/ampm_analyzer/tests`, run with `just test-app <build folder>`,
+  scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).
 - Settings can be kept in an INI file instead of the registry by setting

@@ -7,7 +7,7 @@ else
 	SHELL := /bin/sh
 endif
 
-APP_DIR  := apps/ampm_analyzer
+APP_DIR  := apps/ampm_viewer
 PKG_AMPM := packages/ohpal_ampm
 
 .DEFAULT_GOAL := help
@@ -28,10 +28,10 @@ setup:
 
 verify:
 	uv run --no-sync python -c "import sys,struct; assert sys.version_info[:2]==(3,11) and struct.calcsize('P')*8==64, 'Need Python 3.11 64-bit; found '+sys.version.split()[0]"
-	uv run --no-sync python -c "import ohpal.ampm, ampm_analyzer.shell.app; import ohpal; assert type(ohpal.__path__).__name__=='_NamespacePath', 'ohpal collapsed to a regular package - check for a stray src/ohpal/__init__.py'; print('verify OK -', list(ohpal.__path__))"
+	uv run --no-sync python -c "import ohpal.ampm, ampm_viewer.shell.app; import ohpal; assert type(ohpal.__path__).__name__=='_NamespacePath', 'ohpal collapsed to a regular package - check for a stray src/ohpal/__init__.py'; print('verify OK -', list(ohpal.__path__))"
 
 run:
-	uv run --no-sync ampm-analyzer
+	uv run --no-sync ampm-viewer
 
 test:
 	uv --directory packages/ohpal_core run --no-sync python -m pytest

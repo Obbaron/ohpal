@@ -244,7 +244,7 @@ numpy==2.4.6 ; python_full_version < '3.12' \
     --hash=sha256:f407cb6b8e9d6d8c626bc73c945db1706035af8fd632295547bf1c9e46d092d6 \
     --hash=sha256:f74a575920ab21fe304421a3fc28793d82e299cae9eccb37084e9fc7f3617c20
     # via
-    #   ampm-analyzer
+    #   ampm-viewer
     #   ohpal-ampm
     #   ohpal-core
     #   scikit-learn
@@ -298,7 +298,7 @@ numpy==2.5.0 ; python_full_version >= '3.12' \
     --hash=sha256:f27582c55ba4c750b7c58c8faf021d2cd9324a662b466229db8a417b41368af9 \
     --hash=sha256:f7e5fa4382967ae6548bd2f174219afb908e294b0d5f625af01166edd5f7d9aa
     # via
-    #   ampm-analyzer
+    #   ampm-viewer
     #   ohpal-ampm
     #   ohpal-core
     #   scikit-learn
@@ -417,7 +417,7 @@ pyqt6==6.11.0 \
     --hash=sha256:b6324e3501b19b4292c7a55b1f22e82d3e80e519e383ce4fe79b4a754c6f0288 \
     --hash=sha256:bd11b459c54dca068e988a42cf838303334f0d441b9d16d92ae6719fcb5ac6ba \
     --hash=sha256:f7100bc7f72b12581ec479a733f4ad11b8002668e6786e8a445ab6f4d1c743d4
-    # via ampm-analyzer
+    # via ampm-viewer
 pyqt6-qt6==6.11.1 \
     --hash=sha256:039b1ab619d63d06a87cacf84b581a2b61a30c9ad5bb677553e738afe4dc433a \
     --hash=sha256:120efbedf833e5bbbc3d64ebdb139b44ff34e60f34410c7b1c2c26d230380bda \
@@ -714,4 +714,4 @@ vispy==0.17.0 \
     --hash=sha256:d8669334b74b7728d665de156b34c9e12e04fd55f1b78545bc96b27dfbdf0190 \
     --hash=sha256:dfb0a6f5f17898588681693425f982662b9529aec5d3815916584ebf8fe09df4 \
     --hash=sha256:f0a044c34f825303a8ea1f22012a8563cd000f1cec32e08bf4732c8b32a9dc67
-    # via ampm-analyzer
+    # via ampm-viewer

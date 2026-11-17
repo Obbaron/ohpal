@@ -172,7 +172,7 @@ joined = join_parts_with_stats(cov_overall, parts_with_speed)
 
 ## Stage 8: Visualization
 
-Results are plotted in **AMPM Analyzer** (`apps/ampm_analyzer`): open a build,
+Results are plotted in **AMPM Viewer** (`apps/ampm_viewer`): open a build,
 shape the data in the Data tab (calculated columns, per-part CoV, filters) and
 make plots from it: 2D / 3D scatter, Layer Viewer, bar, histogram, CoV summary,
 contour (parametric process maps), KDE, violin and the k-distance curve for
@@ -181,7 +181,7 @@ no plotting: its results are Polars frames, ready for any plotting tool.
 
 ## Where this all comes together
 
-**App:** AMPM Analyzer runs the stages behind **File ▸ New / Open**: pick a build, review the DataStore setup (columns, mask, part assignment, correction), build it, then add calculated columns (CoV) and plot. The packaged `AMPM-Analyzer.exe` is a single file; Python is not required.
+**App:** AMPM Viewer runs the stages behind **File ▸ New / Open**: pick a build, review the DataStore setup (columns, mask, part assignment, correction), build it, then add calculated columns (CoV) and plot. The packaged `AMPM-Viewer.exe` is a single file; Python is not required.
 
 **Pipeline scripts:** The scripts in `examples/pipeline/` run stages 1–8 as separate steps:
 

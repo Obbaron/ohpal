@@ -26,7 +26,7 @@ sparse and DBSCAN fragments or labels everything as noise.
 Tuning ``EPS_XY``
 -----------------
 Look at the k-distance curve first (``clustering.k_distance_curve``, or
-AMPM Analyzer's K-Distance Curve plot) to find the right value for your
+AMPM Viewer's K-Distance Curve plot) to find the right value for your
 build. The defaults below were validated on the JR299 sterling build.
 """
 

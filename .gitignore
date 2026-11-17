@@ -32,7 +32,7 @@ MANIFEST
 *.manifest
 *.spec
 # ...but app.spec is our hand-written, checked-in PyInstaller build config.
-!apps/ampm_analyzer/app.spec
+!apps/ampm_viewer/app.spec
 
 # Installer logs
 pip-log.txt

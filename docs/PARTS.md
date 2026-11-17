@@ -134,7 +134,7 @@ joined = join_parts_with_stats(cov_overall, parts_with_speed)
 
 Verbose by default. Warns if any parts in the stats table have no parameter data, and notes any parts in the parts table that had no stats (these are silently dropped by the left join, but you're told).
 
-This is the table behind a parametric process map: in AMPM Analyzer, a
+This is the table behind a parametric process map: in AMPM Viewer, a
 **Contour** plot of the CoV over `Hatch Speed` and `Hatches Power`.
 
 ## When parts go wrong

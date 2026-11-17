@@ -268,7 +268,7 @@ class QuantAMParts:
     def parent_parts(self) -> pl.DataFrame:
         """
         Return the top-level "Parent Parts" table with normalized column
-        names matching the AMPM analyzer's convention:
+        names matching the AMPM Viewer's convention:
 
         Columns
         -------
