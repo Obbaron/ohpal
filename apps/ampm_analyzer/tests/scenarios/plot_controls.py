@@ -114,6 +114,13 @@ assert not w.panel.colour_box.isHidden() and w.panel.min_slider.isHidden()
 before = tc._last_colors.copy(); tc.set_colormap("viridis"); drain()
 assert not np.allclose(before, tc._last_colors), "the map recolours many categories"
 print("2D scatters: legend only when there is one (colour bar or categories); equal axes lock")
+def done(*tabs):
+    """Close plots this scenario has finished with: each holds its rows, and
+    several scenarios run at once (keep the peak memory down)."""
+    import gc
+    for t in tabs: w._close_plot(t)
+    drain(); gc.collect()
+done(tc)
 
 # 3D: BBox + 3D view presets
 t3 = w._open_plot(PlotSpec(kind=SCATTER_3D, x="Demand X", y="Demand Y", z="Z", color=MP), ALL); drain()
@@ -142,6 +149,7 @@ tl._slider.setValue(0); tl.step_layer(-1); assert tl._slider.value() == 0      #
 tsl = w._open_plot(default_spec(SINGLE_LAYER, cols, s.renames), ("single", s.store.layers[0], s.store.layers[0])); drain()
 tt = tips(w.toolbar); assert "Equal axes (1:1)" in tt and "Next layer" not in tt
 print("3D presets set the camera; layer step buttons move the scrubber; single layer has no stepping")
+done(tl, tsl)
 
 # Histogram: bins (current ticked), no Points panel
 th = w._open_plot(PlotSpec(kind=HISTOGRAM, x=MP, y="count", bins=30), ALL); drain()
@@ -172,6 +180,7 @@ assert "Sort bars" in tips(w.toolbar)
 tv_.set_control("sort", "value"); drain()
 h = tv_._bar_data.heights; assert np.all(np.diff(h[np.isfinite(h)]) <= 0)
 print("histogram bins re-bin (off-list counts listed); bar and CoV sort by value / name")
+done(tv_)
 
 # Violin: quartile box + bandwidth
 tvi = w._open_plot(PlotSpec(kind=VIOLIN, x="part_id", y=MP), ALL); drain()
@@ -199,6 +208,7 @@ assert [a.text() for a in button(w.toolbar, "Bandwidth").menu().actions() if a.i
 tk1 = w._open_plot(PlotSpec(kind=KDE, x=MP, y="density", group_by=None), ALL); drain()
 assert "Legend" not in tips(w.toolbar) and not tk1._has_legend
 print("violin box + bandwidth; KDE fill + bandwidth; one KDE curve has no Legend")
+done(tvi, tk1)
 
 # Contour: measured points + level lines
 tco = w._open_plot(default_spec(CONTOUR, cols, s.renames), ALL); drain()
@@ -222,6 +232,7 @@ button(w.toolbar, "eps guide line").trigger(); drain(); assert td._ref_line.pare
 w.panel.sync_plot(td.panel_state())
 assert w.panel.points_box.isHidden() and w.panel.colour_box.isHidden() and not w.panel.plot_note.isHidden()
 print("contour points + lines; k-distance eps line; empty panel explains itself")
+done(tco, td)
 
 # toolbar options never change the macro step that made the plot
 spec_before = tb.spec

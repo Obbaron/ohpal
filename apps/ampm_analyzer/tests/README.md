@@ -18,14 +18,25 @@ uv run pytest apps/ampm_analyzer/tests "--build=C:\builds\JR299"
 $env:AMPM_TEST_BUILD = "C:\builds\JR299"; just test-app   # PowerShell, via the environment
 ```
 
+`just test-app` runs several scenarios at once (pytest-xdist: `-n auto`):
+one per CPU core, at most 6, and one per 3 GB of memory (`plot_controls`
+keeps a dozen plots open and peaks near 3 GB). Pass `-n 2` (or any number)
+to choose. To run them one after another, as when following a
+single failure, leave out `-n`:
+
+```
+uv run pytest apps/ampm_analyzer/tests "--build=C:\builds\JR299" -k macro_folder
+```
+
 Write `--build=PATH` as one argument (pytest reads the command line before it
 knows the option). Without a build, the four scenarios that don't need one
 still run and the rest are skipped with a hint.
 
-Once per run, the build is copied and its DataStore built fresh (what a user
-has after opening the build and building it with default settings); each
-scenario then gets its own copy of that. A full run takes a while:
-`build_lifecycle` and `cancel_long_jobs` run DBSCAN on the whole build.
+Once per run (once per worker, when they run at once), the build is copied
+and its DataStore built fresh (what a user has after opening the build and
+building it with default settings); each scenario then gets its own copy of
+that. The slowest scenarios (`undo_redo`, `plot_elements_layout`,
+`build_lifecycle`, `plot_controls`) take 25 to 40 seconds each.
 
 A scenario that leaves a dialog waiting for a click fails after two minutes,
 naming the dialog and its text, rather than hanging.

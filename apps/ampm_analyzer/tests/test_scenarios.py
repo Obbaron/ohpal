@@ -54,7 +54,11 @@ def _run(name: str, args: list[str], tmp_path: Path) -> None:
     if name in GL:
         if not sys.platform.startswith("linux") or not shutil.which("xvfb-run"):
             pytest.skip("needs a real OpenGL context: Linux with xvfb-run")
-        cmd = ["xvfb-run", "-a", *cmd]
+        # Each parallel worker starts looking for a free X display at its own
+        # number, so two scenarios starting together don't race for one.
+        worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+        first = 99 + 10 * int("".join(ch for ch in worker if ch.isdigit()) or 0)
+        cmd = ["xvfb-run", "-a", "-n", str(first), *cmd]
         env["QT_QPA_PLATFORM"] = "offscreen"
     try:
         proc = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True,

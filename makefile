@@ -40,7 +40,7 @@ test:
 
 # BUILD (or the AMPM_TEST_BUILD variable): the build the scenarios run on.
 test-app:
-	uv --directory $(APP_DIR) run --no-sync python -m pytest "--build=$(BUILD)"
+	uv --directory $(APP_DIR) run --no-sync python -m pytest -n auto --dist worksteal "--build=$(BUILD)"
 
 build:
 	uv --directory $(APP_DIR) run pyinstaller app.spec
