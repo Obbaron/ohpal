@@ -7,25 +7,44 @@ build produces a Linux binary. From the repo root:
     just setup            # once: sync the venv (uv sync --all-packages)
     just build            # runs: uv --directory apps/ampm_viewer run pyinstaller app.spec
 
-Output: apps/ampm_viewer/dist/AMPM-Viewer.exe, one self-contained file
-(nothing beside it to ship). It unpacks itself to a temporary folder at each
-start, so it starts a little slower than an unpacked app; a DBSCAN job the app
+Output: apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>.exe (for example
+ampm-viewer-v2.0.0-x64.exe), one self-contained file (nothing beside it to
+ship). The version is __version__; the architecture (x64 or arm64) is the one
+of the Python running PyInstaller, which is what the .exe is built for.
+It unpacks itself to a temporary folder at each start, so it starts a little slower than an unpacked app; a DBSCAN job the app
 starts (the same .exe with --dbscan-job) reuses the running app's unpacked
 copy. Paths here are relative to this spec's folder (apps/ampm_viewer),
 which is where `just build` runs it.
 """
 
 import re
+import sysconfig
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-NAME = "AMPM-Viewer"
 ICON = "src/ampm_viewer/assets/ampm.ico"
 
 # -- version (one place: src/ampm_viewer/__init__.py) ----------------------
 _init = Path("src/ampm_viewer/__init__.py").read_text(encoding="utf-8")
 VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', _init).group(1)
+
+
+def _arch() -> str:
+    """x64 or arm64: the architecture of this Python (PyInstaller builds for
+    it, so an x64 Python on an Arm machine still makes an x64 .exe)."""
+    plat = sysconfig.get_platform().lower()  # win-amd64, win-arm64, linux-aarch64, ...
+    if plat.endswith(("arm64", "aarch64")):
+        return "arm64"
+    if plat.endswith(("amd64", "x86_64")):
+        return "x64"
+    if plat.endswith(("win32", "i686", "i386")):
+        return "x86"
+    return plat.rsplit("-", 1)[-1]
+
+
+# The file built: ampm-viewer-v2.0.0-x64(.exe).
+NAME = f"ampm-viewer-v{VERSION}-{_arch()}"
 _nums = [int(n) for n in re.findall(r"\d+", VERSION)[:3]]
 _nums += [0] * (4 - len(_nums))
 
@@ -42,7 +61,7 @@ _version_file.write_text(f"""VSVersionInfo(
       StringStruct('CompanyName', 'Oliver H. Page'),
       StringStruct('FileDescription', 'AMPM Viewer'),
       StringStruct('FileVersion', '{VERSION}'),
-      StringStruct('InternalName', '{NAME}'),
+      StringStruct('InternalName', 'ampm-viewer'),
       StringStruct('LegalCopyright', 'All rights reserved'),
       StringStruct('OriginalFilename', '{NAME}.exe'),
       StringStruct('ProductName', 'AMPM Viewer'),

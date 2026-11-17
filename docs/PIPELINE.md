@@ -181,7 +181,7 @@ no plotting: its results are Polars frames, ready for any plotting tool.
 
 ## Where this all comes together
 
-**App:** AMPM Viewer runs the stages behind **File ▸ New / Open**: pick a build, review the DataStore setup (columns, mask, part assignment, correction), build it, then add calculated columns (CoV) and plot. The packaged `AMPM-Viewer.exe` is a single file; Python is not required.
+**App:** AMPM Viewer runs the stages behind **File ▸ New / Open**: pick a build, review the DataStore setup (columns, mask, part assignment, correction), build it, then add calculated columns (CoV) and plot. The packaged `ampm-viewer-v2.0.0-x64.exe` is a single file; Python is not required.
 
 **Pipeline scripts:** The scripts in `examples/pipeline/` run stages 1–8 as separate steps:
 

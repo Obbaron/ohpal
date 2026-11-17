@@ -14,7 +14,7 @@ A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
 1.x window (Config and Analysis tabs, Plotly plot views loaded from disk) is
 replaced by a new PyQt6 interface with fast VisPy plots, a data table you shape before plotting, undo / redo, macros, a plot library for
 comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
-self-contained `AMPM-Viewer.exe`. The `ohpal.ampm` pipeline underneath keeps
+self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm` pipeline underneath keeps
 its API: it gains a few additions (listed under *Pipeline*) and loses only the
 Plotly figure builders, which the app replaces.
 
@@ -130,7 +130,7 @@ Plotly figure builders, which the app replaces.
 ### Changed
 
 - **Renamed to AMPM Viewer** (was AMPM Analyzer): the window, the executable
-  (`AMPM-Viewer.exe`), the `ampm-viewer` distribution and script, the
+  (`ampm-viewer-v2.0.0-x64.exe`), the `ampm-viewer` distribution and script, the
   `ampm_viewer` package and the `apps/ampm_viewer` folder.
 - **One AMPM folder** for what the app keeps (its settings, `ampm-viewer.conf`;
   the default builds folder, `Builds`; the macro folder, the plot library and
@@ -139,7 +139,8 @@ Plotly figure builders, which the app replaces.
   Linux (`AMPM_DATA_DIR` overrides it).
 - The version is defined once, as `__version__` in `ampm_viewer/__init__.py`;
   `pyproject.toml` reads it from there.
-- The app is one self-contained executable, `AMPM-Viewer.exe` (PyInstaller
+- The app is one self-contained executable, named with its version and
+  architecture: `ampm-viewer-v2.0.0-x64.exe` or `-arm64.exe` (PyInstaller
   one-file: no `_internal` folder beside it). Its Windows file properties carry
   the app's name and version.
 - The app icon is on the executable and on every window (title bar, taskbar,

@@ -10,7 +10,7 @@ parquet file, writes a small job file (JSON) describing the work, and starts
 this module on it:
 
 - from source:        ``python -m ampm_viewer.dbscan_job <job.json>``
-- in the packaged app: ``AMPM-Viewer.exe --dbscan-job <job.json>``
+- in the packaged app: ``ampm-viewer-v<version>-<arch>.exe --dbscan-job <job.json>``
   (``ampm_viewer.__main__`` hands the flag here before any Qt loads)
 
 The job file names ``input`` (the points), ``output`` (where the labels go),

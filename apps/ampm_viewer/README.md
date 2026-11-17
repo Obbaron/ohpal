@@ -54,7 +54,9 @@ The app compiles a binary executable with [PyInstaller](https://pyinstaller.org/
 just build               # uv --directory apps/ampm_viewer run pyinstaller app.spec
 ```
 
-Output is one file, `apps/ampm_viewer/dist/AMPM-Viewer.exe`: everything is inside it
+Output is one file, `apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>.exe`
+(for example `ampm-viewer-v2.0.0-x64.exe`; `arm64` when built with an Arm
+Python): everything is inside it
 (nothing to ship beside it). It unpacks itself to a temporary folder each time it starts,
 so it starts a little slower than an unpacked app would; a DBSCAN job it starts (the same
 .exe run with `--dbscan-job`) reuses that unpacked copy. A few layout details that make the
