@@ -168,7 +168,7 @@ assert w.panel.points_box.isHidden() and not w.panel.colour_box.isHidden()
 from ampm_viewer.shell.panel_widgets import Card
 assert "SELECTED PART" not in [g.title() for g in w.panel.findChildren(Card)]
 from ampm_viewer.shell import icons
-assert icons.UI["view3d"] == "camera" and icons.UI["screenshot"] == "image"
+assert icons.UI["view3d"] == "video" and icons.UI["screenshot"] == "camera"
 assert not icons.ui("view3d", "#000").isNull() and not icons.ui("screenshot", "#000").isNull()
 
 # Bar + CoV: sort by name / value
