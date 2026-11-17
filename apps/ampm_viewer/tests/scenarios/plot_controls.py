@@ -164,7 +164,12 @@ assert [a.text() for a in button(w.toolbar, "Bins").menu().actions() if a.isChec
 th.set_control("bins", 37); drain()       # an off-list count shows up in the menu
 assert "37" in [a.text() for a in button(w.toolbar, "Bins").menu().actions()]
 w.panel.sync_plot(th.panel_state())
-assert w.panel.points_box.isHidden() and w.panel.selected_box.isHidden() and not w.panel.colour_box.isHidden()
+assert w.panel.points_box.isHidden() and not w.panel.colour_box.isHidden()
+from PyQt6.QtWidgets import QGroupBox
+assert "Selected part" not in [g.title() for g in w.panel.findChildren(QGroupBox)]
+from ampm_viewer.shell import icons
+assert icons.UI["view3d"] == "camera" and icons.UI["screenshot"] == "image"
+assert not icons.ui("view3d", "#000").isNull() and not icons.ui("screenshot", "#000").isNull()
 
 # Bar + CoV: sort by name / value
 tb = w._open_plot(default_spec(BAR, cols, s.renames), ALL); drain()

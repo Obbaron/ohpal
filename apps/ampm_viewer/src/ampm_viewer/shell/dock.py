@@ -166,7 +166,6 @@ class SidePanel(QWidget):
         map_only = bool(state.get("map_only", False))
         colour = bool(state.get("has_color", False)) or map_only
         self.points_box.setVisible(points)
-        self.selected_box.setVisible(points)
         self.colour_box.setVisible(colour)
         for w in (self.scale_combo, self.min_slider, self.max_slider):
             self._colour_form.setRowVisible(w, not map_only)
@@ -315,11 +314,6 @@ class SidePanel(QWidget):
         self.max_slider.valueChanged.connect(self.colorMaxChanged)
         cf.addRow("Max", self.max_slider)
         lay.addWidget(self.colour_box)
-
-        self.selected_box = selected = QGroupBox("Selected part")
-        sf = QVBoxLayout(selected)
-        sf.addWidget(QLabel("Nothing selected."))
-        lay.addWidget(selected)
 
         # When a plot has none of the above (a single k-distance curve).
         self.plot_note = QLabel(
