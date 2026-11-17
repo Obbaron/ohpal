@@ -2,18 +2,40 @@
 title: Settings, status bar and log
 section: Reference
 order: 10
-keywords: settings, theme, dark, light, macro folder, status, progress, log, console, export log, background, messages
+keywords: settings, options, preferences, theme, dark, light, macro folder, plot library, builds folder, recent, clear, reset, style defaults, ampm folder, status, progress, log, console, export log, background, messages
 ---
 # Settings, status bar and log
 
 ## Settings
 
-The **Settings** button at the top right holds:
+The **Settings** button (the gear at the top right) opens the Settings
+window. Choose a category on the left; its settings are on the right. Nothing
+changes until you press **OK**; **Cancel** leaves everything as it was.
 
-- **Theme**: **Auto (system)**, **Light** or **Dark**.
-- **Macros**: where macros are saved and listed from. **Open macro folder**,
-  **Change macro folder…**, and **Use the default folder**
-  (`%APPDATA%\AMPM\Macros` on Windows). See [Macros](help:macros).
+- **General**
+  - **Appearance**: **Auto (follow the system)**, **Light** or **Dark**. The
+    choice is kept for the next start.
+  - **Opening builds**: New and Open start in the folder of the build you
+    opened last; with no recent build they start in the **builds folder** you
+    set here (**Change…**, **Open**, **Clear**).
+  - **Recent builds**: **Clear the Recent list** empties the File tab's
+    Recent list. Favourites stay.
+- **Plots**
+  - **Plot library**: the folder frozen plots are saved to and listed from.
+    **Change…**, **Open**, **Use the default**. See
+    [Plot library](help:plot-library).
+  - **Plot style defaults**: how many plot elements start from a style saved
+    with **Set as default**. **Reset to the built-in look** forgets them, so
+    new plots use the built-in look (open plots keep theirs).
+- **Macros**
+  - **Macro folder**: where macros are saved and listed from (by default
+    `%APPDATA%\AMPM\Macros` on Windows). **Change…**, **Open**, **Use the
+    default**. See [Macros](help:macros).
+  - **Recent macros**: **Clear the Recent list** empties the Run menu's
+    Recent list.
+- **Files**: where the app keeps its files, each with **Open**: the AMPM
+  folder (macros, the plot library and crash reports by default), the crash
+  reports, and where your settings are stored.
 
 ## Status bar
 

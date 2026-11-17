@@ -52,19 +52,18 @@ assert texts[:2] == ["Recent", "cov by part"] and texts[2:4] == ["Macro folder",
 assert "notes" not in " ".join(texts) and texts[-2:] == ["Browse…", "Open macro folder"]
 
 # Settings: shows the folder; change it; the menu and dialogs follow
-m = w._settings_menu(); labels = [a.text() for a in m.actions() if a.text()]
-print("Settings:", labels)
-assert "Macros" in labels and any(l.startswith("Folder: ") for l in labels)
-assert "Change macro folder…" in labels and "Open macro folder" in labels and "Use the default folder" not in labels
+dlg = w._settings_dialog(page="Macros")
+assert dlg.macro_row.path.text() == f"{macros.default_folder()}  (default)"
+assert not dlg.macro_row.btn_default.isEnabled()
 shared = Path(tempfile.mkdtemp()) / "team-macros"; shared.mkdir()
 (shared / "team step.macro.json").write_text(saved.read_text())
 QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: str(shared))
-w._choose_macro_folder()
+dlg.macro_row.btn_change.click(); w._apply_settings(dlg.changes())
 assert macros.folder() == shared and not macros.is_default_folder()
 texts = [t for t, _ in run_menu() if t]
 assert "team step" in texts and "another" not in texts and "cov by part" in texts, texts   # recent stays
-m = w._settings_menu(); labels = [a.text() for a in m.actions() if a.text()]
-assert "Use the default folder" in labels
+dlg = w._settings_dialog(page="Macros")
+assert dlg.macro_row.path.text() == str(shared) and dlg.macro_row.btn_default.isEnabled()
 w._run_macro(); assert Path(asked["open"]) == shared
 print("custom folder: listed, used by Browse; recent macros stay on the menu")
 
@@ -75,7 +74,8 @@ notes = []; real_status = w.set_status; w.set_status = lambda t, *a, **k: (notes
 assert macros.ensure_folder() is None and macros.in_folder() == []
 w._run_macro(); assert Path(asked["open"]) == macros.default_folder()
 assert any("isn't available" in n for n in notes), notes
-w._reset_macro_folder(); assert macros.is_default_folder() and macros.folder() == macros.default_folder()
+dlg = w._settings_dialog(page="Macros"); dlg.macro_row.btn_default.click()
+w._apply_settings(dlg.changes()); assert macros.is_default_folder() and macros.folder() == macros.default_folder()
 macros.set_folder(macros.default_folder()); assert macros.is_default_folder(), "choosing the default = default"
 print("offline folder falls back to the default; reset works")
 c.shutdown()

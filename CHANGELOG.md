@@ -23,6 +23,12 @@ Plotly figure builders, which the app replaces.
 - **New interface.** A frameless window whose tab row doubles as the title bar
   (File, Data, one tab per plot), a toolbar that changes with the tab, a side
   panel, light and dark themes, and frameless, draggable dialogs throughout.
+- **Settings window** (the gear), laid out like Excel's Options: General
+  (theme, kept between starts; the builds folder New and Open start in; clear
+  the Recent list), Plots (the plot library folder; reset plot style
+  defaults), Macros (the macro folder; clear recent macros) and Files (the
+  AMPM folder, crash reports and settings, each with Open). Changes apply on
+  **OK**.
 - **File tab.** **New** makes a single build, a stacked build or an **Excel
   template** (one build's samples workbook, written to `<build>/exports/`);
   **Open** and **Plot library** sit beside it. The landing page lists recent
@@ -146,7 +152,7 @@ Plotly figure builders, which the app replaces.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (580 in all). The app has 30 GUI
+  current API; `just test` runs every package's tests (580 in all). The app has 31 GUI
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).

@@ -474,6 +474,21 @@ def default_style(key: str, kind: str | None = None) -> dict:
     return {**builtin_style(key, kind), **saved_default(key)}
 
 
+def saved_defaults() -> list[str]:
+    """The elements with a saved default style."""
+    s = _settings()
+    s.beginGroup(_SETTINGS_GROUP)
+    try:
+        return [k for k in s.childKeys() if k in ELEMENTS]
+    finally:
+        s.endGroup()
+
+
+def clear_defaults() -> None:
+    """Forget every saved default style: new plots get the built-in look."""
+    _settings().remove(_SETTINGS_GROUP)
+
+
 def save_default(key: str, style: dict, kind: str | None = None) -> None:
     """Make ``style`` (minus its text) the default for new plots. A style equal
     to the built-in look (of a ``kind`` plot) clears the saved default."""

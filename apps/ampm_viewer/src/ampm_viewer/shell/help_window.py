@@ -164,6 +164,9 @@ class HelpWindow(DraggableCard, QWidget):
             "#HelpCard { background: palette(window); "
             "border: 1px solid palette(mid); border-radius: 10px; }"
             "#HelpCard QSplitter::handle { background: transparent; }"
+            # The article list sits on a panel of its own shade (as the
+            # Settings window's categories do).
+            "#HelpSide { background: palette(alternate-base); border-radius: 6px; }"
         )
         outer.addWidget(card)
         lay = QVBoxLayout(card)
@@ -172,8 +175,10 @@ class HelpWindow(DraggableCard, QWidget):
 
         # -- left: title, search, list -------------------------------------
         side = QWidget()
+        side.setObjectName("HelpSide")
+        side.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setContentsMargins(10, 10, 10, 10)
         sl.setSpacing(10)
         title = QLabel("Help")
         title.setStyleSheet(_TITLE_QSS)

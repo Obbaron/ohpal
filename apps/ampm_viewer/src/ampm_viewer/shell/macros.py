@@ -97,6 +97,11 @@ def recent() -> list[str]:
     return [p for p in paths if isinstance(p, str) and Path(p).is_file()]
 
 
+def clear_recent() -> None:
+    """Empty the Run menu's Recent list."""
+    _settings().remove(_RECENT_KEY)
+
+
 def remember(path) -> None:
     """Put a macro file at the top of the recent list."""
     path = str(Path(path))

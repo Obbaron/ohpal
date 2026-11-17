@@ -111,13 +111,16 @@ needed and kept when the app is updated:
 | macOS | `~/Library/Application Support/AMPM/Macros` |
 | Linux | `$XDG_DATA_HOME/AMPM/Macros` (`~/.local/share/AMPM/Macros`) |
 
-To change it, open **Settings** (the gear in the title bar) and, under
+To change it, open **Settings** (the gear in the title bar) and choose
 **Macros**:
 
-- **Open macro folder** shows it in Explorer.
-- **Change macro folder…** picks another, for example a shared network
-  folder so a team uses the same macros.
-- **Use the default folder** goes back to the AMPM folder's **Macros**.
+- **Change…** picks another folder, for example a shared network folder so a
+  team uses the same macros.
+- **Open** shows it in Explorer.
+- **Use the default** goes back to the AMPM folder's **Macros**.
+
+Press **OK** to keep the change. **Clear the Recent list** on the same page
+empties the Run menu's Recent list.
 
 You can still save a macro anywhere, and run one from anywhere with
 **Browse…**; recently used ones stay on the Run menu wherever they are. If the

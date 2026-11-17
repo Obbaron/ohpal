@@ -41,9 +41,11 @@ from .data_tab import DataTab
 from .dock import SidePanel
 from .plot_tab import PlotTab
 from .recents import RecentStore
+from .settings import app_settings
 from .state import BuildSession
 
 APP_TITLE = "AMPM Viewer"
+_THEME_KEY = "appearance/theme"  # "auto" | "light" | "dark" (Settings)
 
 
 class _ElidingLabel(QLabel):
@@ -260,9 +262,14 @@ class MainWindow(QMainWindow):
         self._last_columns: list[str] | None = None  # to rebuild toolbar on change
 
         # Theme: "auto" follows the OS (and keeps following live), or a fixed
-        # "light" / "dark". The launch scheme was applied in app.py.
-        self._theme_choice = "auto"
+        # "light" / "dark", chosen in Settings and kept. app.py applied the
+        # OS scheme at launch; a fixed choice replaces it here.
         from PyQt6.QtWidgets import QApplication
+
+        self._theme_choice = "auto"
+        saved = str(app_settings().value(_THEME_KEY, "auto") or "auto")
+        if saved in ("light", "dark"):
+            self._set_theme_choice(saved)
 
         hints = QApplication.instance().styleHints()
         if hasattr(hints, "colorSchemeChanged"):
@@ -829,23 +836,6 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
-    def _choose_plot_library_folder(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog
-
-        path = QFileDialog.getExistingDirectory(
-            self, "Plot library folder", str(plot_library.folder()))
-        if not path:
-            return
-        plot_library.set_folder(path)
-        self.backstage.refresh_library()
-        self.set_status(f"Plots are now saved to and listed from {path}.")
-
-    def _reset_plot_library_folder(self) -> None:
-        plot_library.set_folder(None)
-        self.backstage.refresh_library()
-        self.set_status(f"Plots are saved to the default folder, "
-                        f"{plot_library.default_folder()}.")
-
     def _close_plot(self, tab) -> None:
         """Close a plot tab (a macro that failed takes back the plots it opened)."""
         if not isinstance(tab, QWidget):  # not a tab on screen: just forget it
@@ -1346,60 +1336,72 @@ class MainWindow(QMainWindow):
         self.panel.setVisible(False)
 
     # -- settings / theme ----------------------------------------------
-    def _open_settings(self) -> None:
-        from PyQt6.QtGui import QCursor
+    def _open_settings(self, page: str | None = None) -> None:
+        """The Settings window (the gear); OK applies what changed."""
+        dlg = self._settings_dialog(page)
+        if dlg.exec():
+            self._apply_settings(dlg.changes())
 
-        self._settings_menu().exec(QCursor.pos())
+    def _settings_dialog(self, page: str | None = None):
+        from . import crash, plot_elements
+        from .settings import data_dir
+        from .settings_dialog import SettingsDialog
 
-    def _settings_menu(self):
-        """The Settings (gear) menu: theme and the macro folder."""
-        from PyQt6.QtGui import QActionGroup
-        from PyQt6.QtWidgets import QMenu
+        recents = RecentStore()
+        entries = recents.load()
+        state = {
+            "theme": self._theme_choice,
+            "builds_folder": recents.projects_root(),
+            "recent_builds": len(entries),
+            "favourites": sum(1 for e in entries if e.favourite),
+            "plot_folder": plot_library.folder(),
+            "plot_default": plot_library.default_folder(),
+            "plot_chosen": not plot_library.is_default_folder(),
+            "plot_styles": len(plot_elements.saved_defaults()),
+            "macro_folder": macros.folder(),
+            "macro_default": macros.default_folder(),
+            "macro_chosen": not macros.is_default_folder(),
+            "recent_macros": len(macros.recent()),
+            "data_dir": data_dir(),
+            "crash_dir": crash.report_dir(),
+            "settings_file": app_settings().fileName(),
+        }
+        return SettingsDialog(state, self, icon_color=self._icon_color(),
+                              page=page)
 
-        menu = QMenu(self)
-        menu.setToolTipsVisible(True)
-        menu.addSection("Theme")
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for label, choice in (("Auto (system)", "auto"), ("Light", "light"), ("Dark", "dark")):
-            act = menu.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(choice == self._theme_choice)
-            group.addAction(act)
-            act.triggered.connect(lambda _checked, c=choice: self._set_theme_choice(c))
-        menu.addSection("Macros")
-        from PyQt6.QtCore import Qt
+    def _apply_settings(self, changes: dict) -> None:
+        """Apply the Settings window's changes (``SettingsDialog.changes``)."""
+        from . import plot_elements
 
-        full = str(macros.folder())
-        shown = menu.fontMetrics().elidedText(
-            full, Qt.TextElideMode.ElideMiddle, 340)
-        where = menu.addAction(f"Folder: {shown}")
-        where.setToolTip(full)
-        where.setEnabled(False)  # shows where macros go; not a command
-        menu.addAction("Open macro folder").triggered.connect(
-            self._open_macro_folder)
-        menu.addAction("Change macro folder…").triggered.connect(
-            self._choose_macro_folder)
-        if not macros.is_default_folder():
-            reset = menu.addAction("Use the default folder")
-            reset.setToolTip(str(macros.default_folder()))
-            reset.triggered.connect(self._reset_macro_folder)
-        menu.addSection("Plot library")
-        full = str(plot_library.folder())
-        shown = menu.fontMetrics().elidedText(
-            full, Qt.TextElideMode.ElideMiddle, 340)
-        where = menu.addAction(f"Folder: {shown}")
-        where.setToolTip(full)
-        where.setEnabled(False)
-        menu.addAction("Open plot library folder").triggered.connect(
-            self._open_plot_library_folder)
-        menu.addAction("Change plot library folder…").triggered.connect(
-            self._choose_plot_library_folder)
-        if not plot_library.is_default_folder():
-            reset = menu.addAction("Use the default plot library folder")
-            reset.setToolTip(str(plot_library.default_folder()))
-            reset.triggered.connect(self._reset_plot_library_folder)
-        return menu
+        done = []
+        if "theme" in changes:
+            self._set_theme_choice(changes["theme"])
+            app_settings().setValue(_THEME_KEY, changes["theme"])
+            done.append("theme")
+        if "builds_folder" in changes:
+            RecentStore().set_projects_root(changes["builds_folder"])
+            done.append("builds folder")
+        if "plot_folder" in changes:
+            plot_library.set_folder(changes["plot_folder"])
+            self.backstage.refresh_library()
+            done.append("plot library folder")
+        if "macro_folder" in changes:
+            macros.set_folder(changes["macro_folder"])
+            self.refresh_data_layers()  # the Run menu lists the new folder
+            done.append("macro folder")
+        if changes.get("clear_recent_builds"):
+            RecentStore().clear_recent()
+            self.backstage.refresh_recents()
+            done.append("recent builds cleared")
+        if changes.get("clear_recent_macros"):
+            macros.clear_recent()
+            self.refresh_data_layers()
+            done.append("recent macros cleared")
+        if changes.get("reset_plot_styles"):
+            plot_elements.clear_defaults()
+            done.append("plot style defaults reset")
+        if done:
+            self.set_status("Settings: " + ", ".join(done) + ".")
 
     def _icon_color(self) -> str:
         return theme.icon_color(QApplication.instance())
@@ -1918,23 +1920,6 @@ class MainWindow(QMainWindow):
             self.set_status(f"The macro folder isn't available: {macros.folder()}")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-
-    def _choose_macro_folder(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog
-
-        path = QFileDialog.getExistingDirectory(
-            self, "Macro folder", str(macros.folder()))
-        if not path:
-            return
-        macros.set_folder(path)
-        self.set_status(f"Macros are now saved to and listed from {path}.")
-        self.refresh_data_layers()  # the Run menu lists the new folder
-
-    def _reset_macro_folder(self) -> None:
-        macros.set_folder(None)
-        self.set_status(f"Macros are saved to the default folder, "
-                        f"{macros.default_folder()}.")
-        self.refresh_data_layers()
 
     def _on_recorder_changed(self) -> None:
         """Keep the status-bar indicator current; swap the toolbar's Record /

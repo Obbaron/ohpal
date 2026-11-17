@@ -152,6 +152,10 @@ class RecentStore:
     def clear(self) -> None:
         self._s.remove(_ENTRIES_KEY)
 
+    def clear_recent(self) -> None:
+        """Empty the Recent list, keeping favourites."""
+        self._write([e for e in self._read() if e.favourite])
+
     def most_recent(self) -> RecentEntry | None:
         """The most recently opened build (not a library plot)."""
         return next((e for e in self.load() if e.what() != "plot"), None)
