@@ -46,21 +46,66 @@ The **AMPM folder** holds what the app keeps: its settings (`ampm-viewer.conf`),
 (`~/.local/share/AMPM`) on Linux; set `AMPM_DATA_DIR` to use another folder. See
 `settings.data_dir` in `src/ampm_viewer/shell/settings.py`.
 
-## Building the standalone binary
+## Building the app and its installers
 
-The app compiles a binary executable with [PyInstaller](https://pyinstaller.org/):
+The app is compiled with [PyInstaller](https://pyinstaller.org/), then packed
+into an installer:
 
 ```bash
-just build               # uv --directory apps/ampm_viewer run pyinstaller app.spec
+just build               # uv --directory apps/ampm_viewer run pyinstaller --noconfirm app.spec
+just installer           # build, then installer/build_installer.py
 ```
 
-Output is one file, `apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>.exe`
-(for example `ampm-viewer-v2.0.0-x64.exe`; `arm64` when built with an Arm
-Python): everything is inside it
-(nothing to ship beside it). It unpacks itself to a temporary folder each time it starts,
-so it starts a little slower than an unpacked app would; a DBSCAN job it starts (the same
-.exe run with `--dbscan-job`) reuses that unpacked copy. A few layout details that make the
-build work:
+`just build` makes a folder, `apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>/`
+(for example `ampm-viewer-v2.0.1-x64`; `arm64` when built with an Arm Python),
+holding `AMPM Viewer.exe` and its `_internal` folder of libraries and data. It runs
+where it is. A folder starts in a fraction of the time the one-file .exe of 2.0.0 took,
+which unpacked all of itself (about 550 MB) to a temporary folder at every start. A
+DBSCAN job the app starts is the same program run with `--dbscan-job`. On macOS the
+build also makes `dist/AMPM Viewer.app`.
+
+`just installer` then makes, beside it:
+
+- **Windows:** `ampm-viewer-v<version>-<arch>-setup.exe`, with
+  [Inno Setup](https://jrsoftware.org/isinfo.php) 6.6 or later
+  (`winget install JRSoftware.InnoSetup`; `ISCC.exe` is found on the PATH, in the
+  `ISCC` variable, or where Inno Setup installs itself). The script is
+  `installer/ampm-viewer.iss`. The setup installs for the current user, without
+  administrator rights, to `%LOCALAPPDATA%\Programs\AMPM Viewer`; a new version
+  replaces the old one in place (same Start-menu shortcut and taskbar pin). It adds a
+  Start-menu shortcut, a desktop shortcut if ticked, opens `.ampmplot` files with the
+  app if ticked (on by default), and offers to start the app.
+- **macOS:** `ampm-viewer-v<version>-<arch>.dmg`, made with the system's `hdiutil`:
+  open it and drag AMPM Viewer to Applications. Built on an Apple silicon Mac
+  (arm64). The app is signed ad hoc, not by a Developer ID, so macOS stops its first
+  start. On macOS 15 and later: try to open it, then System Settings > Privacy &
+  Security > **Open Anyway**. On macOS 14 and earlier: Control-click the app, choose
+  **Open**, then **Open**. Set `AMPM_CODESIGN_IDENTITY` to a Developer ID to sign it
+  properly (notarising is not scripted yet).
+
+**Uninstalling** removes the app and lists what else it left, with sizes, to remove
+on one OK: **caches and leftovers** (ticked: crash reports, Qt's caches, and on
+Windows the `%TEMP%\_MEI...` folders a crashed 2.0.0 .exe left; on macOS the saved
+window state and preferences) and **settings and recent lists** (not ticked:
+`ampm-viewer.conf`). Macros, saved plots and builds are always kept, and the AMPM
+folder is removed only when nothing is left in it.
+
+- **Windows:** Settings > Apps > AMPM Viewer > Uninstall (the setup's uninstaller,
+  `[Code]` in `ampm-viewer.iss`). A silent uninstall (`/SILENT`) keeps everything
+  but the program, unless given `/TIDY`.
+- **macOS:** `Uninstall AMPM Viewer.command` on the disk image
+  (`installer/uninstall-macos.command`). It is unsigned too: if macOS won't open it,
+  run `bash "/Volumes/AMPM Viewer <version>/Uninstall AMPM Viewer.command"` in
+  Terminal. It asks the app to quit first, and for an administrator's password only
+  when the app can't be removed without one.
+
+Double-clicking a `.ampmplot` opens it in the AMPM Viewer already running (a second
+start hands the file over and quits; `shell/single_instance.py`), or starts the app
+with it. A start without a file always opens a new window.
+
+The build's names (version, architecture, folder and program names) come from
+`build_names.py`, shared by `app.spec` and the installer script. A few layout details
+that make the build work:
 
 - **`src/ampm_viewer/__main__.py`** is the entry script. PyInstaller runs it as
   `__main__`, outside the package, so it imports `ampm_viewer.shell.app` absolutely.
@@ -68,9 +113,28 @@ build work:
   `uv --directory`); its paths are relative to `apps/ampm_viewer/`.
 - The lazily-imported pipeline (`ohpal.*`) is pulled in via `collect_submodules`, and the
   app's assets (icons, fonts, help) and VisPy's shaders via `collect_data_files`.
-- The executable's icon is `src/ampm_viewer/assets/ampm.ico`; the app also sets it on
-  every window at runtime (title bar, taskbar, floating plots, help, log). The .exe's
-  Windows file properties (name, version, description) come from `__version__`.
+- The executable's icon is `src/ampm_viewer/assets/ampm.ico` (`ampm.icns` on macOS);
+  the app also sets it on every window at runtime (title bar, taskbar, floating plots,
+  help, log). The .exe's Windows file properties (name, version, description) come
+  from `__version__`.
+
+## Releasing on GitHub
+
+`.github/workflows/release.yml` builds both installers on GitHub's own Windows and
+Apple silicon machines and attaches them to a draft release:
+
+1. Set `__version__` in `src/ampm_viewer/__init__.py`, add the changelog entry and
+   `docs/release-notes/v<version>.md` (the release's text), and push.
+2. Tag the commit and push the tag: `git tag v2.0.1` then `git push origin v2.0.1`.
+   The tag must match `__version__`, or the run stops.
+3. When the run (the repository's **Actions** tab) is done, open **Releases**, check
+   the draft (`...-x64-setup.exe` and `...-arm64.dmg` attached) and press **Publish**.
+
+Colleagues then download from the release page, or from
+`https://github.com/Obbaron/ohpal/releases/latest`. In a private repository they need
+read access to it (a collaborator, or a member of the organisation that owns it).
+**Run workflow** on the Actions tab builds the installers without a release (kept
+as the run's artifacts for a week), to try them first.
 
 ## Layout
 
@@ -78,6 +142,9 @@ build work:
 apps/ampm_viewer/
 ├── run.py                       # alternative launcher (calls ampm_viewer.main)
 ├── app.spec                     # PyInstaller build spec
+├── build_names.py               # version, architecture and file names of a build
+├── installer/                   # ampm-viewer.iss (Windows), uninstall-macos.command,
+│                                #   build_installer.py
 ├── pyproject.toml
 └── src/
     └── ampm_viewer/

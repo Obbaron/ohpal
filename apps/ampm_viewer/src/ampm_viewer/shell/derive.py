@@ -18,6 +18,11 @@ changes) and both referencing columns by name in square brackets, e.g.
 
 Everything is parsed to an AST and compiled to a Polars expression — never
 ``eval``-ed. Derivations apply in order, so a later one may reference an earlier.
+
+Two more kinds are joined on rather than computed: **join** (a column from
+Excel, matched on a key column) and **cluster** (the Data tab's DBSCAN: a
+cluster per point, read from a file the clustering wrote, matched on
+``layer`` and ``Start time``).
 """
 
 from __future__ import annotations
@@ -424,6 +429,73 @@ def _apply_join(out, d):
     return out.drop("__join_lk")
 
 
+# Cluster files read so far: path -> (modified time, table). A few at most:
+# each is one row per clustered point.
+_CLUSTER_TABLES: dict = {}
+_CLUSTER_TABLES_MAX = 4
+NOISE = "noise"
+
+
+def cluster_labels(n: int) -> list[str]:
+    """A cluster column's values: "1" (the largest cluster) to ``n``, then
+    "noise"."""
+    return [str(i + 1) for i in range(int(n))] + [NOISE]
+
+
+def _cluster_table(path: str):
+    import os
+
+    import polars as pl
+
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _CLUSTER_TABLES.get(path)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    table = pl.read_parquet(path, glob=False)
+    if len(_CLUSTER_TABLES) >= _CLUSTER_TABLES_MAX:
+        _CLUSTER_TABLES.pop(next(iter(_CLUSTER_TABLES)))
+    _CLUSTER_TABLES[path] = (mtime, table)
+    return table
+
+
+def _apply_cluster(out, d, renames=None):
+    """Left-join a DBSCAN result as a column: each point's cluster ("1" the
+    largest ... "noise"), matched on ``layer`` and ``Start time`` (under their
+    current names). Points that were not clustered (left out by a filter, or
+    in a layer built since) get null. Skipped if the file is gone or the frame
+    lacks the keys."""
+    import polars as pl
+
+    renames = renames or {}
+    layer = renames.get("layer", "layer")
+    start = renames.get("Start time", "Start time")
+    if layer not in out.columns or start not in out.columns:
+        return out
+    table = _cluster_table(str(d.get("file") or ""))
+    if table is None:
+        return out
+    layers = out.get_column(layer).unique()
+    if layers.len() < 64:  # a layer or a few: join only their points
+        table = table.filter(pl.col("layer").is_in(layers.cast(table["layer"].dtype)))
+    right = table.select(
+        pl.col("layer").cast(out.schema[layer]).alias("__cl_layer"),
+        pl.col("Start time").cast(out.schema[start]).alias("__cl_start"),
+        pl.col("cluster").alias("__cl"),
+    )
+    n = int(d.get("n") or 0)
+    names = cluster_labels(n)
+    out = out.join(right, left_on=[layer, start],
+                   right_on=["__cl_layer", "__cl_start"], how="left",
+                   maintain_order="left")
+    value = pl.col("__cl").replace_strict(
+        list(range(-1, n)), [NOISE] + names[:-1], default=None,
+        return_dtype=pl.Enum(names))
+    return out.with_columns(value.alias(d["name"])).drop("__cl")
+
+
 def _label_expr(d, columns):
     import polars as pl
 
@@ -464,13 +536,14 @@ def filter_rows(df, conditions):
         return df
 
 
-def apply(df, derivations):
+def apply(df, derivations, renames=None):
     """Return ``df`` with each derivation added as a column.
 
     Applied in order so a derivation may build on an earlier one. Any that no
     longer compiles or evaluates against this frame (e.g. a referenced column
     isn't in this build) is skipped rather than raising — add-time validation
-    is where problems are reported.
+    is where problems are reported. ``renames`` (original -> display) lets a
+    cluster column find ``layer`` and ``Start time`` under their names.
     """
     out = df
     for d in derivations or []:
@@ -480,6 +553,8 @@ def apply(df, derivations):
                 out = out.with_columns(_label_expr(d, out.columns).alias(d["name"]))
             elif kind == "join":
                 out = _apply_join(out, d)
+            elif kind == "cluster":
+                out = _apply_cluster(out, d, renames)
             else:
                 out = _apply_formula(out, d)
         except Exception:  # noqa: BLE001 — skip a bad derivation, keep the rest
@@ -501,7 +576,7 @@ def shape(df, derivations, removed, filters, renames=None):
                 if o in df.columns and n != o}
         if rmap:
             df = df.rename(rmap)
-    out = apply(df, derivations) if derivations else df
+    out = apply(df, derivations, renames) if derivations else df
     if removed:
         drop = [c for c in removed if c in out.columns]
         if drop:

@@ -1,0 +1,102 @@
+# Builds AMPM Viewer's installers and puts them on a GitHub release.
+#
+# Release: bump __version__ (apps/ampm_viewer/src/ampm_viewer/__init__.py),
+# add docs/release-notes/v<version>.md, commit, then push a tag that matches:
+#
+#     git tag v2.0.1
+#     git push origin v2.0.1
+#
+# Both installers are built (Windows setup on a Windows runner, macOS disk
+# image on an Apple silicon runner) and attached to a *draft* release named
+# after the tag, with the notes file as its text. Check it on the Releases
+# page, then press Publish: only then can colleagues see it.
+#
+# Run it by hand (Actions > Release > Run workflow) to build the installers
+# without a release: they are kept as the run's artifacts for a week.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the release and upload its files
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            files: apps/ampm_viewer/dist/*-setup.exe
+          - name: macOS Apple silicon
+            os: macos-latest
+            files: apps/ampm_viewer/dist/*.dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Check the tag matches the app's version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python -c "import sys; sys.path.insert(0, 'apps/ampm_viewer'); import build_names; print(build_names.version())")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match __version__ $version"
+            exit 1
+          fi
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build the app
+        run: uv --directory apps/ampm_viewer run --locked pyinstaller --noconfirm app.spec
+
+      - name: Build the installer
+        run: uv --directory apps/ampm_viewer run --locked --no-sync python installer/build_installer.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ runner.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Draft the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then
+            set -- --notes-file "$notes"
+          else
+            set -- --generate-notes
+          fi
+          gh release create "$GITHUB_REF_NAME" installers/* \
+            --draft --title "AMPM Viewer $version" "$@"

@@ -19,8 +19,10 @@ from ohpal.ampm.clustering import (
     _validate,
     cluster_dbscan,
     cluster_dbscan_chunked,
+    cluster_dbscan_features,
     cluster_summary,
     k_distance_curve,
+    rank_by_size,
 )
 
 THICKNESS = 0.03
@@ -473,3 +475,97 @@ class TestCoverageGaps:
         )
         assert out.height == df.height
         assert len(set(out["cluster"].to_list()) - {-1}) == 2
+
+
+class TestExtraColumns:
+    """Position plus other columns: neighbours must be close in both."""
+
+    def _hot_and_cold(self, layers=range(1, 13)):
+        # One column of points at (0, 0); half of each layer's points read
+        # "hot" (signal 500), half "cold" (100): one place, two values.
+        df = vertical_line_3d(layers, per_layer=8)
+        sig = np.tile([100.0, 100.0, 100.0, 100.0, 500.0, 500.0, 500.0, 500.0],
+                      df.height // 8)
+        return df.with_columns(pl.Series("signal", sig))
+
+    def test_scaled_array_appends_extra_columns(self):
+        df = pl.DataFrame({"Demand X": [1.0], "Demand Y": [2.0], "Z": [0.06],
+                           "s": [50.0]})
+        arr = _to_scaled_array(df, "Demand X", "Demand Y", "Z", 2.0, 0.03,
+                               {"s": 10.0})
+        assert arr.tolist() == [[1.0, 2.0, 4.0, 10.0]]
+
+    def test_position_alone_is_one_cluster(self):
+        out = cluster_dbscan_chunked(
+            self._hot_and_cold(), eps_xy=1.0, eps_z=0.06, min_samples=3,
+            layers_per_chunk=5, overlap_layers=4, layer_thickness=THICKNESS,
+            verbose=False)
+        assert set(out["cluster"].to_list()) == {0}
+
+    def test_signal_splits_the_column_in_two(self):
+        df = self._hot_and_cold()
+        out = cluster_dbscan_chunked(
+            df, eps_xy=1.0, eps_z=0.06, min_samples=3, layers_per_chunk=5,
+            overlap_layers=4, layer_thickness=THICKNESS, verbose=False,
+            extra_columns={"signal": 50.0})
+        labels = out["cluster"].to_numpy()
+        hot = df["signal"].to_numpy() > 300
+        assert len(set(labels[hot])) == 1 and len(set(labels[~hot])) == 1
+        assert labels[hot][0] != labels[~hot][0] and (labels >= 0).all()
+
+    def test_extra_column_checks(self):
+        df = self._hot_and_cold()
+        with pytest.raises(KeyError, match="nope"):
+            cluster_dbscan_chunked(df, eps_xy=1.0, eps_z=0.06, verbose=False,
+                                   extra_columns={"nope": 1.0})
+        with pytest.raises(ValueError, match="positive"):
+            cluster_dbscan_chunked(df, eps_xy=1.0, eps_z=0.06, verbose=False,
+                                   extra_columns={"signal": 0.0})
+
+
+class TestClusterFeatures:
+    def test_clusters_by_value_largest_first(self):
+        rng = np.random.default_rng(3)
+        small = rng.normal(10.0, 0.1, 40)
+        big = rng.normal(50.0, 0.1, 90)
+        df = pl.DataFrame({"v": np.concatenate([small, big, [200.0]])})
+        out = cluster_dbscan_features(df, {"v": 1.0}, min_samples=5)
+        labels = out["cluster"].to_numpy()
+        assert set(labels[:40]) == {1} and set(labels[40:130]) == {0}
+        assert labels[-1] == -1, "a lone value is noise"
+
+    def test_far_rows_are_noise_after_sampling(self):
+        rng = np.random.default_rng(4)
+        vals = np.concatenate([rng.normal(0.0, 0.05, 3000), [1000.0]])
+        df = pl.DataFrame({"a": vals, "b": vals * 2})
+        out = cluster_dbscan_features(df, {"a": 1.0, "b": 2.0}, min_samples=5,
+                                      representative_size=500)
+        labels = out["cluster"].to_numpy()
+        assert (labels[:-1] == 0).all() and labels[-1] == -1
+
+    def test_dense_data_uses_fewer_rows(self):
+        # Every row is a neighbour of every other: 20000^2 pairs at full size.
+        # A small pair budget clusters a few thousand representatives (with
+        # min samples scaled to them) and still labels every row.
+        rng = np.random.default_rng(5)
+        vals = np.concatenate([rng.uniform(0.0, 1.0, 20000), [500.0]])
+        df = pl.DataFrame({"v": vals})
+        out = cluster_dbscan_features(df, {"v": 5.0}, min_samples=200,
+                                      max_pairs=2_000_000)
+        labels = out["cluster"].to_numpy()
+        assert (labels[:-1] == 0).all() and labels[-1] == -1
+
+    def test_checks(self):
+        df = pl.DataFrame({"v": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="at least one"):
+            cluster_dbscan_features(df, {})
+        with pytest.raises(KeyError):
+            cluster_dbscan_features(df, {"w": 1.0})
+        empty = cluster_dbscan_features(df.head(0), {"v": 1.0})
+        assert empty["cluster"].to_list() == []
+
+
+def test_rank_by_size():
+    labels = np.array([5, 5, -1, 2, 2, 2, 7, -1])
+    assert rank_by_size(labels).tolist() == [1, 1, -1, 0, 0, 0, 2, -1]
+    assert rank_by_size(np.array([-1, -1])).tolist() == [-1, -1]

@@ -46,9 +46,13 @@ test-app build=env_var_or_default("AMPM_TEST_BUILD", ""):
 # library tests, then the GUI scenarios
 test-all build=env_var_or_default("AMPM_TEST_BUILD", ""): test (test-app build)
 
-# compile binary from app.spec
+# compile the app from app.spec: dist/ampm-viewer-v<version>-<arch>/ (AMPM Viewer.exe + _internal; on macOS also dist/AMPM Viewer.app)
 build:
-    uv --directory {{app_dir}} run pyinstaller app.spec
+    uv --directory {{app_dir}} run pyinstaller --noconfirm app.spec
+
+# build, then the installer: a setup .exe on Windows (needs Inno Setup 6.6+), a .dmg on macOS
+installer: build
+    uv --directory {{app_dir}} run --no-sync python installer/build_installer.py
 
 # clean then build
 rebuild: clean build

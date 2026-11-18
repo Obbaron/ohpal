@@ -164,6 +164,7 @@ def populate_data(
     part_has_csv=False,
     on_part_calc=None,
     on_part_import=None,
+    on_cluster=None,
     on_filter=None,
     on_remove_filter=None,
     on_reset_filter=None,
@@ -244,6 +245,20 @@ def populate_data(
         reset_sel.triggered.connect(lambda: on_reset_selection())
     toolbar.addSeparator()
 
+    # Filters (query-time; on top of the cache). Mask / assign-parts /
+    # correction are not here: they're defined with the DataStore in the
+    # backstage setup page.
+    flt = _action(toolbar, "Filter", "filter", color)
+    if on_filter is not None:
+        flt.triggered.connect(lambda: on_filter())
+    rmf = _action(toolbar, "Remove filter", "remove_filter", color)
+    if on_remove_filter is not None:
+        rmf.triggered.connect(lambda: on_remove_filter())
+    rsf = _action(toolbar, "Reset filters", "reset_filter", color)
+    if on_reset_filter is not None:
+        rsf.triggered.connect(lambda: on_reset_filter())
+    toolbar.addSeparator()
+
     # Parts — contextual: only shown once a successful part assignment gives a
     # usable part_id, so these part-wise actions can count on it.
     if has_parts:
@@ -259,18 +274,13 @@ def populate_data(
             pimport.setToolTip("No QuantAM parts CSV configured for this build.")
         toolbar.addSeparator()
 
-    # Filters (query-time; on top of the cache). Mask / assign-parts /
-    # correction are not here — they're defined with the DataStore in the
-    # backstage setup page.
-    flt = _action(toolbar, "Filter", "filter", color)
-    if on_filter is not None:
-        flt.triggered.connect(lambda: on_filter())
-    rmf = _action(toolbar, "Remove filter", "remove_filter", color)
-    if on_remove_filter is not None:
-        rmf.triggered.connect(lambda: on_remove_filter())
-    rsf = _action(toolbar, "Reset filters", "reset_filter", color)
-    if on_reset_filter is not None:
-        rsf.triggered.connect(lambda: on_reset_filter())
+    # DBSCAN for any purpose: clusters on the position and / or other columns
+    # of the rows the filters keep, as a new column (runs in the background).
+    clu = _action(toolbar, "DBSCAN clusters", "cluster", color)
+    if on_cluster is not None:
+        clu.triggered.connect(lambda: on_cluster())
+    else:
+        clu.setEnabled(False)
     toolbar.addSeparator()
 
     # New plot — dropdown of plot types (icon per type).

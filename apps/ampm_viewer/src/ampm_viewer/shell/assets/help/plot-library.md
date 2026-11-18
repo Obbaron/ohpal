@@ -32,6 +32,10 @@ If a plot would make a large file, the app says how large and asks first.
   build each came from. Double-click one, or select it and press **Open**.
 - On the Data tab, **New plot ▸ Open from the plot library…** goes there too.
 - **Browse…** opens a saved plot from any other folder.
+- Outside the app, double-click a `.ampmplot` file (in File Explorer or
+  Finder, or attached to an email). It opens in the AMPM Viewer already
+  running, or starts it. (When AMPM Viewer was installed with the
+  `.ampmplot` option ticked, which it is by default.)
 
 The plot opens in a tab named after its title and its build, for example
 *Melt pool map · JR299*. Its styling can still be changed, and it can be

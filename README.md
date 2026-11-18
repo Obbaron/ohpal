@@ -69,9 +69,14 @@ Run `just` to list available tasks:
 | `test` | run the library tests (`ohpal_core`, `ohpal_samples`, `ohpal_ampm`) |
 | `test-app` | run the app's GUI scenarios on a build folder: `just test-app "C:\builds\JR299"` (see [apps/ampm_viewer/tests](apps/ampm_viewer/tests/README.md)) |
 | `test-all` | `test`, then `test-app` |
-| `build` | compile the standalone binary from `apps/ampm_viewer/app.spec` |
+| `build` | compile the app from `apps/ampm_viewer/app.spec` (a folder: `AMPM Viewer.exe` + `_internal`) |
+| `installer` | `build`, then the installer: a setup .exe on Windows (Inno Setup 6.6+), a .dmg on macOS (see [apps/ampm_viewer](apps/ampm_viewer/README.md#building-the-app-and-its-installers)) |
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |
+
+Releases (the Windows setup and macOS disk image on GitHub's Releases page) are built
+by GitHub Actions when a version tag is pushed: see
+[Releasing on GitHub](apps/ampm_viewer/README.md#releasing-on-github).
 
 `run`, `test`, and `verify` use the environment as-is (they assume you've run `setup`);
 `build` re-syncs first so binaries are never frozen against a stale environment. After

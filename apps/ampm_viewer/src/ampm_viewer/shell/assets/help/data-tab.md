@@ -73,6 +73,7 @@ at the top goes back to the whole grid.
 | Add a calculated column | [Calculated columns](help:columns-calculation) |
 | Tag rows with a label | [Label columns](help:columns-label) |
 | Bring in values from a spreadsheet | [Adding a column from Excel](help:columns-excel) |
+| Group points into clusters | [DBSCAN clusters](help:columns-dbscan) |
 | Remove or restore columns | [Renaming, removing and restoring columns](help:columns-manage) |
 | Work per part | [Parts](help:parts) |
 | Narrow the rows | [Filters](help:filters) |

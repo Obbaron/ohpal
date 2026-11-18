@@ -50,6 +50,7 @@ UI = {
     "correction": "calibrate",
     # filters
     "filter": "filter", "remove_filter": "filter--remove",
+    "cluster": "chart--bubble-packed",
     "reset_filter": "filter--reset", "clear_filters": "filter--reset",
     "export_excel": "XLS",
     # macros

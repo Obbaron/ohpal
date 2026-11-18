@@ -79,6 +79,9 @@ class AppController(QObject):
         self._dbscan_thread: QThread | None = None
         self._dbscan_worker = None
         self._dbscan_wanted: str | None = None
+        # The Data tab's DBSCAN (a cluster column): one run at a time.
+        self._cluster_thread: QThread | None = None
+        self._cluster_worker = None
         # All queries (grid + per-plot spans) serialize through one worker to
         # avoid concurrent cache builds racing. Each item: dict(span, dest, label,
         # coalesce). Grid requests coalesce (latest wins); plot requests don't.
@@ -180,6 +183,18 @@ class AppController(QObject):
         c = self._config or {}
         return (float(c.get("EPS_XY", 0.3)), float(c.get("EPS_Z", 0.06)),
                 int(c.get("MIN_SAMPLES", 10)))
+
+    def dbscan_chunking(self) -> tuple[int, int | None]:
+        """config.toml's chunking for DBSCAN on the position: (layers per
+        chunk, overlap layers or None for the least the Z radius needs)."""
+        c = self._config or {}
+        overlap = c.get("OVERLAP_LAYERS")
+        return (int(c.get("LAYERS_PER_CHUNK", 11)),
+                int(overlap) if overlap else None)
+
+    def layer_thickness(self) -> float:
+        """The build's layer thickness in mm (0.03 if unknown)."""
+        return float(self.session.layer_thickness or 0.03)
 
     def create_excel(self) -> None:
         """Pick a build folder and write that one build's samples-template
@@ -1240,16 +1255,7 @@ class AppController(QObject):
         mask is built. Uses the raw source columns, so this runs before rename.
         A no-op when the toggle is off, the mask isn't built yet, or the frame
         lacks the geometry columns (never let masking break the grid)."""
-        if not self._apply_mask or self._mask_geom is None:
-            return df
-        if any(c not in df.columns for c in self._MASK_COLS):
-            return df
-        try:
-            from ohpal.ampm.masking import apply_mask
-
-            return apply_mask(df, self._mask_geom)
-        except Exception:  # noqa: BLE001 - masking must never break shaping
-            return df
+        return _masked(df, self._mask_geom if self._apply_mask else None)
 
     def _ensure_mask(self) -> None:
         """Start an off-thread mask build if masking is on and the held mask is
@@ -1379,47 +1385,36 @@ class AppController(QObject):
         overriding the source column. Uses the raw source columns, so this runs
         before rename. A no-op when correction is off or the required inputs
         aren't loaded (never let correction break shaping)."""
-        c = self._correction
-        if not c.get("on"):
-            return df
-        if any(col not in df.columns for col in _CORR_INPUTS):
-            return df
-        if c.get("mode") == "override":
-            out = _CORR_SOURCE
-        else:
-            out = (c.get("output") or "").strip() or f"{_CORR_SOURCE} corrected"
-        try:
-            from ohpal.ampm.correction import MeltPoolCorrection
-
-            return MeltPoolCorrection().apply(df, output_col=out)
-        except Exception:  # noqa: BLE001 - correction must never break shaping
-            return df
+        return _corrected(df, self._correction)
 
     def _shape(self, df):
-        # Masking first: drop points outside the STL layer polygons, using the
-        # raw source columns ("Demand X"/"Demand Y"/"layer") before any rename.
-        df = self._mask(df)
-        # The Part filter: parts left out of the DataStore (points with no
-        # part stay).
-        if self._excluded_parts and "part_id" in df.columns:
-            import polars as pl
+        return _shape_with(df, self._shape_state())
 
-            df = df.filter(~pl.col("part_id").is_in(sorted(self._excluded_parts))
-                           | pl.col("part_id").is_null())
-        # Correction next (still on raw column names): add/override the corrected
-        # melt-pool column before rename remaps anything.
-        df = self._correct(df)
-        # Renames next: a source column reads as its new name through the whole
-        # pipeline (derivations, removed, filters, grid, plots).
-        if self.session.renames:
-            rmap = {o: n for o, n in self.session.renames.items()
-                    if o in df.columns and n != o}
-            if rmap:
-                df = df.rename(rmap)
-        if self.session.derivations:
-            df = derive.apply(df, self.session.derivations)
-        drop = [c for c in self.session.removed if c in df.columns]
-        return df.drop(drop) if drop else df
+    def _shape_state(self, copy_state: bool = False) -> dict:
+        """What shaping reads: the live state, or (``copy_state``) a copy that
+        later changes leave alone, for shaping on another thread."""
+        import copy
+
+        state = {
+            "mask": self._mask_geom if self._apply_mask else None,
+            "excluded": sorted(self._excluded_parts or ()),
+            "correction": self._correction,
+            "renames": self.session.renames,
+            "derivations": self.session.derivations,
+            "removed": self.session.removed,
+        }
+        if copy_state:
+            state = {k: (v if k == "mask" else copy.deepcopy(v))
+                     for k, v in state.items()}
+        return state
+
+    def shaper(self):
+        """A function shaping a frame as the grid is shaped now, rows filtered
+        by the current filters, unaffected by later changes: for shaping a
+        big query off the UI thread (the Data tab's DBSCAN)."""
+        state = self._shape_state(copy_state=True)
+        filters = list(self._filter)
+        return lambda df: derive.filter_rows(_shape_with(df, state), filters)
 
     def add_derivation(
         self, name: str, expr_text: str, group: str = "", *, overwrite: bool = False
@@ -1635,6 +1630,165 @@ class AppController(QObject):
         layer = cur if cur is not None else self._landing_layer(store)
         self._request((layer, layer), deliver, f"layer {layer}", coalesce=True)
 
+    # -- the Data tab's DBSCAN: a cluster column (its own thread) ---------
+    def cluster_running(self) -> bool:
+        return self._cluster_thread is not None
+
+    def cluster_layers(self) -> list[int]:
+        """The layers a cluster run reads: every built one."""
+        store = self.session.store
+        if store is None:
+            return []
+        present = store.cached_layers()
+        return [L for L in store.layers if L in present]
+
+    def cluster_position_columns(self) -> dict:
+        """Source name -> this build's (display) name of the columns a
+        position clustering reads (and the keys a cluster column joins on)."""
+        r = self.session.renames
+        return {c: r.get(c, c) for c in
+                ("layer", "Start time", "Demand X", "Demand Y", "Z")}
+
+    def start_cluster(self, settings: dict, *, on_done, on_error,
+                      on_progress=None) -> str | None:
+        """Start the Data tab's DBSCAN with ``settings`` (``name``,
+        ``position``, ``eps_xy``, ``eps_z``, ``features`` as ``[[column,
+        radius], ...]``, ``min_samples``) on the rows the filters keep now, in
+        every built layer. Calls ``on_done(path, info)`` (``path`` the labels
+        file; None, None when cancelled) or ``on_error(message)``; returns an
+        error message instead when it cannot start."""
+        import time
+
+        from . import plotneeds
+        from .workers import ClusterWorker
+
+        store = self.session.store
+        if store is None:
+            return "Open a build first."
+        if self._cluster_thread is not None:
+            return "A DBSCAN run is already going: wait for it, or cancel it."
+        if self._dbscan_thread is not None:
+            return ("DBSCAN part assignment is running: wait for it to "
+                    "finish first.")
+        layers = self.cluster_layers()
+        if not layers:
+            return "No layers are built yet."
+        names = self.cluster_position_columns()
+        if not settings.get("position"):
+            names = {k: names[k] for k in ("layer", "Start time")}
+        features = [(c, float(r)) for c, r in settings.get("features") or []]
+        # The source columns to read: what it clusters on and what the
+        # filters read, followed back through the calculated columns.
+        need = set(names.values()) | {c for c, _r in features}
+        for cond in self._filter:
+            need |= plotneeds.refs(cond)
+        for d in reversed(self.session.derivations):
+            if d.get("name") in need:
+                need |= plotneeds.derivation_refs(d)
+        original = {new: old for old, new in self.session.renames.items()}
+        made = {d.get("name") for d in self.session.derivations}
+        cols = {original.get(c, c) for c in need if c not in made}
+        cols |= set(self.pipeline_columns())
+        if self._excluded_parts:
+            cols.add("part_id")
+        cols = sorted(c for c in cols if c in set(store.columns))
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", settings.get("name") or "cluster")
+        out_path = Path(store.cache_dir) / "clusters" / f"{slug.strip('-')}-{stamp}.parquet"
+        cfg = self._config or {}
+        params = {
+            "position": bool(settings.get("position")),
+            "eps_xy": float(settings.get("eps_xy") or 0.3),
+            "eps_z": float(settings.get("eps_z") or 0.06),
+            "min_samples": int(settings.get("min_samples") or 10),
+            "layers_per_chunk": int(settings.get("layers_per_chunk")
+                                    or cfg.get("LAYERS_PER_CHUNK", 11)),
+            "overlap_layers": (settings.get("overlap_layers")
+                               if "layers_per_chunk" in settings
+                               else cfg.get("OVERLAP_LAYERS")),
+            "layer_thickness": self.layer_thickness(),
+        }
+        thread = QThread(self)
+        worker = ClusterWorker(
+            store, layers, columns=cols or None, shape=self.shaper(),
+            names={job: shown for job, shown in names.items()},
+            features=features, params=params, out_path=out_path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        label = f"DBSCAN '{settings.get('name')}'"
+        worker.progress.connect(
+            lambda text: self._window.set_background_job(
+                f"{label}: {text}…", self.cancel_cluster))
+        if on_progress is not None:
+            worker.progress.connect(on_progress)
+
+        def done(result) -> None:
+            if store is not self.session.store:
+                return  # the build changed meanwhile: not ours any more
+            if result is None:
+                on_done(None, None)
+            else:
+                on_done(*result)
+
+        def failed(message: str) -> None:
+            if store is self.session.store:
+                on_error(message)
+
+        worker.finished.connect(done)
+        worker.error.connect(failed)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        release_after(thread, worker)  # not deleteLater: see workers
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_cluster)
+        self._cluster_thread, self._cluster_worker = thread, worker
+        self._window.set_background_job(f"{label}: starting…", self.cancel_cluster)
+        thread.start()
+        return None
+
+    def _clear_cluster(self) -> None:
+        self._cluster_thread = None
+        self._cluster_worker = None
+        self._window.set_background_job(None)
+
+    def cancel_cluster(self, ask: bool = True) -> None:
+        """Stop a running Data-tab DBSCAN (the work so far is lost)."""
+        worker = self._cluster_worker
+        if worker is None:
+            return
+        if ask and not _ask(self._window, "Stop DBSCAN?",
+                            "The clustering done so far is lost, and no "
+                            "cluster column is added.",
+                            ok_text="Stop", cancel_text="Keep running"):
+            return
+        try:
+            worker.cancel()
+        except RuntimeError:  # already gone: it finished meanwhile
+            return
+        self._window.set_background_job("DBSCAN: stopping…")
+
+    def add_cluster_derivation(self, name: str, path, settings: dict) -> str | None:
+        """Add a cluster column from a finished run's labels file. Returns an
+        error message, or None."""
+        import json
+
+        names = self._derivable_columns()
+        if name in names:
+            return f"A column named {name!r} already exists."
+        path = Path(path)
+        try:
+            meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "The clustering result could not be read."
+        info = meta.get("info") or {}
+        self.session.derivations.append({
+            "kind": "cluster", "name": name, "file": str(path),
+            "n": int(info.get("n_clusters") or 0),
+            "settings": dict(settings), "info": info,
+        })
+        self._refresh_derived()
+        return None
+
     def _on_dbscan_error(self, store, message: str) -> None:
         if store is not self.session.store:
             return
@@ -1674,18 +1828,20 @@ class AppController(QObject):
         # A clustering run may have minutes to go: its process is ended at once
         # (its result is cached only at the very end, so nothing half-written
         # is left behind), and its thread then returns.
-        try:
-            if self._dbscan_worker is not None:
-                self._dbscan_worker.cancel()
-            if self._dbscan_thread is not None:
-                self._dbscan_thread.quit()
-                # Still reading the points (one uninterruptible call): last
-                # resort, as before, so the app can close.
-                if not self._dbscan_thread.wait(8000):
-                    self._dbscan_thread.terminate()
-                    self._dbscan_thread.wait(2000)
-        except RuntimeError:
-            pass
+        for worker, thread in ((self._dbscan_worker, self._dbscan_thread),
+                               (self._cluster_worker, self._cluster_thread)):
+            try:
+                if worker is not None:
+                    worker.cancel()
+                if thread is not None:
+                    thread.quit()
+                    # Still reading the points (one uninterruptible call):
+                    # last resort, as before, so the app can close.
+                    if not thread.wait(8000):
+                        thread.terminate()
+                        thread.wait(2000)
+            except RuntimeError:
+                pass
 
 
 def _size_text(size: int) -> str:
@@ -1733,3 +1889,65 @@ def write_config_path(build_root, key: str, path) -> None:
                        default=start)
             lines.insert(last + 1, line)
     toml.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# -- shaping (module level, so a snapshot can run on another thread) ----
+_MASK_COLS = ("Demand X", "Demand Y", "layer")
+
+
+def _masked(df, mask):
+    """``df`` less the rows outside ``mask`` (an STL layer mask; None: as is)."""
+    if mask is None or any(c not in df.columns for c in _MASK_COLS):
+        return df
+    try:
+        from ohpal.ampm.masking import apply_mask
+
+        return apply_mask(df, mask)
+    except Exception:  # noqa: BLE001 - masking must never break shaping
+        return df
+
+
+def _corrected(df, c: dict):
+    """``df`` with the melt-pool correction ``c`` applied (when it is on)."""
+    if not c.get("on"):
+        return df
+    if any(col not in df.columns for col in _CORR_INPUTS):
+        return df
+    if c.get("mode") == "override":
+        out = _CORR_SOURCE
+    else:
+        out = (c.get("output") or "").strip() or f"{_CORR_SOURCE} corrected"
+    try:
+        from ohpal.ampm.correction import MeltPoolCorrection
+
+        return MeltPoolCorrection().apply(df, output_col=out)
+    except Exception:  # noqa: BLE001 - correction must never break shaping
+        return df
+
+
+def _shape_with(df, state: dict):
+    """The grid's shaping of ``df`` under ``state`` (``_shape_state``)."""
+    # Masking first: drop points outside the STL layer polygons, using the
+    # raw source columns ("Demand X"/"Demand Y"/"layer") before any rename.
+    df = _masked(df, state["mask"])
+    # The Part filter: parts left out of the DataStore (points with no
+    # part stay).
+    if state["excluded"] and "part_id" in df.columns:
+        import polars as pl
+
+        df = df.filter(~pl.col("part_id").is_in(state["excluded"])
+                       | pl.col("part_id").is_null())
+    # Correction next (still on raw column names): add/override the corrected
+    # melt-pool column before rename remaps anything.
+    df = _corrected(df, state["correction"])
+    # Renames next: a source column reads as its new name through the whole
+    # pipeline (derivations, removed, filters, grid, plots).
+    renames = state["renames"]
+    if renames:
+        rmap = {o: n for o, n in renames.items() if o in df.columns and n != o}
+        if rmap:
+            df = df.rename(rmap)
+    if state["derivations"]:
+        df = derive.apply(df, state["derivations"], renames)
+    drop = [c for c in state["removed"] if c in df.columns]
+    return df.drop(drop) if drop else df

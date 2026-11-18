@@ -672,6 +672,54 @@ class Actions(QObject):
             f"Added column '{name}' from Excel ({len(mapping)} keys on '{key}').",
             f"Add column '{name}' from Excel")
 
+    def _do_cluster(self, name, position, eps_xy, eps_z, features, min_samples,
+                    layers_per_chunk=None, overlap_layers=None,
+                    labels=None) -> Outcome:
+        """Add a DBSCAN cluster column. ``labels``: the finished run's result
+        file (the Data toolbar runs it first, in the background); without it
+        (a macro's step) the clustering runs here, to the end, first."""
+        settings = {"name": name, "position": bool(position), "eps_xy": eps_xy,
+                    "eps_z": eps_z,
+                    "features": [list(f) for f in features or []],
+                    "min_samples": min_samples}
+        if layers_per_chunk:  # else config.toml's (a macro from before)
+            settings.update(layers_per_chunk=int(layers_per_chunk),
+                            overlap_layers=(int(overlap_layers)
+                                            if overlap_layers else None))
+        if name in self._taken():
+            return Outcome(False, f"A column named {name!r} already exists.")
+        if labels is None:
+            try:
+                labels = self._host.cluster_and_wait(settings)
+            except RuntimeError as exc:
+                return Outcome(False, f"DBSCAN failed: {exc}")
+        err = self._c.add_cluster_derivation(name, labels, settings)
+        if err:
+            return Outcome(False, f"DBSCAN failed: {err}")
+        info = next((d.get("info") or {} for d in self._s.derivations
+                     if d.get("name") == name), {})
+        summary = cluster_summary(name, info)
+        return Outcome(True, summary, f"Add DBSCAN column '{name}'", note=summary)
+
+    def _check_cluster(self, sim, ctx, name, position, eps_xy, eps_z, features,
+                       min_samples, layers_per_chunk=None, overlap_layers=None,
+                       labels=None) -> list[str]:
+        out = []
+        names = sim.derivable()
+        if name in sim.taken():
+            out.append(self._exists(name))
+        if position:
+            for col in ("Demand X", "Demand Y", "Z"):
+                if sim.display(col) not in names:
+                    out.append(f"Unknown column: {sim.display(col)!r}")
+        for col, _radius in features or []:
+            if col not in names:
+                out.append(f"Unknown column: {col!r}")
+        if not position and not features:
+            out.append("Nothing to cluster on.")
+        sim.add(name)
+        return out
+
     def _do_part_calc(self, signal, reducer, name) -> Outcome:
         """Per-part reduction of a signal. CoV lays out three columns — per-part
         mean, per-part std, then their ratio — reusing the mean/std if present."""
@@ -820,3 +868,17 @@ class Actions(QObject):
     def _do_filter_reset(self) -> Outcome:
         self._c.reset_filters()
         return Outcome(True, "", "Reset filters")
+
+
+def cluster_summary(name: str, info: dict) -> str:
+    """One line on a DBSCAN result, for the status bar and the log."""
+    n = int(info.get("n_clusters") or 0)
+    points = int(info.get("n_points") or 0)
+    noise = int(info.get("n_noise") or 0)
+    largest = ", ".join(f"{s:,}" for s in (info.get("largest") or [])[:3])
+    share = f"{noise / points:.1%}" if points else "0%"
+    text = (f"DBSCAN '{name}': {n:,} cluster{'s' if n != 1 else ''} in "
+            f"{points:,} points, {share} noise")
+    if largest:
+        text += f"; the largest {largest} points"
+    return text + "."
