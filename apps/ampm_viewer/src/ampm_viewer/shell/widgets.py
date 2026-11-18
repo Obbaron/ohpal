@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QSize
 from PyQt6.QtWidgets import (
     QComboBox,
     QGroupBox,
+    QStackedWidget,
     QStyle,
     QStyleOptionGroupBox,
     QToolButton,
@@ -139,3 +141,22 @@ class Disclosure(QWidget):
         self.button.setText(f"{'▾' if expanded else '▸'}  {self._text}")
         self.body.setVisible(expanded)
         self.expandedChanged.emit(expanded)
+
+
+class CurrentPageStack(QStackedWidget):
+    """A stacked widget sized by the page it shows, not its largest page.
+
+    ``QStackedWidget`` asks for room for every page at once, so a wide page
+    that is not showing (the File tab, say) still widened the window."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        page = self.currentWidget()
+        return page.sizeHint() if page is not None else super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        page = self.currentWidget()
+        return page.minimumSizeHint() if page is not None else super().minimumSizeHint()

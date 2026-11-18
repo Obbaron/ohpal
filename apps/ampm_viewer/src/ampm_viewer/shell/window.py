@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QSizePolicy,
     QSplitter,
-    QStackedWidget,
     QStatusBar,
     QTabBar,
     QToolBar,
@@ -39,12 +38,14 @@ from .backstage import Backstage
 from .controller import AppController
 from .data_tab import DataTab
 from .dock import SidePanel
+from .widgets import CurrentPageStack
 from .plot_tab import PlotTab
 from .recents import RecentStore
 from .settings import app_settings
 from .state import BuildSession
 
 APP_TITLE = "AMPM Viewer"
+MIN_WINDOW_SIZE = QSize(800, 520)  # the smallest the window can be made
 _THEME_KEY = "appearance/theme"  # "auto" | "light" | "dark" (Settings)
 
 
@@ -96,6 +97,12 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint)
         self.setContentsMargins(1, 1, 1, 1)  # room for the 1px window border
+        # An explicit minimum: without one, Qt makes the window's minimum the
+        # contents' (which grows when the side panel opens or a wider page
+        # shows) and enlarges the window to it, off a maximised or full-screen
+        # window's screen. With it, only the user (or the system) sizes the
+        # window; its contents fit what they are given.
+        self.setMinimumSize(MIN_WINDOW_SIZE)
         self.resize(1300, 820)
 
         from .logconsole import LogBus
@@ -176,7 +183,7 @@ class MainWindow(QMainWindow):
         # Content row: the tab pages, with the side panel beside them (so the
         # panel sits under the tabs/toolbar, not up at the title bar). A
         # splitter lets the user resize it.
-        self.stack = QStackedWidget()
+        self.stack = CurrentPageStack()
         self.panel = SidePanel()
         self.panel.closed.connect(self._close_panel)
         self.panel.columnRenamed.connect(self._rename_column_from_panel)

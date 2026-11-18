@@ -12,11 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
 1.x window (Config and Analysis tabs, Plotly plot views loaded from disk) is
-replaced by a new PyQt6 interface with fast VisPy plots, a data table you shape before plotting, undo / redo, macros, a plot library for
-comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
-self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm` pipeline underneath keeps
-its API: it gains a few additions (listed under *Pipeline*) and loses only the
-Plotly figure builders, which the app replaces.
+replaced by a new PyQt6 interface with fast VisPy plots, a data table you
+shape before plotting, undo / redo, macros, a plot library for comparing
+builds, stacked (stepped) builds and an in-app guide. It ships as one
+self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm`
+pipeline underneath keeps its API: it gains a few additions (listed under
+*Pipeline*) and loses only the Plotly figure builders, which the app replaces.
 
 ### Added
 
@@ -48,7 +49,8 @@ Plotly figure builders, which the app replaces.
   and all layers or a From / To range; the imported columns and their renames
   (with **All**, **None**, **Default** and **Clear renames**); and the load
   recipe: mask (STL), part assignment (Direct with a **Max distance**, DHXML, or
-  DBSCAN) with a **Part filter** of the parts to keep, and correction (override
+  DBSCAN) with a **Part filter** of the parts to keep (each listed with its X Y
+  position, as `Part1 @ -10.1 1.2`), and correction (override
   the column or write a new one). Built off the UI thread with progress and a
   **Cancel** that stops after the current layer (the layers built are kept); a
   rebuild starts from a clean slate.
@@ -80,11 +82,11 @@ Plotly figure builders, which the app replaces.
   Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
   side panel that show only what applies to the plot, with per-plot options (equal
   axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
-  measured points, level lines, eps guide); screenshots; plots popped out into
-  their own windows and docked back. A plot queries and keeps only the columns
-  it depends on (what it draws and filters on, and the inputs of calculated
-  columns among them) and draws only its filter's rows, so many open plots
-  stay light.
+  measured points, level lines, eps guide); screenshots (the camera button); plots
+  popped out into their own windows and docked back. A plot queries and keeps only
+  the columns it depends on (what it draws and filters on, and the inputs of
+  calculated columns among them) and draws only its filter's rows, so many open
+  plots stay light.
 - **Editable plot elements.** Click to select (an open side panel shows the
   element at once), double-click to open the side panel on it, click empty
   plot or toolbar space to deselect; set as the default for new plots: the title (text, font, alignment),
@@ -165,7 +167,7 @@ Plotly figure builders, which the app replaces.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (580 in all). The app has 31 GUI
+  current API; `just test` runs every package's tests (580 in all). The app has 33 GUI
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).
@@ -220,6 +222,10 @@ Plotly figure builders, which the app replaces.
 ### Fixed
 
 - An error in the interface no longer closes the app without a message.
+- The window no longer resizes itself. Opening a plot (and the side panel with
+  it) or the File tab could make it wider than the screen, even maximised or
+  full screen; it is now only ever the size you make it (800 x 520 at the
+  smallest), and every tab fits that.
 
 ## [1.3.1] - 2026-06-26
 
