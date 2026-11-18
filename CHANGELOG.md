@@ -18,13 +18,19 @@ Installers for Windows and macOS, and a much faster start.
   for the current user, without administrator rights, to
   `%LOCALAPPDATA%\Programs\AMPM Viewer`, and a new version replaces the old one in
   place. A Start-menu shortcut; a desktop shortcut if ticked; `.ampmplot` files open
-  with the app if ticked (on by default); start the app at the end. Uninstalling
-  leaves settings, macros and plots (`%APPDATA%\AMPM`) alone.
+  with the app if ticked (on by default); start the app at the end.
 - **macOS disk image**, `ampm-viewer-v2.0.1-arm64.dmg`, for Apple silicon: drag
   AMPM Viewer to Applications. The app opens `.ampmplot` files and follows the
   system's light or dark appearance. It is not signed by Apple, so its first start
   needs System Settings > Privacy & Security > **Open Anyway** (macOS 15 and later)
   or Control-click > **Open** (macOS 14 and earlier).
+- **Uninstalling tidies up.** Besides removing the app, it lists what else the app
+  left, with sizes, and removes the ticked items on one OK: caches and leftovers
+  (ticked: crash reports, Qt's caches, the `%TEMP%\_MEI...` folders a crashed 2.0.0
+  .exe left, macOS's saved window state) and settings and recent lists (not ticked).
+  Macros, saved plots and builds are always kept. Windows: Settings > Apps (a silent
+  uninstall keeps everything unless given `/TIDY`). macOS: `Uninstall AMPM
+  Viewer.command` on the disk image.
 - **Double-click a `.ampmplot`** to open it: in the AMPM Viewer already running (a
   second start hands the file over and quits), or in a new one. A start without a
   file still opens a new window.

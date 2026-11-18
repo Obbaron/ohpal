@@ -1,14 +1,15 @@
 """Make AMPM Viewer's installer from the app `just build` made (run by
 `just installer`, which builds first).
 
-- **Windows:** a setup made with Inno Setup 6.3+ from ``ampm-viewer.iss``:
+- **Windows:** a setup made with Inno Setup 6.6+ from ``ampm-viewer.iss``:
   ``dist/ampm-viewer-v<version>-<arch>-setup.exe``. ISCC.exe is found on
   the PATH, in ``ISCC`` (its full path), or where Inno Setup installs it.
 - **macOS:** a disk image to drag the app to Applications, made with the
-  system's ``hdiutil``: ``dist/ampm-viewer-v<version>-<arch>.dmg``. The app
-  is signed ad hoc (Apple silicon runs nothing unsigned); set
-  ``AMPM_CODESIGN_IDENTITY`` to a Developer ID to sign it properly instead
-  (notarising is a further step, not done here).
+  system's ``hdiutil``: ``dist/ampm-viewer-v<version>-<arch>.dmg``, with
+  ``Uninstall AMPM Viewer.command`` (``uninstall-macos.command``) beside the
+  Applications shortcut. The app is signed ad hoc (Apple silicon runs
+  nothing unsigned); set ``AMPM_CODESIGN_IDENTITY`` to a Developer ID to sign
+  it properly instead (notarising is a further step, not done here).
 
 Usage (from apps/ampm_viewer):  python installer/build_installer.py
 """
@@ -46,11 +47,12 @@ def find_iscc() -> str:
         root = os.environ.get(base)
         if not root:
             continue
-        for sub in ("Inno Setup 6", r"Programs\Inno Setup 6"):
+        for sub in ("Inno Setup 7", "Inno Setup 6", r"Programs\Inno Setup 7",
+                    r"Programs\Inno Setup 6"):
             exe = Path(root) / sub / "ISCC.exe"
             if exe.is_file():
                 return str(exe)
-    fail("Inno Setup's ISCC.exe was not found. Install Inno Setup 6.3 or later "
+    fail("Inno Setup's ISCC.exe was not found. Install Inno Setup 6.6 or later "
          "(winget install JRSoftware.InnoSetup) or set ISCC to its full path.")
     return ""
 
@@ -97,6 +99,10 @@ def macos() -> Path:
         # ditto keeps the bundle's symlinks, permissions and signature.
         subprocess.run(["ditto", str(app), str(stage / app.name)], check=True)
         (stage / "Applications").symlink_to("/Applications")
+        # The uninstaller: removes the app and, if chosen, what it left.
+        uninstall = stage / f"Uninstall {build_names.APP_NAME}.command"
+        shutil.copyfile(HERE / "uninstall-macos.command", uninstall)
+        uninstall.chmod(0o755)
         subprocess.run(
             ["hdiutil", "create", "-volname",
              f"{build_names.APP_NAME} {build_names.version()}",

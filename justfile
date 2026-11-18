@@ -50,7 +50,7 @@ test-all build=env_var_or_default("AMPM_TEST_BUILD", ""): test (test-app build)
 build:
     uv --directory {{app_dir}} run pyinstaller --noconfirm app.spec
 
-# build, then the installer: a setup .exe on Windows (needs Inno Setup 6.3+), a .dmg on macOS
+# build, then the installer: a setup .exe on Windows (needs Inno Setup 6.6+), a .dmg on macOS
 installer: build
     uv --directory {{app_dir}} run --no-sync python installer/build_installer.py
 

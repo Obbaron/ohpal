@@ -67,15 +67,14 @@ build also makes `dist/AMPM Viewer.app`.
 `just installer` then makes, beside it:
 
 - **Windows:** `ampm-viewer-v<version>-<arch>-setup.exe`, with
-  [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or later
+  [Inno Setup](https://jrsoftware.org/isinfo.php) 6.6 or later
   (`winget install JRSoftware.InnoSetup`; `ISCC.exe` is found on the PATH, in the
   `ISCC` variable, or where Inno Setup installs itself). The script is
   `installer/ampm-viewer.iss`. The setup installs for the current user, without
   administrator rights, to `%LOCALAPPDATA%\Programs\AMPM Viewer`; a new version
   replaces the old one in place (same Start-menu shortcut and taskbar pin). It adds a
   Start-menu shortcut, a desktop shortcut if ticked, opens `.ampmplot` files with the
-  app if ticked (on by default), and offers to start the app. Uninstalling leaves
-  settings, macros and plots (`%APPDATA%\AMPM`) alone.
+  app if ticked (on by default), and offers to start the app.
 - **macOS:** `ampm-viewer-v<version>-<arch>.dmg`, made with the system's `hdiutil`:
   open it and drag AMPM Viewer to Applications. Built on an Apple silicon Mac
   (arm64). The app is signed ad hoc, not by a Developer ID, so macOS stops its first
@@ -83,6 +82,22 @@ build also makes `dist/AMPM Viewer.app`.
   Security > **Open Anyway**. On macOS 14 and earlier: Control-click the app, choose
   **Open**, then **Open**. Set `AMPM_CODESIGN_IDENTITY` to a Developer ID to sign it
   properly (notarising is not scripted yet).
+
+**Uninstalling** removes the app and lists what else it left, with sizes, to remove
+on one OK: **caches and leftovers** (ticked: crash reports, Qt's caches, and on
+Windows the `%TEMP%\_MEI...` folders a crashed 2.0.0 .exe left; on macOS the saved
+window state and preferences) and **settings and recent lists** (not ticked:
+`ampm-viewer.conf`). Macros, saved plots and builds are always kept, and the AMPM
+folder is removed only when nothing is left in it.
+
+- **Windows:** Settings > Apps > AMPM Viewer > Uninstall (the setup's uninstaller,
+  `[Code]` in `ampm-viewer.iss`). A silent uninstall (`/SILENT`) keeps everything
+  but the program, unless given `/TIDY`.
+- **macOS:** `Uninstall AMPM Viewer.command` on the disk image
+  (`installer/uninstall-macos.command`). It is unsigned too: if macOS won't open it,
+  run `bash "/Volumes/AMPM Viewer <version>/Uninstall AMPM Viewer.command"` in
+  Terminal. It asks the app to quit first, and for an administrator's password only
+  when the app can't be removed without one.
 
 Double-clicking a `.ampmplot` opens it in the AMPM Viewer already running (a second
 start hands the file over and quits; `shell/single_instance.py`), or starts the app
@@ -110,7 +125,8 @@ apps/ampm_viewer/
 ├── run.py                       # alternative launcher (calls ampm_viewer.main)
 ├── app.spec                     # PyInstaller build spec
 ├── build_names.py               # version, architecture and file names of a build
-├── installer/                   # ampm-viewer.iss (Windows), build_installer.py
+├── installer/                   # ampm-viewer.iss (Windows), uninstall-macos.command,
+│                                #   build_installer.py
 ├── pyproject.toml
 └── src/
     └── ampm_viewer/
