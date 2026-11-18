@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -103,11 +104,18 @@ def macos() -> Path:
         uninstall = stage / f"Uninstall {build_names.APP_NAME}.command"
         shutil.copyfile(HERE / "uninstall-macos.command", uninstall)
         uninstall.chmod(0o755)
-        subprocess.run(
-            ["hdiutil", "create", "-volname",
-             f"{build_names.APP_NAME} {build_names.version()}",
-             "-srcfolder", str(stage), "-fs", "HFS+", "-format", "UDZO",
-             "-ov", str(out)], check=True)
+        create = ["hdiutil", "create", "-volname",
+                  f"{build_names.APP_NAME} {build_names.version()}",
+                  "-srcfolder", str(stage), "-fs", "HFS+", "-format", "UDZO",
+                  "-ov", str(out)]
+        # hdiutil now and then fails with "Resource busy" (Spotlight or a
+        # virus scanner looking at the new image): try again.
+        for attempt in range(3):
+            if subprocess.run(create, check=False).returncode == 0:
+                break
+            if attempt == 2:
+                fail("hdiutil could not make the disk image.")
+            time.sleep(5)
     return out
 
 

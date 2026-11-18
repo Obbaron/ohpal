@@ -34,8 +34,11 @@ Installers for Windows and macOS, and a much faster start.
 - **Double-click a `.ampmplot`** to open it: in the AMPM Viewer already running (a
   second start hands the file over and quits), or in a new one. A start without a
   file still opens a new window.
-- `just installer`: builds the app, then its setup (Windows) or disk image (macOS),
-  with `apps/ampm_viewer/installer/build_installer.py`.
+- `just installer` / `make installer`: builds the app, then its setup (Windows) or
+  disk image (macOS), with `apps/ampm_viewer/installer/build_installer.py`.
+- **GitHub releases.** Pushing a tag such as `v2.0.1` builds both installers on
+  GitHub Actions (`.github/workflows/release.yml`) and attaches them to a draft
+  release, with `docs/release-notes/v<version>.md` as its text.
 
 ### Changed
 

@@ -11,7 +11,7 @@ APP_DIR  := apps/ampm_viewer
 PKG_AMPM := packages/ohpal_ampm
 
 .DEFAULT_GOAL := help
-.PHONY: help setup verify run test test-app build rebuild clean
+.PHONY: help setup verify run test test-app build installer rebuild clean
 
 help:
 	@echo "  setup    - sync venv and install all packages (editable)"
@@ -19,7 +19,8 @@ help:
 	@echo "  run      - launch the AMPM GUI"
 	@echo "  test     - run the library tests (every package under packages/)"
 	@echo "  test-app - run the app's GUI scenarios: make test-app BUILD=<build folder>"
-	@echo "  build    - compile  binary from $(APP_DIR)/app.spec"
+	@echo "  build    - compile the app from $(APP_DIR)/app.spec (a folder in $(APP_DIR)/dist)"
+	@echo "  installer - build, then a setup .exe (Windows, Inno Setup 6.6+) or a .dmg (macOS)"
 	@echo "  clean    - remove caches and build artifacts"
 	@echo "  rebuild  - clean then build"
 
@@ -43,7 +44,10 @@ test-app:
 	uv --directory $(APP_DIR) run --no-sync python -m pytest -n auto --dist worksteal "--build=$(BUILD)"
 
 build:
-	uv --directory $(APP_DIR) run pyinstaller app.spec
+	uv --directory $(APP_DIR) run pyinstaller --noconfirm app.spec
+
+installer: build
+	uv --directory $(APP_DIR) run --no-sync python installer/build_installer.py
 
 rebuild:
 	$(MAKE) clean

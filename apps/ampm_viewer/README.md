@@ -118,6 +118,24 @@ that make the build work:
   help, log). The .exe's Windows file properties (name, version, description) come
   from `__version__`.
 
+## Releasing on GitHub
+
+`.github/workflows/release.yml` builds both installers on GitHub's own Windows and
+Apple silicon machines and attaches them to a draft release:
+
+1. Set `__version__` in `src/ampm_viewer/__init__.py`, add the changelog entry and
+   `docs/release-notes/v<version>.md` (the release's text), and push.
+2. Tag the commit and push the tag: `git tag v2.0.1` then `git push origin v2.0.1`.
+   The tag must match `__version__`, or the run stops.
+3. When the run (the repository's **Actions** tab) is done, open **Releases**, check
+   the draft (`...-x64-setup.exe` and `...-arm64.dmg` attached) and press **Publish**.
+
+Colleagues then download from the release page, or from
+`https://github.com/Obbaron/ohpal/releases/latest`. In a private repository they need
+read access to it (a collaborator, or a member of the organisation that owns it).
+**Run workflow** on the Actions tab builds the installers without a release (kept
+as the run's artifacts for a week), to try them first.
+
 ## Layout
 
 ```

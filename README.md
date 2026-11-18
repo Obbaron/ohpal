@@ -74,6 +74,10 @@ Run `just` to list available tasks:
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |
 
+Releases (the Windows setup and macOS disk image on GitHub's Releases page) are built
+by GitHub Actions when a version tag is pushed: see
+[Releasing on GitHub](apps/ampm_viewer/README.md#releasing-on-github).
+
 `run`, `test`, and `verify` use the environment as-is (they assume you've run `setup`);
 `build` re-syncs first so binaries are never frozen against a stale environment. After
 changing a dependency or pulling a commit that touches a `pyproject.toml` / `uv.lock`,
