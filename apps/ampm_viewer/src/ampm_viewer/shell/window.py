@@ -785,6 +785,19 @@ class MainWindow(QMainWindow):
         self.set_status(f"Saved '{tab.title}' to the plot library "
                         f"({Path(path).name}, {nbytes / 1e6:,.1f} MB).")
 
+    def open_files(self, paths) -> None:
+        """Open files given from outside (a double-clicked ``.ampmplot``,
+        from the command line, macOS or another start of the app), and bring
+        the window forward."""
+        from .single_instance import openable
+
+        for path in openable(paths):
+            self._open_from_library(path)
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _open_from_library(self, path=None) -> None:
         """Open a frozen plot: it shows the numbers of the build it was
         saved from, whatever build (if any) is open."""

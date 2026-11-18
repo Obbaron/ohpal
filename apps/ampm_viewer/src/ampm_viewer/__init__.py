@@ -2,7 +2,7 @@
 
 # The app's version: the one place to change it (pyproject.toml reads it from
 # here). Shown in Help and written into crash reports.
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 
 def main() -> None:

@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-18
+
+Installers for Windows and macOS, and a much faster start.
+
+### Added
+
+- **Windows setup**, `ampm-viewer-v2.0.1-x64-setup.exe` (Inno Setup). It installs
+  for the current user, without administrator rights, to
+  `%LOCALAPPDATA%\Programs\AMPM Viewer`, and a new version replaces the old one in
+  place. A Start-menu shortcut; a desktop shortcut if ticked; `.ampmplot` files open
+  with the app if ticked (on by default); start the app at the end. Uninstalling
+  leaves settings, macros and plots (`%APPDATA%\AMPM`) alone.
+- **macOS disk image**, `ampm-viewer-v2.0.1-arm64.dmg`, for Apple silicon: drag
+  AMPM Viewer to Applications. The app opens `.ampmplot` files and follows the
+  system's light or dark appearance. It is not signed by Apple, so its first start
+  needs System Settings > Privacy & Security > **Open Anyway** (macOS 15 and later)
+  or Control-click > **Open** (macOS 14 and earlier).
+- **Double-click a `.ampmplot`** to open it: in the AMPM Viewer already running (a
+  second start hands the file over and quits), or in a new one. A start without a
+  file still opens a new window.
+- `just installer`: builds the app, then its setup (Windows) or disk image (macOS),
+  with `apps/ampm_viewer/installer/build_installer.py`.
+
+### Changed
+
+- **Starts much faster.** The app is a folder again, `AMPM Viewer.exe` beside an
+  `_internal` folder, instead of one .exe that unpacked all of itself (about
+  550 MB) to a temporary folder at every start. Measured on Linux, from launch to
+  the window: 4.0 s before, 0.4 s now. `just build` makes
+  `dist/ampm-viewer-v<version>-<arch>/` (and `dist/AMPM Viewer.app` on macOS).
+- The program is named `AMPM Viewer.exe`, without the version, so shortcuts and
+  taskbar pins survive an upgrade.
+- The Data toolbar's filter buttons (Filter, Remove filter, Reset filters) come right
+  after the column buttons.
+- The build's names (version, architecture, folder, program) come from
+  `apps/ampm_viewer/build_names.py`, shared by `app.spec` and the installer script.
+- **Tests.** 35 GUI scenarios: `open_files` checks opening a `.ampmplot` from outside
+  the app (handed to the running copy, or macOS's open event).
+
 ## [2.0.0] - 2026-11-17
 
 A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
@@ -606,7 +645,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/Obbaron/ohpal/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/Obbaron/ohpal/releases/tag/v2.0.0
 [1.3.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...v1.3.0

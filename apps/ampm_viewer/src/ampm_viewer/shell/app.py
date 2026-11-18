@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -42,9 +43,36 @@ def _windows_app_id() -> None:
         pass
 
 
+class _App(QApplication):
+    """The application, plus the files macOS asks it to open (a double-
+    clicked ``.ampmplot``: a ``FileOpen`` event, not the command line). They
+    wait in ``pending`` until the window is up, then go to ``open_files``."""
+
+    def __init__(self, argv) -> None:
+        super().__init__(argv)
+        self.pending: list[str] = []
+        self.open_files = None   # set once the window exists
+
+    def event(self, e) -> bool:
+        if e.type() == QEvent.Type.FileOpen and e.file():
+            if self.open_files is not None:
+                self.open_files([e.file()])
+            else:
+                self.pending.append(e.file())
+            return True
+        return super().event(e)
+
+
 def main() -> None:
     _windows_app_id()
-    app = QApplication(sys.argv)
+    app = _App(sys.argv)
+    # Started with a file (Windows / Linux: a double-clicked .ampmplot) while
+    # the app is running: that copy opens it and this one ends here.
+    from . import single_instance
+
+    files = [str(Path(f).resolve()) for f in single_instance.openable(sys.argv[1:])]
+    if files and single_instance.forward(files):
+        sys.exit(0)
     app.setWindowIcon(_app_icon())  # every window: main, plots, help, log
     app.setOrganizationName("AMPM")
     app.setApplicationName("AMPM Viewer")
@@ -68,5 +96,13 @@ def main() -> None:
     except Exception:  # noqa: BLE001 - no window: report it, then stop
         crash.startup_failed(*sys.exc_info())
         sys.exit(1)
+
+    # Files from the command line or from macOS, and later ones another start
+    # hands over, open in this window.
+    app.open_files = window.open_files
+    listener = single_instance.Listener(window.open_files, app)  # noqa: F841
+    if files or app.pending:
+        window.open_files(files + app.pending)
+        app.pending.clear()
 
     sys.exit(app.exec())

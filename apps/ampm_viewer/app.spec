@@ -1,69 +1,58 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for AMPM Viewer (build with `just build` / `just rebuild`).
+"""PyInstaller spec for AMPM Viewer (build with `just build` / `just rebuild`;
+`just installer` builds it and then its setup).
 
 Build on Windows (PowerShell): a Windows .exe must be built on Windows; a WSL
 build produces a Linux binary. From the repo root:
 
     just setup            # once: sync the venv (uv sync --all-packages)
     just build            # runs: uv --directory apps/ampm_viewer run pyinstaller app.spec
+    just installer        # build, then the setup (installer/build_installer.py)
 
-Output: apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>.exe (for example
-ampm-viewer-v2.0.0-x64.exe), one self-contained file (nothing beside it to
-ship). The version is __version__; the architecture (x64 or arm64) is the one
-of the Python running PyInstaller, which is what the .exe is built for.
-It unpacks itself to a temporary folder at each start, so it starts a little slower than an unpacked app; a DBSCAN job the app
-starts (the same .exe with --dbscan-job) reuses the running app's unpacked
-copy. Paths here are relative to this spec's folder (apps/ampm_viewer),
-which is where `just build` runs it.
+Output: a folder, apps/ampm_viewer/dist/ampm-viewer-v<version>-<arch>/ (for
+example ampm-viewer-v2.0.0-x64), holding "AMPM Viewer.exe" and its
+_internal folder of libraries and data. The folder is what the installer
+installs; it can also be run where it is. A folder starts much faster than a
+one-file .exe, which unpacked all of itself (about 550 MB) to a temporary
+folder at every start. The version is __version__ and the architecture (x64
+or arm64) that of the Python running PyInstaller (see build_names.py). A
+DBSCAN job the app starts is the same .exe with --dbscan-job. Paths here are
+relative to this spec's folder (apps/ampm_viewer), which is where
+`just build` runs it.
 """
 
-import re
-import sysconfig
+import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+sys.path.insert(0, SPECPATH)  # noqa: F821 (spec global): build_names.py beside it
+import build_names  # noqa: E402
 
-ICON = "src/ampm_viewer/assets/ampm.ico"
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules  # noqa: E402
 
-# -- version (one place: src/ampm_viewer/__init__.py) ----------------------
-_init = Path("src/ampm_viewer/__init__.py").read_text(encoding="utf-8")
-VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', _init).group(1)
-
-
-def _arch() -> str:
-    """x64 or arm64: the architecture of this Python (PyInstaller builds for
-    it, so an x64 Python on an Arm machine still makes an x64 .exe)."""
-    plat = sysconfig.get_platform().lower()  # win-amd64, win-arm64, linux-aarch64, ...
-    if plat.endswith(("arm64", "aarch64")):
-        return "arm64"
-    if plat.endswith(("amd64", "x86_64")):
-        return "x64"
-    if plat.endswith(("win32", "i686", "i386")):
-        return "x86"
-    return plat.rsplit("-", 1)[-1]
-
-
-# The file built: ampm-viewer-v2.0.0-x64(.exe).
-NAME = f"ampm-viewer-v{VERSION}-{_arch()}"
-_nums = [int(n) for n in re.findall(r"\d+", VERSION)[:3]]
-_nums += [0] * (4 - len(_nums))
+MACOS = sys.platform == "darwin"
+ICON = "src/ampm_viewer/assets/" + ("ampm.icns" if MACOS else "ampm.ico")
+VERSION = build_names.version()
+# The build's folder in dist (ampm-viewer-v2.0.0-x64) and the program in it.
+NAME = build_names.dist_name()
+EXE_NAME = build_names.EXE_NAME
+_nums = build_names.version_numbers()
 
 # The Windows file properties (Details tab): name, version, description.
 # (Written into PyInstaller's build folder, ``workpath``, not the source tree.)
 _version_file = Path(workpath) / "version_info.txt"  # noqa: F821 (spec global)
 _version_file.parent.mkdir(parents=True, exist_ok=True)
 _version_file.write_text(f"""VSVersionInfo(
-  ffi=FixedFileInfo(filevers={tuple(_nums)}, prodvers={tuple(_nums)},
+  ffi=FixedFileInfo(filevers={_nums}, prodvers={_nums},
                     mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1,
                     subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('040904B0', [
-      StringStruct('CompanyName', 'Oliver H. Page'),
+      StringStruct('CompanyName', '{build_names.PUBLISHER}'),
       StringStruct('FileDescription', 'AMPM Viewer'),
       StringStruct('FileVersion', '{VERSION}'),
       StringStruct('InternalName', 'ampm-viewer'),
       StringStruct('LegalCopyright', 'All rights reserved'),
-      StringStruct('OriginalFilename', '{NAME}.exe'),
+      StringStruct('OriginalFilename', '{EXE_NAME}.exe'),
       StringStruct('ProductName', 'AMPM Viewer'),
       StringStruct('ProductVersion', '{VERSION}')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
@@ -126,22 +115,62 @@ a.datas = [entry for entry in a.datas if not _unused_qt(entry[0])]
 a.binaries = [entry for entry in a.binaries if not _unused_qt(entry[0])]
 pyz = PYZ(a.pure)
 
-# One file: the scripts, every library and data file go into the .exe itself
-# (no COLLECT step, no _internal folder beside it).
+# A folder: the .exe holds only the bootloader and the scripts; the libraries
+# and data files go beside it, in _internal (COLLECT), and are read in place.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name=NAME,
+    exclude_binaries=True,
+    name=EXE_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    runtime_tmpdir=None,  # unpack to the user's temp folder
-    console=False,  # GUI app — no console window. Flip to True to see tracebacks.
+    console=False,  # GUI app: no console window. Flip to True to see tracebacks.
     disable_windowed_traceback=False,
     icon=ICON,  # the .exe's own icon (Explorer, taskbar)
     version=str(_version_file),
 )
+coll = COLLECT(  # noqa: F821 (spec global)
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name=NAME,
+)
+
+# macOS: the folder as an app, dist/AMPM Viewer.app (installer/build_installer.py
+# puts it on a disk image). It opens .ampmplot files (a FileOpen event, see
+# shell/app.py) and follows the system's light / dark appearance.
+if MACOS:
+    app = BUNDLE(  # noqa: F821 (spec global)
+        coll,
+        name=f"{build_names.APP_NAME}.app",
+        icon=ICON,
+        bundle_identifier="io.github.obbaron.ampmviewer",
+        version=VERSION,
+        info_plist={
+            "CFBundleName": build_names.APP_NAME,
+            "CFBundleDisplayName": build_names.APP_NAME,
+            "CFBundleShortVersionString": VERSION,
+            "CFBundleVersion": VERSION,
+            "LSMinimumSystemVersion": "11.0",
+            "NSHighResolutionCapable": True,
+            "NSRequiresAquaSystemAppearance": False,
+            "NSHumanReadableCopyright": "All rights reserved",
+            "UTExportedTypeDeclarations": [{
+                "UTTypeIdentifier": "io.github.obbaron.ampmplot",
+                "UTTypeDescription": "AMPM Viewer plot",
+                "UTTypeConformsTo": ["public.data"],
+                "UTTypeTagSpecification": {"public.filename-extension": ["ampmplot"]},
+            }],
+            "CFBundleDocumentTypes": [{
+                "CFBundleTypeName": "AMPM Viewer plot",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Owner",
+                "LSItemContentTypes": ["io.github.obbaron.ampmplot"],
+            }],
+        },
+    )

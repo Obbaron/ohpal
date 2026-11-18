@@ -69,7 +69,8 @@ Run `just` to list available tasks:
 | `test` | run the library tests (`ohpal_core`, `ohpal_samples`, `ohpal_ampm`) |
 | `test-app` | run the app's GUI scenarios on a build folder: `just test-app "C:\builds\JR299"` (see [apps/ampm_viewer/tests](apps/ampm_viewer/tests/README.md)) |
 | `test-all` | `test`, then `test-app` |
-| `build` | compile the standalone binary from `apps/ampm_viewer/app.spec` |
+| `build` | compile the app from `apps/ampm_viewer/app.spec` (a folder: `AMPM Viewer.exe` + `_internal`) |
+| `installer` | `build`, then the installer: a setup .exe on Windows (Inno Setup 6.3+), a .dmg on macOS (see [apps/ampm_viewer](apps/ampm_viewer/README.md#building-the-app-and-its-installers)) |
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |
 
