@@ -231,8 +231,6 @@ class DbscanWorker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    _POLL_S = 0.2   # how often the child's messages and Cancel are checked
-
     def __init__(self, store, config: dict, layers, *, thickness: float,
                  force: bool) -> None:
         super().__init__()
@@ -353,80 +351,10 @@ class DbscanWorker(QObject):
         """Run the clustering process to the end, relaying its progress.
         Returns its info; None when cancelled (``finished(None)`` emitted) or
         failed (``error`` emitted)."""
-        import json
-        import subprocess
-        import time
-
-        from ampm_viewer import dbscan_job
-
         cache = Path(input_path).parent
-        job_path = cache / "dbscan_job.json"
-        progress_path = cache / "dbscan_job.progress"
-        log_path = cache / "dbscan_job.log"
-        progress_path.write_text("", encoding="utf-8")
-        job_path.write_text(json.dumps({
-            "input": input_path, "output": output_path,
-            "progress": str(progress_path), "parts_csv": parts_csv,
-            "params": params}), encoding="utf-8")
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console
-        self.progress.emit("starting")
-        with open(log_path, "w", encoding="utf-8") as log:
-            proc = subprocess.Popen(
-                dbscan_job.command(str(job_path)), stdin=subprocess.DEVNULL,
-                stdout=log, stderr=log, creationflags=flags)
-        self._process = proc
-        read = 0
-        try:
-            while True:
-                if self._cancelled:
-                    proc.kill()
-                    proc.wait(10)
-                    self.finished.emit(None)
-                    return None
-                ended = proc.poll() is not None
-                text = progress_path.read_text(encoding="utf-8")
-                lines, read = text[read:].splitlines(), len(text)
-                if lines and not text.endswith("\n"):  # a line half-written
-                    read -= len(lines.pop())
-                for line in lines:
-                    msg = json.loads(line)
-                    if msg[0] == "stage":
-                        self.progress.emit(msg[1])
-                    elif msg[0] == "chunk":
-                        self.progress.emit(
-                            f"clustering chunk {msg[1]} of {msg[2]}")
-                    elif msg[0] == "error":
-                        self.error.emit(msg[1])
-                        return None
-                    elif msg[0] == "done":
-                        proc.wait(30)
-                        return dict(msg[1])
-                if ended:
-                    if self._cancelled:
-                        continue
-                    tail = ""
-                    try:
-                        tail = log_path.read_text(
-                            encoding="utf-8").strip().splitlines()[-1]
-                    except (OSError, IndexError):
-                        pass
-                    self.error.emit(
-                        "The clustering process stopped unexpectedly (exit "
-                        f"code {proc.returncode}). It may have run out of "
-                        "memory: try fewer layers per chunk (config.toml, "
-                        "[clustering] layers_per_chunk) or a smaller layer "
-                        "range." + (f"\n\n{tail}" if tail else ""))
-                    return None
-                time.sleep(self._POLL_S)
-        finally:
-            self._process = None
-            if proc.poll() is None:
-                proc.kill()
-            for tmp in (job_path, progress_path):
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
+        return run_job_process(self, {
+            "input": input_path, "output": output_path, "parts_csv": parts_csv,
+            "params": params}, cache, "dbscan_job")
 
 
 class QueryWorker(QObject):
@@ -572,3 +500,216 @@ class CacheWorker(QObject):
             self.error.emit(f"Build aborted: {exc}")
         except Exception:  # noqa: BLE001
             self.error.emit(traceback.format_exc())
+
+_POLL_S = 0.2   # how often a job's messages and Cancel are checked
+
+
+def run_job_process(owner, job: dict, folder: Path, stem: str) -> dict | None:
+    """Run ``ampm_viewer.dbscan_job`` on ``job`` as a separate process and
+    relay its messages through ``owner`` (a worker with ``progress``,
+    ``error`` and ``finished`` signals, a ``_cancelled`` flag it checks and a
+    ``_process`` it sets so ``cancel`` can end it). The job, progress and log
+    files are ``<stem>.json`` / ``.progress`` / ``.log`` in ``folder``.
+    Returns the job's info; None when cancelled (``finished(None)`` emitted)
+    or failed (``error`` emitted)."""
+    import json
+    import subprocess
+
+    from ampm_viewer import dbscan_job
+
+    job_path = folder / f"{stem}.json"
+    progress_path = folder / f"{stem}.progress"
+    log_path = folder / f"{stem}.log"
+    progress_path.write_text("", encoding="utf-8")
+    job_path.write_text(json.dumps(dict(job, progress=str(progress_path))),
+                        encoding="utf-8")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console
+    owner.progress.emit("starting")
+    with open(log_path, "w", encoding="utf-8") as log:
+        proc = subprocess.Popen(
+            dbscan_job.command(str(job_path)), stdin=subprocess.DEVNULL,
+            stdout=log, stderr=log, creationflags=flags)
+    owner._process = proc
+    try:
+        return _relay(owner, proc, progress_path, log_path)
+    finally:
+        owner._process = None
+        if proc.poll() is None:
+            proc.kill()
+        for tmp in (job_path, progress_path):
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _relay(owner, proc, progress_path: Path, log_path: Path) -> dict | None:
+    """``run_job_process``'s loop: relay the job's messages until it ends."""
+    import json
+    import time
+
+    read = 0
+    while True:
+        if owner._cancelled:
+            proc.kill()
+            proc.wait(10)
+            owner.finished.emit(None)
+            return None
+        ended = proc.poll() is not None
+        text = progress_path.read_text(encoding="utf-8")
+        lines, read = text[read:].splitlines(), len(text)
+        if lines and not text.endswith("\n"):  # a line half-written
+            read -= len(lines.pop())
+        for line in lines:
+            msg = json.loads(line)
+            if msg[0] == "stage":
+                owner.progress.emit(msg[1])
+            elif msg[0] == "chunk":
+                owner.progress.emit(f"clustering chunk {msg[1]} of {msg[2]}")
+            elif msg[0] == "error":
+                owner.error.emit(msg[1])
+                return None
+            elif msg[0] == "done":
+                proc.wait(30)
+                return dict(msg[1])
+        if ended:
+            if owner._cancelled:
+                continue
+            tail = ""
+            try:
+                tail = log_path.read_text(encoding="utf-8").strip().splitlines()[-1]
+            except (OSError, IndexError):
+                pass
+            owner.error.emit(
+                "The clustering process stopped unexpectedly (exit "
+                f"code {proc.returncode}). It may have run out of "
+                "memory: try fewer layers per chunk (config.toml, "
+                "[clustering] layers_per_chunk) or a smaller layer "
+                "range." + (f"\n\n{tail}" if tail else ""))
+            return None
+        time.sleep(_POLL_S)
+
+
+class ClusterWorker(QObject):
+    """The Data tab's DBSCAN, off the UI thread, the clustering itself in a
+    separate process (``ampm_viewer.dbscan_job``, kind "cluster") so Cancel
+    stops it at once.
+
+    Reads the built layers' points (only the columns needed), shapes them as
+    the grid is shaped and keeps the rows the filters keep (``shape``, a
+    snapshot taken when it started), then clusters on the position and/or the
+    chosen columns. Rows missing a value it clusters on are left out. Writes
+    ``(layer, Start time, cluster)`` to ``out_path`` (0 = the largest
+    cluster, -1 = noise) with a ``.json`` beside it (the settings and the
+    result's summary), and emits ``finished((out_path, info))``, or
+    ``finished(None)`` when cancelled.
+
+    ``names`` maps what the job reads to this build's (display) columns:
+    ``layer``, ``Start time``, and with the position ``Demand X``,
+    ``Demand Y`` and ``Z``; ``features`` is ``[(display column, radius)]``.
+    """
+
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, store, layers, *, columns, shape, names: dict,
+                 features, params: dict, out_path) -> None:
+        super().__init__()
+        self._store = store
+        self._layers = sorted(int(L) for L in layers)
+        self._columns = columns
+        self._shape = shape
+        self._names = dict(names)
+        self._features = [(str(c), float(r)) for c, r in features]
+        self._params = dict(params)
+        self._out = Path(out_path)
+        self._cancelled = False
+        self._process = None
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        import json
+
+        folder = self._out.parent
+        input_path = folder / f"{self._out.stem}.input.parquet"
+        output_path = folder / f"{self._out.stem}.partial.parquet"
+        try:
+            import polars as pl
+
+            folder.mkdir(parents=True, exist_ok=True)
+            self.progress.emit("reading points")
+            raw = self._store.query(layers=list(self._layers), columns=self._columns)
+            if self._cancelled:
+                self.finished.emit(None)
+                return
+            self.progress.emit("applying the filters")
+            df = self._shape(raw)
+            del raw
+            # The job's own names: the keys and position by their source
+            # names, the chosen columns as f0, f1, ...
+            picks = {self._names[k]: k for k in self._names}
+            for i, (col, _r) in enumerate(self._features):
+                picks[col] = f"f{i}"
+            missing = [c for c in picks if c not in df.columns]
+            if missing:
+                self.error.emit("These columns are not in the data: "
+                                + ", ".join(missing))
+                return
+            numeric = [job for col, job in picks.items()
+                       if job not in ("layer", "Start time")]
+            df = df.select([pl.col(c).alias(j) for c, j in picks.items()])
+            df = df.with_columns([pl.col(c).cast(pl.Float64) for c in numeric])
+            # Only rows with every value it clusters on.
+            df = df.filter(pl.all_horizontal(
+                [pl.col(c).is_finite() for c in numeric]
+                + [pl.col("layer").is_not_null(), pl.col("Start time").is_not_null()]))
+            df = df.unique(subset=["layer", "Start time"], keep="first",
+                           maintain_order=True)
+            if df.is_empty():
+                self.error.emit(
+                    "There are no rows to cluster: the filters keep none, or "
+                    "they have no values in the columns chosen.")
+                return
+            n_rows = df.height
+            df.write_parquet(input_path)
+            del df
+            if self._cancelled:
+                self.finished.emit(None)
+                return
+            params = dict(self._params,
+                          features={f"f{i}": r for i, (_c, r)
+                                    in enumerate(self._features)})
+            info = run_job_process(self, {
+                "kind": "cluster", "input": str(input_path),
+                "output": str(output_path), "params": params},
+                folder, f"{self._out.stem}.job")
+            if info is None:
+                return  # cancelled, or an error already reported
+            output_path.replace(self._out)
+            info["n_points"] = n_rows
+            self._out.with_suffix(".json").write_text(
+                json.dumps({"settings": self._params, "info": info}),
+                encoding="utf-8")
+        except SystemExit as exc:  # ohpal helpers can call sys.exit()
+            self.error.emit(f"Aborted: {exc}")
+        except MemoryError:
+            self.error.emit(
+                "Ran out of memory while reading the points. Add a filter to "
+                "cluster fewer rows.")
+        except Exception as exc:  # noqa: BLE001 - a clear one-line reason
+            self.error.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.finished.emit((self._out, info))
+        finally:
+            for tmp in (input_path, output_path):
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass

@@ -164,6 +164,7 @@ def populate_data(
     part_has_csv=False,
     on_part_calc=None,
     on_part_import=None,
+    on_cluster=None,
     on_filter=None,
     on_remove_filter=None,
     on_reset_filter=None,
@@ -258,6 +259,15 @@ def populate_data(
             pimport.setEnabled(False)  # contextual: needs a parts CSV
             pimport.setToolTip("No QuantAM parts CSV configured for this build.")
         toolbar.addSeparator()
+
+    # DBSCAN for any purpose: clusters on the position and / or other columns
+    # of the rows the filters keep, as a new column (runs in the background).
+    clu = _action(toolbar, "DBSCAN clusters", "cluster", color)
+    if on_cluster is not None:
+        clu.triggered.connect(lambda: on_cluster())
+    else:
+        clu.setEnabled(False)
+    toolbar.addSeparator()
 
     # Filters (query-time; on top of the cache). Mask / assign-parts /
     # correction are not here — they're defined with the DataStore in the

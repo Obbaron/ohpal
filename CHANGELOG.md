@@ -12,11 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A new application, and a new name: AMPM Analyzer is now **AMPM Viewer**. The
 1.x window (Config and Analysis tabs, Plotly plot views loaded from disk) is
-replaced by a new PyQt6 interface with fast VisPy plots, a data table you shape before plotting, undo / redo, macros, a plot library for
-comparing builds, stacked (stepped) builds and an in-app guide. It ships as one
-self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm` pipeline underneath keeps
-its API: it gains a few additions (listed under *Pipeline*) and loses only the
-Plotly figure builders, which the app replaces.
+replaced by a new PyQt6 interface with fast VisPy plots, a data table you
+shape before plotting, undo / redo, macros, a plot library for comparing
+builds, stacked (stepped) builds and an in-app guide. It ships as one
+self-contained `ampm-viewer-v2.0.0-x64.exe` (or `-arm64`). The `ohpal.ampm`
+pipeline underneath keeps its API: it gains a few additions (listed under
+*Pipeline*) and loses only the Plotly figure builders, which the app replaces.
 
 ### Added
 
@@ -48,7 +49,8 @@ Plotly figure builders, which the app replaces.
   and all layers or a From / To range; the imported columns and their renames
   (with **All**, **None**, **Default** and **Clear renames**); and the load
   recipe: mask (STL), part assignment (Direct with a **Max distance**, DHXML, or
-  DBSCAN) with a **Part filter** of the parts to keep, and correction (override
+  DBSCAN) with a **Part filter** of the parts to keep (each listed with its X Y
+  position, as `Part1 @ -10.1 1.2`), and correction (override
   the column or write a new one). Built off the UI thread with progress and a
   **Cancel** that stops after the current layer (the layers built are kept); a
   rebuild starts from a clean slate.
@@ -72,6 +74,14 @@ Plotly figure builders, which the app replaces.
   rename, hide, remove and restore columns; calculated columns (a formula language
   with grouped aggregates such as `cov([signal]) by [part_id]`); label columns from
   if / elif / else rules; filters; a column from Excel; export to Excel.
+- **DBSCAN clusters** on the Data toolbar: DBSCAN for any purpose, not only part
+  assignment. Cluster on the position (XY and Z radius, layers per chunk and
+  overlap), on any numeric columns (each with its own radius), or both, over
+  the rows the filters keep in every built layer. It runs in the background
+  with Cancel, then adds a column naming each point's cluster (`1` the
+  largest, then `2`... and `noise`; rows a filter left out get none) and logs
+  a summary: clusters, noise and the largest sizes. One undo step; a macro
+  keeps the settings and clusters again when it runs.
 - **Parts.** When parts are assigned: per-part calculations (CoV as mean, std and
   their ratio), and **Import from parts CSV**: any column of any section of the
   QuantAM parts CSV (the laser parameters are in its Scan Volume section).
@@ -80,11 +90,11 @@ Plotly figure builders, which the app replaces.
   Violin and K-distance curve (for tuning DBSCAN). Hover read-outs; a toolbar and
   side panel that show only what applies to the plot, with per-plot options (equal
   axes, 3D view presets, layer steps, bins, sort, bandwidth, fill, quartile box,
-  measured points, level lines, eps guide); screenshots; plots popped out into
-  their own windows and docked back. A plot queries and keeps only the columns
-  it depends on (what it draws and filters on, and the inputs of calculated
-  columns among them) and draws only its filter's rows, so many open plots
-  stay light.
+  measured points, level lines, eps guide); screenshots (the camera button); plots
+  popped out into their own windows and docked back. A plot queries and keeps only
+  the columns it depends on (what it draws and filters on, and the inputs of
+  calculated columns among them) and draws only its filter's rows, so many open
+  plots stay light.
 - **Editable plot elements.** Click to select (an open side panel shows the
   element at once), double-click to open the side panel on it, click empty
   plot or toolbar space to deselect; set as the default for new plots: the title (text, font, alignment),
@@ -116,7 +126,7 @@ Plotly figure builders, which the app replaces.
   asks for them each time, with the recorded value filled in. When a build
   lacks a column the macro reads, the issues list offers the build's columns
   to use instead for that run.
-- **Help.** A searchable in-app guide of 31 articles that opens on the article for
+- **Help.** A searchable in-app guide of 32 articles that opens on the article for
   what you are doing (Help button or F1). It replaces `docs/APP.md`.
 - **Unexpected errors** are written to a report file (version, platform,
   traceback, recent log) in `crash-reports` in the AMPM folder and
@@ -135,6 +145,11 @@ Plotly figure builders, which the app replaces.
     directory read.
   - `DataStore.set_part_assignment(table, method="labels")`: per-point part
     ids keyed by (`layer`, `Start time`), such as a DBSCAN clustering's.
+  - `ohpal.ampm.clustering`: `cluster_dbscan_chunked(..., extra_columns=)`
+    clusters on other columns as well as the position (column -> radius);
+    `cluster_dbscan_features` clusters on columns alone (a representative
+    sample, every row labelled from it, kept within a memory budget in dense
+    data); `rank_by_size` numbers clusters largest first.
   - `QuantAMParts.part_ids_by_instance()`: the `part_id` of every placed
     instance, keyed by its QuantAM instance number, so any per-instance section
     of the parts CSV lines up with the ids part assignment puts on the data.
@@ -165,7 +180,7 @@ Plotly figure builders, which the app replaces.
   `progress(chunk, n_chunks)` callback.
 - **Tests.** The `ohpal.ampm` tests that sat in the root `tests/` folder (broken since
   the move to `ohpal.ampm`) now live in `packages/ohpal_ampm/tests`, updated to the
-  current API; `just test` runs every package's tests (580 in all). The app has 31 GUI
+  current API; `just test` runs every package's tests (589 in all). The app has 34 GUI
   scenarios in `apps/ampm_viewer/tests`, run with `just test-app <build folder>`,
   several at once (pytest-xdist; the number of workers follows the machine's cores
   and memory).
@@ -220,6 +235,10 @@ Plotly figure builders, which the app replaces.
 ### Fixed
 
 - An error in the interface no longer closes the app without a message.
+- The window no longer resizes itself. Opening a plot (and the side panel with
+  it) or the File tab could make it wider than the screen, even maximised or
+  full screen; it is now only ever the size you make it (800 x 520 at the
+  smallest), and every tab fits that.
 
 ## [1.3.1] - 2026-06-26
 

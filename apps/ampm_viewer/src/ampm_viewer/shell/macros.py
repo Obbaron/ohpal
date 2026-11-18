@@ -60,6 +60,8 @@ _SCHEMA: dict[str, dict] = {
     "label": {"names": ("name",), "rules": ("rules",)},
     "excel_import": {"names": ("name", "key"), "drop": ("mapping",)},
     "part_calc": {"names": ("signal", "name")},
+    # labels: the run's result file, which belongs to the build it ran on
+    "cluster": {"names": ("name",), "pairs": ("features",), "drop": ("labels",)},
     "parts_csv_import": {},
     "rename": {"names": ("old",)},  # "new" is the literal new name
     "remove": {"lists": ("names",)},
@@ -245,6 +247,19 @@ def describe(op: str, p: dict) -> str:
         shown = ", ".join(f"{s} / {c}" for s, c in items[:3])
         more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
         return f"Import {len(items)} parts-CSV column(s): {shown}{more}"
+    if op == "cluster":
+        on = []
+        if p.get("position"):
+            chunks = ""
+            if p.get("layers_per_chunk"):
+                chunks = (f", {p['layers_per_chunk']} layers per chunk, overlap "
+                          f"{p.get('overlap_layers') or 'auto'}")
+            on.append(f"position (XY {p.get('eps_xy')} mm, Z {p.get('eps_z')} mm"
+                      f"{chunks})")
+        on += [f"'{c}' (radius {r})" for c, r in p.get("features") or []]
+        return (f"DBSCAN clusters → column '{p.get('name')}', on "
+                f"{' and '.join(on) or 'nothing'}, min samples "
+                f"{p.get('min_samples')} (runs the clustering)")
     if op == "rename":
         return f"Rename '{p.get('old')}' to '{p.get('new')}'"
     if op == "remove":
@@ -313,7 +328,7 @@ def _span_text(span) -> str:
 # Names a step creates rather than reads (so they're never "missing").
 _CREATES: dict[str, tuple] = {
     "derive": ("name",), "label": ("name",), "excel_import": ("name",),
-    "part_calc": ("name",),
+    "part_calc": ("name",), "cluster": ("name",),
 }
 
 

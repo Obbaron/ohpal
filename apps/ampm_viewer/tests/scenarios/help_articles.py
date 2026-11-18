@@ -27,7 +27,8 @@ print(f"{len(arts)} articles, links + contexts consistent; every plot kind has a
 # --- search --------------------------------------------------------------------
 top = lambda q, n=3: [a.id for a in hd.search(arts, q)][:n]
 assert top("macro")[0] == "macros" and top("filter")[0] == "filters"
-assert set(top("dbscan", 2)) == {"datastore-setup", "plot-kdistance"} and top("font")[0] == "plot-elements"
+assert top("dbscan")[0] == "columns-dbscan" and top("cluster")[0] == "columns-dbscan"
+assert set(top("dbscan")[1:]) == {"datastore-setup", "plot-kdistance"} and top("font")[0] == "plot-elements"
 assert top("violin")[0] == "plot-distributions" and top("eps")[0] == "plot-kdistance"
 assert top("undo")[0] == "undo-redo" and top("contour")[0] == "plot-contour"
 assert top("filt")[0] == "filters", "prefix match"

@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QSizePolicy,
     QSplitter,
-    QStackedWidget,
     QStatusBar,
     QTabBar,
     QToolBar,
@@ -39,12 +38,14 @@ from .backstage import Backstage
 from .controller import AppController
 from .data_tab import DataTab
 from .dock import SidePanel
+from .widgets import CurrentPageStack
 from .plot_tab import PlotTab
 from .recents import RecentStore
 from .settings import app_settings
 from .state import BuildSession
 
 APP_TITLE = "AMPM Viewer"
+MIN_WINDOW_SIZE = QSize(800, 520)  # the smallest the window can be made
 _THEME_KEY = "appearance/theme"  # "auto" | "light" | "dark" (Settings)
 
 
@@ -96,6 +97,12 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint)
         self.setContentsMargins(1, 1, 1, 1)  # room for the 1px window border
+        # An explicit minimum: without one, Qt makes the window's minimum the
+        # contents' (which grows when the side panel opens or a wider page
+        # shows) and enlarges the window to it, off a maximised or full-screen
+        # window's screen. With it, only the user (or the system) sizes the
+        # window; its contents fit what they are given.
+        self.setMinimumSize(MIN_WINDOW_SIZE)
         self.resize(1300, 820)
 
         from .logconsole import LogBus
@@ -176,7 +183,7 @@ class MainWindow(QMainWindow):
         # Content row: the tab pages, with the side panel beside them (so the
         # panel sits under the tabs/toolbar, not up at the title bar). A
         # splitter lets the user resize it.
-        self.stack = QStackedWidget()
+        self.stack = CurrentPageStack()
         self.panel = SidePanel()
         self.panel.closed.connect(self._close_panel)
         self.panel.columnRenamed.connect(self._rename_column_from_panel)
@@ -1561,6 +1568,7 @@ class MainWindow(QMainWindow):
                 part_has_csv=self.controller.has_parts_csv(),
                 on_part_calc=self._add_part_calc,
                 on_part_import=self._import_parts_csv,
+                on_cluster=self._add_cluster_column,
                 on_filter=self._on_filter,
                 on_remove_filter=self._on_remove_last_filter,
                 on_reset_filter=self._on_reset_filters,
@@ -1739,6 +1747,104 @@ class MainWindow(QMainWindow):
             return
         name, signal, reducer = dlg.result_values()
         self._run("part_calc", signal=signal, reducer=reducer, name=name)
+
+    # -- DBSCAN clusters (any purpose) ------------------------------------
+    def _cluster_dialog_inputs(self) -> dict:
+        """What the DBSCAN dialog offers: the numeric columns, the position's
+        columns (None if the build lacks one) and the defaults."""
+        dt = self._data_tab
+        numeric = [n for n, k, _v in dt.grid_columns() if k in ("float", "int")]
+        cols = self.controller.cluster_position_columns()
+        position = [cols[c] for c in ("Demand X", "Demand Y", "Z")]
+        if any(p not in self.controller.current_columns() for p in position):
+            position = None
+        df = self.session.result.df if self.session.result is not None else None
+
+        def suggest(column: str) -> float:
+            """A twentieth of the column's middle 90% (on the layer shown)."""
+            try:
+                s = df[column].drop_nulls().cast(float)
+                spread = float(s.quantile(0.95) - s.quantile(0.05))
+            except Exception:  # noqa: BLE001 - no data: a plain start
+                return 1.0
+            if not spread > 0:
+                return 1.0
+            from math import floor, log10
+            r = spread / 20
+            return round(r, -floor(log10(r)) + 1)
+
+        taken = [d["name"] for d in self.session.derivations]
+        return {"columns": numeric, "position": position, "taken": taken,
+                "defaults": self.controller.dbscan_params(), "suggest": suggest,
+                "chunking": self.controller.dbscan_chunking(),
+                "layer_thickness": self.controller.layer_thickness()}
+
+    def _add_cluster_column(self) -> None:
+        """The Data toolbar's DBSCAN: choose what to cluster on, then run it
+        in the background; the column is added (one undo step) when done."""
+        if self._data_tab is None or self.session.result is None:
+            return
+        if self.controller.cluster_running():
+            self.set_status("A DBSCAN run is going already: it is in the "
+                            "status bar, with Cancel.")
+            return
+        from .cluster_dialog import ClusterDialog
+
+        dlg = ClusterDialog(parent=self, **self._cluster_dialog_inputs())
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        settings = dlg.settings()
+        name = settings["name"]
+
+        def done(path, _info) -> None:
+            if path is None:
+                self.set_status(f"DBSCAN '{name}' cancelled: no column added.")
+                return
+            self._run("cluster", **settings, labels=str(path))
+
+        def failed(message: str) -> None:
+            self.set_status(f"DBSCAN '{name}' failed: no column added.")
+            from .message_dialog import tell
+            tell(self, "DBSCAN failed", message)
+
+        problem = self.controller.start_cluster(settings, on_done=done,
+                                                on_error=failed)
+        if problem:
+            self.set_status(problem)
+        else:
+            self.set_status(f"DBSCAN '{name}' started: the column appears "
+                            "when it is done.")
+
+    def cluster_and_wait(self, settings: dict):
+        """Run a DBSCAN to the end before going on (a macro's step), its
+        progress in a small window with Cancel. Returns the labels file, or
+        raises RuntimeError with the reason it did not finish."""
+        from .cluster_dialog import ClusterRunDialog
+
+        result: dict = {}
+        dlg = ClusterRunDialog(settings.get("name", ""),
+                               lambda: self.controller.cancel_cluster(ask=False),
+                               self)
+
+        def done(path, _info) -> None:
+            result["path"] = path
+            dlg.accept()
+
+        def failed(message: str) -> None:
+            result["error"] = message
+            dlg.reject()
+
+        problem = self.controller.start_cluster(
+            settings, on_done=done, on_error=failed,
+            on_progress=dlg.show_progress)
+        if problem:
+            raise RuntimeError(problem)
+        dlg.exec()
+        if result.get("error"):
+            raise RuntimeError(result["error"])
+        if not result.get("path"):
+            raise RuntimeError("DBSCAN was cancelled.")
+        return result["path"]
 
     def _import_parts_csv(self) -> None:
         """Open the parts-CSV section picker and join the staged columns onto the

@@ -31,10 +31,12 @@ Usage
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 import polars as pl
+
 # scikit-learn is imported where it is used: it takes about a second to
 # import, and opening a build (which imports this package) never needs it.
 
@@ -82,19 +84,53 @@ def _to_scaled_array(
     z_col: str | None,
     eps_xy: float,
     eps_z: float | None,
+    extra: Mapping[str, float] | None = None,
 ) -> np.ndarray:
     """
     Pull spatial columns into a NumPy array with Z scaled so that one unit of
     distance in scaled space corresponds to eps_xy in the original X/Y or
-    eps_z in the original Z.
+    eps_z in the original Z. ``extra`` adds more columns, each scaled the same
+    way by its own radius (column -> radius).
     """
     x = df[x_col].to_numpy().astype(np.float64, copy=False)
     y = df[y_col].to_numpy().astype(np.float64, copy=False)
-    if z_col is None:
-        return np.column_stack([x, y])
-    z = df[z_col].to_numpy().astype(np.float64, copy=False)
-    z_scaled = z * (eps_xy / eps_z)  # type: ignore[operator]
-    return np.column_stack([x, y, z_scaled])
+    cols = [x, y]
+    if z_col is not None:
+        z = df[z_col].to_numpy().astype(np.float64, copy=False)
+        cols.append(z * (eps_xy / eps_z))  # type: ignore[operator]
+    for name, radius in (extra or {}).items():
+        v = df[name].to_numpy().astype(np.float64, copy=False)
+        cols.append(v * (eps_xy / radius))
+    return np.column_stack(cols)
+
+
+def _check_extra(df: pl.DataFrame, extra: Mapping[str, float] | None) -> dict:
+    """``extra`` as a plain dict, after checking its columns and radii."""
+    out = dict(extra or {})
+    missing = [c for c in out if c not in df.columns]
+    if missing:
+        raise KeyError(f"Column(s) not in DataFrame: {missing}")
+    bad = [c for c, r in out.items() if not r or r <= 0]
+    if bad:
+        raise ValueError(f"Radius must be positive for: {bad}")
+    return out
+
+
+def rank_by_size(labels: np.ndarray) -> np.ndarray:
+    """Renumber cluster labels by size: 0 for the largest cluster, 1 for the
+    next and so on (ties by the old label). Noise (-1) stays -1."""
+    labels = np.asarray(labels)
+    real = labels >= 0
+    if not real.any():
+        return labels.copy()
+    ids, inverse, counts = np.unique(labels[real], return_inverse=True,
+                                     return_counts=True)
+    order = np.lexsort((ids, -counts))       # largest first
+    rank = np.empty(ids.size, dtype=np.int64)
+    rank[order] = np.arange(ids.size)
+    out = np.full(labels.shape, -1, dtype=np.int32)
+    out[real] = rank[inverse]
+    return out
 
 
 def _stabilize_labels(
@@ -397,6 +433,7 @@ def cluster_dbscan_chunked(
     stable_labels: bool = True,
     verbose: bool = True,
     progress: Callable[[int, int], None] | None = None,
+    extra_columns: Mapping[str, float] | None = None,
 ) -> pl.DataFrame:
     """
     DBSCAN over the FULL data using layer-wise chunking with overlap merging.
@@ -444,12 +481,17 @@ def cluster_dbscan_chunked(
     progress
         Optional ``progress(chunk, n_chunks)`` called before each chunk is
         clustered (``chunk`` counts from 1), e.g. to drive a progress bar.
+    extra_columns
+        More columns to cluster on beside the position, each with its own
+        radius (column -> radius): two points are neighbours only when they
+        are close in position *and* in these values (a signal, say).
 
     Returns
     -------
     DataFrame with an added ``cluster`` Int32 column. -1 = noise.
     """
     x_col, y_col, z_col = _validate(df, mode, columns, eps_xy, eps_z)
+    extra = _check_extra(df, extra_columns)
     if layer_col not in df.columns:
         raise KeyError(f"layer_col {layer_col!r} not in DataFrame")
     if df.is_empty():
@@ -515,7 +557,8 @@ def cluster_dbscan_chunked(
         if progress is not None:
             progress(chunk_id + 1, len(chunks))
         chunk_df = df[chunk_indices]
-        coords = _to_scaled_array(chunk_df, x_col, y_col, z_col, eps_xy, eps_z)
+        coords = _to_scaled_array(chunk_df, x_col, y_col, z_col, eps_xy, eps_z,
+                                  extra)
 
         if verbose:
             print(
@@ -600,3 +643,90 @@ def cluster_dbscan_chunked(
         final_labels = _stabilize_labels(final_labels, spatial)
 
     return df.with_columns(pl.Series("cluster", final_labels, dtype=pl.Int32))
+
+
+def _rows_for_pairs(coords: np.ndarray, max_pairs: int, seed: int | None) -> int:
+    """How many of ``coords``' rows DBSCAN (eps 1) can cluster with at most
+    ``max_pairs`` neighbour pairs, estimated from a probe of the rows."""
+    from sklearn.neighbors import BallTree
+
+    n = len(coords)
+    probe = np.random.default_rng(seed).choice(n, min(n, 2000), replace=False)
+    mean_k = float(BallTree(coords).query_radius(
+        coords[probe], r=1.0, count_only=True).mean())
+    if n * mean_k <= max_pairs:
+        return n
+    # Neighbours per row fall in step with the rows kept: n'^2 k / n <= max.
+    return max(1000, min(n, int((max_pairs * n / mean_k) ** 0.5)))
+
+
+def cluster_dbscan_features(
+    df: pl.DataFrame,
+    features: Mapping[str, float],
+    *,
+    min_samples: int = 10,
+    representative_size: int = 200_000,
+    seed: int | None = 0,
+    progress: Callable[[str], None] | None = None,
+    max_pairs: int = 40_000_000,
+) -> pl.DataFrame:
+    """
+    DBSCAN on any numeric columns, each with its own radius (column -> radius):
+    two rows are neighbours when every column differs by about its radius or
+    less (distance is measured in units of each column's radius).
+
+    For clustering by value rather than by place (no layer chunking: a
+    cluster in value space can span the whole build). Like ``cluster_dbscan``,
+    it clusters a random representative of ``representative_size`` rows and
+    gives every other row the label of its nearest representative (noise when
+    that is further than the radius). Rows must have values in every column.
+    When the rows are dense in those columns (many neighbours each), it uses
+    fewer representatives, so the neighbour lists stay within ``max_pairs``
+    (about 0.5 GB at the default). ``min_samples`` counts neighbours in the
+    whole frame: it is scaled down with the representative.
+
+    Returns the DataFrame with an added ``cluster`` Int32 column (-1 = noise),
+    numbered by size (0 = the largest cluster).
+    """
+    feats = _check_extra(df, features)
+    if not feats:
+        raise ValueError("features must name at least one column")
+    if df.is_empty():
+        return df.with_columns(pl.lit(-1, dtype=pl.Int32).alias("cluster"))
+
+    def scaled(frame: pl.DataFrame) -> np.ndarray:
+        return np.column_stack([
+            frame[c].to_numpy().astype(np.float64, copy=False) / r
+            for c, r in feats.items()])
+
+    from sklearn.cluster import DBSCAN
+    from sklearn.neighbors import BallTree
+
+    rep = (df.sample(n=representative_size, seed=seed, shuffle=False)
+           if df.height > representative_size else df)
+    rep_coords = scaled(rep)
+    # DBSCAN keeps every point's neighbours in memory: in dense data (a wide
+    # radius, values bunched together) that is far more than the points. If
+    # the representative would hold more than ``max_pairs`` neighbour pairs,
+    # use fewer rows (the pairs fall with the square of the rows).
+    n = _rows_for_pairs(rep_coords, max_pairs, seed)
+    if n < rep.height:
+        keep = np.random.default_rng(seed).choice(rep.height, n, replace=False)
+        rep, rep_coords = rep[np.sort(keep)], rep_coords[np.sort(keep)]
+    # A sample has fewer neighbours within the radius than the whole: scale
+    # min samples with it so a cluster needs the same density either way.
+    min_pts = max(2, round(min_samples * rep.height / df.height))
+    if progress is not None:
+        progress("clustering")
+    rep_labels = DBSCAN(eps=1.0, min_samples=min_pts, algorithm="ball_tree",
+                        n_jobs=-1).fit_predict(rep_coords)
+    if rep.height == df.height:
+        labels = rep_labels
+    else:
+        if progress is not None:
+            progress("labelling every row")
+        dist, idx = BallTree(rep_coords).query(scaled(df), k=1)
+        # The nearest representative's label, if it is within the radius;
+        # a row further than that from every representative is noise.
+        labels = np.where(dist[:, 0] <= 1.0, rep_labels[idx[:, 0]], -1)
+    return df.with_columns(pl.Series("cluster", rank_by_size(labels), dtype=pl.Int32))

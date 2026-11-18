@@ -58,6 +58,8 @@ def derivation_refs(d: dict) -> set[str]:
         return out
     if kind == "join":
         return {d["key"]} if d.get("key") else set()
+    if kind == "cluster":  # matched on the point's keys (source names)
+        return {"layer", "Start time"}
     out = refs(d.get("expr"))
     if d.get("group"):
         out.add(d["group"])

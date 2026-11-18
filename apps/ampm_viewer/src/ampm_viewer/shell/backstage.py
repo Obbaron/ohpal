@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -70,10 +71,21 @@ def _humanize(iso: str) -> str:
 
 
 
+class _TileButton(QPushButton):
+    """250 wide when there is room, down to 160 when the window is narrow."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(250, 120)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(160, 120)
+
+
 def _tile(title: str, subtitle: str) -> QPushButton:
-    btn = QPushButton()
+    btn = _TileButton()
     btn.setProperty("class", "Tile")
-    btn.setMinimumSize(250, 120)
+    btn.setMinimumSize(160, 120)
+    btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     lay = QVBoxLayout(btn)
     lay.setContentsMargins(18, 16, 18, 16)
@@ -245,7 +257,8 @@ class Backstage(QWidget):
         strip.addStretch(1)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search for a file")
-        self.search.setFixedWidth(280)
+        self.search.setMinimumWidth(140)
+        self.search.setMaximumWidth(280)
         self.search.textChanged.connect(lambda _t: self.refresh_recents())
         strip.addWidget(self.search)
         lay.addLayout(strip)
@@ -390,7 +403,8 @@ class Backstage(QWidget):
         strip.setSpacing(8)
         self.lib_search = QLineEdit()
         self.lib_search.setPlaceholderText("Search by title, build or kind")
-        self.lib_search.setFixedWidth(280)
+        self.lib_search.setMinimumWidth(140)
+        self.lib_search.setMaximumWidth(280)
         self.lib_search.textChanged.connect(lambda _t: self.refresh_library())
         strip.addWidget(self.lib_search)
         strip.addStretch(1)
