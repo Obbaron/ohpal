@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **No "could not determine DPI" warning per plot.** On Linux without `xdpyinfo` or
+  `xrandr` (WSL, Wayland), VisPy logged it for every plot, after trying both tools.
+  The screen DPI is now found once per session (96, as before, when it can't be).
 - **DBSCAN part assignment is clustered again only when its inputs change.** A
   rebuild used to cluster again every time; now it reads the saved part ids back
   unless the layers, their data files, the parts CSV, the STL or the DBSCAN

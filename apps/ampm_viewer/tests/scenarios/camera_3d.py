@@ -99,5 +99,22 @@ print("scroll zooms; Shift + left drag still pans")
 tab.set_control("reset_view", None); pump()
 assert np.allclose(state()[0], c0, atol=1e-6), (state()[0], c0)
 print("Reset view recentres")
+
+# The screen DPI is found once per session, quietly: on Linux without xdpyinfo
+# or xrandr (WSL, Wayland) VisPy logged "could not determine DPI" for every plot.
+import io, logging, os
+from vispy.util import config as vconfig, logger as vlogger
+from ampm_viewer.shell import vispy_speedups
+assert isinstance(vconfig["dpi"], int), vconfig["dpi"]     # settled when the first plot was made
+heard = io.StringIO(); hd = logging.StreamHandler(heard); vlogger.addHandler(hd)
+env = dict(os.environ)
+os.environ["DISPLAY"] = ":99"; os.environ["PATH"] = ""      # an X display, no tools to ask
+vconfig["dpi"] = None
+assert vispy_speedups.settle_dpi() == 96 and vconfig["dpi"] == 96
+tab2 = w._open_plot(default_spec(SCATTER_3D, list(s.result.df.columns), s.renames,
+                                 dbscan=c.dbscan_params()), ("all", None, None)); drain()
+os.environ.clear(); os.environ.update(env); vlogger.removeHandler(hd)
+assert "DPI" not in heard.getvalue() and tab2._canvas.dpi == 96, heard.getvalue()
+print("screen DPI: settled once, no warning per plot")
 print("ALL OK")
 c.shutdown()

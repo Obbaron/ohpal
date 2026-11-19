@@ -24,6 +24,13 @@ own code if its internals are not what this expects.
   with a 1024 x 1024 texture atlas per font. Text that VisPy makes inside its
   own widgets (axis ticks, colour bar numbers) cannot be handed one, so while
   ``shared_fonts(fm)`` is active, text visuals made without one use ``fm``.
+- **Screen DPI.** Every canvas asks the OS for the screen's DPI. On Linux
+  VisPy runs ``xdpyinfo`` and then ``xrandr`` for it, two new processes per
+  plot, and where neither is installed or answers (WSL, Wayland, most
+  minimal desktops) it logs "WARNING: could not determine DPI" for every
+  plot before using 96. The DPI is now found once per session and kept in
+  VisPy's config, which canvases read first; when it can't be found, 96, as
+  VisPy would use, without the warning.
 """
 
 from __future__ import annotations
@@ -56,11 +63,27 @@ def install() -> None:
         return
     _installed = True
     for patch in (_patch_glyphs, _patch_shader_variables, _patch_text_visual,
-                  _patch_no_matplotlib):
+                  _patch_no_matplotlib, settle_dpi):
         try:
             patch()
         except Exception:  # noqa: BLE001 - VisPy changed: keep its own code
             pass
+
+
+def settle_dpi() -> int:
+    """Ask for the screen DPI once and keep it in VisPy's config (canvases
+    read it before asking the OS; it holds whole numbers). 96, VisPy's own
+    fallback, when the OS can't say, without VisPy's warning."""
+    from vispy.util import config
+    from vispy.util.dpi import get_dpi
+
+    if config["dpi"] is None:
+        try:
+            dpi = round(float(get_dpi(raise_error=True)))
+        except Exception:  # noqa: BLE001 - no xdpyinfo / xrandr, or no answer
+            dpi = 96
+        config["dpi"] = dpi if dpi > 0 else 96
+    return config["dpi"]
 
 
 def _patch_glyphs() -> None:
