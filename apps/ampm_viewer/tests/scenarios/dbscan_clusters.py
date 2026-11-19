@@ -96,6 +96,12 @@ assert d["settings"]["layers_per_chunk"] == 15
 assert d["info"]["n_points"] >= kept and d["info"]["n_clusters"] >= 1
 log = w.log_bus.history()
 assert "DBSCAN 'hot spots':" in log and "clusters in" in log and "noise" in log
+# The status bar's progress is in the log too (without the trailing dots), not twice in a row.
+steps = [l for l in log.splitlines() if l.startswith("DBSCAN 'hot spots': ") and "clusters in" not in l]
+assert "DBSCAN 'hot spots': starting" in steps and any("clustering" in l for l in steps), steps
+assert not any(l.endswith("\u2026") for l in steps) and all(a != b for a, b in zip(steps, steps[1:])), steps
+# Loading a layer is for the status bar, not the log.
+assert "Loading layer" not in log and "Loaded layer" not in log, [l for l in log.splitlines() if "oad" in l]
 print("ran in the background:", d["info"]["n_clusters"], "clusters,",
       d["info"]["n_noise"], "noise of", d["info"]["n_points"])
 

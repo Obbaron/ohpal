@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Excel template: you choose where to save it.** After the build folder, a save
+  window asks where the workbook goes, starting in the build folder with the
+  build's name. It no longer writes to an `exports` folder inside the build. A
+  folder with nothing to build from is reported before the save window.
+- **Log:** DBSCAN's progress (part assignment and DBSCAN clusters) is written to the
+  log as well as the status bar, one line per step. Loading a layer ("Loading
+  layer 3…", "Loaded layer 3: … rows") now shows in the status bar only.
 - **3D plots: right drag pans.** Left drag rotates and scroll zooms, as before; a
   right drag now moves the view so the scene follows the mouse (it used to zoom,
   which scroll still does). Shift + left drag pans too. 2D plots are unchanged.

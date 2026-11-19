@@ -171,6 +171,8 @@ class TemplateWorker(QObject):
 
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
+    NOTHING = ("This folder has no BuildStarted .dhxml and no QuantAM parts "
+               "CSV, so there is nothing to build the Excel from.")
 
     def __init__(self, build_root, out_path) -> None:
         super().__init__()
@@ -182,9 +184,7 @@ class TemplateWorker(QObject):
         try:
             dhxml, quant = find_build_inputs(self._build_root)
             if dhxml is None and quant is None:
-                self.error.emit(
-                    "This folder has no BuildStarted .dhxml and no QuantAM parts "
-                    "CSV, so there is nothing to build the Excel from.")
+                self.error.emit(self.NOTHING)
                 return
             from ohpal.ampm import template
 

@@ -197,9 +197,9 @@ class AppController(QObject):
         return float(self.session.layer_thickness or 0.03)
 
     def create_excel(self) -> None:
-        """Pick a build folder and write that one build's samples-template
-        workbook to ``<build>/exports/<build>.xlsx``. Works on any build folder
-        — it doesn't need (or create) a DataStore."""
+        """Pick a build folder, then where to save that build's samples-
+        template workbook (the build folder and its name to start with). Works
+        on any build folder: it doesn't need (or create) a DataStore."""
         if self._side_thread is not None:
             self._window.set_status("Still working on the previous job…")
             return
@@ -209,16 +209,22 @@ class AppController(QObject):
             return
         self._recents.set_last_browse_dir(str(Path(chosen).parent))
         build_root = Path(chosen)
-        name = re.sub(r"[^\w.\-() ]+", "_", build_root.name).strip() or "build"
-        out = build_root / "exports" / f"{name}.xlsx"
-        if out.exists() and not _ask(
-            self._window, "Replace the existing Excel?",
-            f"{out.name} is already in this build's exports folder. Replacing "
-            "it discards anything filled in there.",
-            ok_text="Replace", cancel_text="Cancel",
-        ):
+        from .workers import TemplateWorker, find_build_inputs
+
+        # Say so before asking where to save when there's nothing to use.
+        if find_build_inputs(build_root) == (None, None):
+            self._on_template_error(TemplateWorker.NOTHING)
             return
-        from .workers import TemplateWorker
+        name = re.sub(r"[^\w.\-() ]+", "_", build_root.name).strip() or "build"
+        # The file dialog asks before replacing a file that is there.
+        picked, _ = QFileDialog.getSaveFileName(
+            self._window, "Save the Excel template", str(build_root / f"{name}.xlsx"),
+            "Excel workbook (*.xlsx)")
+        if not picked:
+            return
+        out = Path(picked)
+        if out.suffix.lower() != ".xlsx":
+            out = out.with_name(out.name + ".xlsx")
 
         self._window.set_status(f"Creating the Excel for {build_root.name}…")
         self._start_side(
@@ -852,7 +858,7 @@ class AppController(QObject):
         self._current = req
         self._busy = True
         if not req["quiet"]:
-            self.session.begin_load(req["label"])
+            self.session.begin_load(req["label"], log=False)
         self._start_query(self.session.store, req["span"], req.get("sample_to"),
                           req.get("columns"))
 

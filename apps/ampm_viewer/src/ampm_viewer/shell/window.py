@@ -376,10 +376,10 @@ class MainWindow(QMainWindow):
         )
 
     # -- load lifecycle (driven by BuildSession signals) ---------------
-    def _on_load_started(self, label: str) -> None:
+    def _on_load_started(self, label: str, log: bool = True) -> None:
         self.backstage.set_loading(True)
         self.show_progress(True, busy=True)
-        self.set_status(f"Loading {label}…")
+        self.set_status(f"Loading {label}…", log=log)
 
     def _on_build_loaded(self, store) -> None:
         # Build identified — set the title + reveal the DataStore entry. The
@@ -514,7 +514,9 @@ class MainWindow(QMainWindow):
             if result.shown_rows < result.total_rows
             else ""
         )
-        self.set_status(f"Loaded {where}: {result.total_rows:,} rows{capped}")
+        # Status bar only: a layer loading is routine, not something to log.
+        self.set_status(f"Loaded {where}: {result.total_rows:,} rows{capped}",
+                        log=False)
         if self._pending_plots:  # the build's own plots, once it has data
             self._restore_plots()
 
@@ -1363,7 +1365,7 @@ class MainWindow(QMainWindow):
 
     def set_status(self, text: str, *, log: bool = True) -> None:
         self._log.setText(text)
-        if log:  # log=False re-shows a line that is already in the log
+        if log:  # log=False: the status bar only (routine, or already logged)
             self.log_bus.log_line(text)
 
     # -- help --------------------------------------------------------------
@@ -2035,8 +2037,12 @@ class MainWindow(QMainWindow):
 
     def set_background_job(self, text: str | None, on_cancel=None) -> None:
         """Show (or clear, with None) a standing note in the status bar for a
-        long job that runs behind the app — ordinary status messages come and
-        go without hiding it. ``on_cancel`` adds a Cancel button beside it."""
+        long job that runs behind the app (DBSCAN): ordinary status messages
+        come and go without hiding it. ``on_cancel`` adds a Cancel button
+        beside it. Each new note also goes to the log, so the job's progress
+        can be followed there afterwards."""
+        if text and text != self._job_label.text():
+            self.log_bus.log_line(text.rstrip("…").rstrip())
         self._job_label.setText(text or "")
         self._job_label.setVisible(bool(text))
         self._set_cancel(self._job_cancel_btn, "_job_cancel",

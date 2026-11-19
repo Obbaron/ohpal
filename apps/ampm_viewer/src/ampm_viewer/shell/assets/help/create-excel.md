@@ -2,7 +2,7 @@
 title: Excel template
 section: Getting started
 order: 40
-keywords: excel, template, samples, workbook, exports, xlsx, create
+keywords: excel, template, samples, workbook, save, xlsx, create
 ---
 # Excel template
 
@@ -11,9 +11,10 @@ Makes the samples-template workbook for one build, without opening the build.
 1. On the File tab, choose **New ▸ Excel template** (or the **Excel template**
    tile).
 2. Pick the build's folder.
-3. The workbook is written to an `exports` folder inside the build, named
-   after the build: `<build>/exports/<build name>.xlsx`. If one is already
-   there you are asked before it is replaced.
+3. Choose where to save the workbook. The save window starts in the build's
+   folder with the build's name, `<build name>.xlsx`; save it anywhere. If a
+   file of that name is already there, the save window asks before
+   replacing it.
 
 What goes into it depends on what the folder contains:
 

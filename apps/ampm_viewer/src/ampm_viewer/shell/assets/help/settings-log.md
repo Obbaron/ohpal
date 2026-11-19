@@ -57,9 +57,11 @@ The bar along the bottom reports what the app is doing.
 
 ## Log
 
-**Show log** at the right end of the status bar opens the log: every status
-message of the session, plus the detailed output of building and reading the
-data. **Export log** saves it to a text file.
+**Show log** at the right end of the status bar opens the log: the status
+messages of the session, each step of background work such as DBSCAN, plus
+the detailed output of building and reading the data. Loading a layer for the
+grid or a plot ("Loading layer 3…", "Loaded layer 3: … rows") shows in the
+status bar only. **Export log** saves the log to a text file.
 
 When something fails or takes longer than you expect, the log is the first
 place to look, and the file to send when asking for help.

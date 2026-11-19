@@ -29,7 +29,7 @@ class BuildSession(QObject):
     """Mutable state for the active build, with change notifications."""
 
     # A load/query cycle has started (payload: a short human label).
-    loadStarted = pyqtSignal(str)
+    loadStarted = pyqtSignal(str, bool)   # label, whether to log it
     # A DataStore was constructed for a build (payload: the DataStore).
     buildLoaded = pyqtSignal(object)
     # The build needs setup before it can be shown — show the DataStore page
@@ -62,8 +62,10 @@ class BuildSession(QObject):
         self.renames: dict[str, str] = {}
 
     # -- writers (controller-only) -------------------------------------
-    def begin_load(self, label: str) -> None:
-        self.loadStarted.emit(label)
+    def begin_load(self, label: str, *, log: bool = True) -> None:
+        """A load starts. ``log=False``: the status bar only (a layer's query:
+        routine, and it would crowd out what the log is for)."""
+        self.loadStarted.emit(label, log)
 
     def set_store(
         self, store: Any, source_dir: Path, build_name: str, layer_thickness: float
