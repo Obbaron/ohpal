@@ -2,7 +2,7 @@
 title: K-distance curve
 section: Plots
 order: 65
-keywords: k-distance, kdist, dbscan, eps, radius, min_samples, neighbour, elbow, clustering, tune, part assignment
+keywords: k-distance, kdist, dbscan, eps, radius, min_samples, neighbour, elbow, knee, kneedle, slope, derivative, hover, clustering, tune, part assignment
 context: plot.K-Distance Curve
 ---
 # K-distance curve
@@ -27,9 +27,33 @@ Choose **eps a little above the flat part and below the elbow**: large
 enough that the parts' points join up, small enough that stray points stay
 out.
 
-The dashed red line is the XY radius in the plot's settings, labelled with
-its value, so you can see at a glance which points it would include.
-**eps guide line** on the toolbar hides it.
+## The knee
+
+The app finds the knee for you: a red dot on the curve and a dashed line
+across at its distance, labelled **knee: eps ≈** that distance. It is a
+suggestion for eps, found with the *Kneedle* method: with both axes scaled to
+0 to 1, the knee is the point furthest below a straight line from the first
+point to the last. A few stray points that sit far from the rest don't move
+it: it stays where the curve leaves the scan's spacing.
+
+It is only a starting point. A curve with several steps (scan spacings that
+differ, for example contours and infill) may have its knee at the first step
+of the rise, when a slightly larger eps would keep those points in their
+parts. Hover the curve to see how steep it is where, and choose with your
+knowledge of the build. **Knee line** on the toolbar hides the line.
+
+## Hovering
+
+Hover the curve to see the point under the pointer, as on a scatter plot:
+
+- its **rank** among the points (smallest distance first),
+- its **k-distance**,
+- the curve's **slope** there: how fast the distance grows, in mm per 1,000
+  points, measured over the 0.5% of points on each side. In brackets, how
+  that compares with the curve's average slope: "flat" on the flat stretch,
+  several times the average past the knee.
+
+Over the knee's dot the tip says so.
 
 ## Settings
 
@@ -42,8 +66,7 @@ rebuild.
   in the plane only.
 - **Neighbour (k)**: which neighbour to measure. Use the *min_samples* you
   give DBSCAN.
-- **XY radius (eps)**: DBSCAN's radius in the plane, in mm. It sets the
-  dashed line.
+- **XY radius (eps)**: DBSCAN's radius in the plane, in mm.
 - **Z radius**: DBSCAN's radius between layers. Only its ratio to the XY
   radius matters here: Z is stretched by that ratio before distances are
   measured, exactly as DBSCAN does.

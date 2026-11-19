@@ -53,7 +53,7 @@ current one is ticked.
 | Violin | **Quartile box and median**, and **Bandwidth** (Scott or Silverman). |
 | KDE | **Fill under curves**, and **Bandwidth**. |
 | Contour | **Measured points**, and **Level lines** (when the grid of values is complete). |
-| K-Distance Curve | **eps guide line**: the dashed line at the XY radius. |
+| K-Distance Curve | **Knee line**: the detected knee, the suggested eps. |
 
 The options belong to the plot: they carry over when it is popped out into
 its own window. A [macro](help:macros) records the plot as it was made, not

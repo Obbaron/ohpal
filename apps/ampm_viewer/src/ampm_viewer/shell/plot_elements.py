@@ -284,7 +284,7 @@ def _data_elements() -> list[Element]:
             Field("line_color", "Colour", "color", "Curve"),
             Field("line_width", "Line width", "int", "Curve", lo=1, hi=8,
                   suffix=" px"),
-            Field("guide_color", "eps guide colour", "color", "Curve"),
+            Field("guide_color", "Knee line colour", "color", "Curve"),
         ), {"line_color": "#2966c7", "line_width": 2,
             "guide_color": "#cc3333"}),
         Element("data_violins", "Violins", (

@@ -80,7 +80,7 @@ CONTOUR_POINTS = Control("show_points", "Measured points", "contour_points",
                          "toggle", "options")
 CONTOUR_LINES = Control("show_lines", "Level lines", "contour_lines",
                         "toggle", "options")
-EPS_LINE = Control("show_ref", "eps guide line", "eps_line", "toggle", "options")
+KNEE_LINE = Control("show_ref", "Knee line", "knee_line", "toggle", "options")
 
 VIEW_OPTIONS: dict[str, tuple] = {
     SCATTER_2D: (EQUAL_AXES,),
@@ -93,7 +93,7 @@ VIEW_OPTIONS: dict[str, tuple] = {
     VIOLIN: (VIOLIN_BOX, BANDWIDTH),
     KDE: (KDE_FILL, BANDWIDTH),
     CONTOUR: (CONTOUR_POINTS, CONTOUR_LINES),
-    KDIST: (EPS_LINE,),
+    KDIST: (KNEE_LINE,),
 }
 
 

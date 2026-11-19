@@ -96,6 +96,8 @@ _CBAR_LABEL_W, _CBAR_W = 18, 74
 _CBAR_BOTTOM_PX = 14      # an automatic bar's thickness below the plot
 _TITLE_INSET = 4         # px from the strip's end, for a left / right title
 _CLICK_SLOP_PX = 4        # press→release travel that still counts as a click
+_KDIST_HOVER_PX = 12      # k-distance hover: as close as the scatter hovers
+_KNEE_DOT_PX = 6          # k-distance: pointer this close to the knee's dot
 
 
 def _shared_fonts(method):
@@ -183,6 +185,21 @@ def _grid_range(a0: float, a1: float, step: float) -> np.ndarray:
 
 # How far the 3D floor grid extends past the data, as a fraction of each span.
 _FLOOR_PAD = 0.5
+
+
+def _slope_text(slope: float, x, y) -> str:
+    """The k-distance hover's slope: in mm per 1,000 points (the plot's own
+    units, per point, is a tiny number), and against the curve's average
+    slope (first point to last): past the knee it climbs many times faster."""
+    avg = (float(y[-1]) - float(y[0])) / max(float(x[-1]) - float(x[0]), 1e-12)
+    rel = slope / avg if avg > 0 else None
+    if rel is not None and abs(rel) < 0.005:
+        return "slope: 0 mm per 1,000 points (flat)"
+    text = f"slope: {_fmt(round(slope * 1000, 12))} mm per 1,000 points"
+    if rel is not None:
+        text += (f" ({rel:.2f}\u00d7 average)" if rel < 10
+                 else f" ({rel:.0f}\u00d7 average)")
+    return text
 
 
 def _fmt(v) -> str:
@@ -400,8 +417,9 @@ class PlotTab(QWidget):
         self._curve_data = None
         self._curve_lines: list = []
         self._curve_fill = None
-        self._ref_line = None
-        self._ref_label = None
+        self._knee_line = None
+        self._knee_label = None
+        self._knee_dot = None
         self._violin_data = None
         self._violin_mesh = None
         self._violin_edges = None
@@ -1017,11 +1035,9 @@ class PlotTab(QWidget):
 
         ymax = max(float(np.max(ys)) for ys in data.ys) if data.ys else 1.0
         xlo, xhi = float(x[0]), float(x[-1])
-        if data.reference is not None and self.spec.show_ref:
-            ymax = max(ymax, 1.08 * float(data.reference))  # guide + label room
         if ymax <= 0:
             ymax = 1.0
-        self._set_reference(data, xlo, xhi, lift=0.012 * ymax)
+        self._set_knee(data, xlo, xhi, lift=0.012 * ymax)
 
         # KDE: a legend of the groups in the colour-bar column. One curve (or
         # the k-distance curve) needs none.
@@ -1039,42 +1055,55 @@ class PlotTab(QWidget):
         if self._view is not None and first:
             QTimer.singleShot(0, self.reset_view)
 
-    def _set_reference(self, data, xlo, xhi, lift: float = 0.0) -> None:
-        """The k-distance curve's dashed guide at the XY radius (eps)."""
+    def _set_knee(self, data, xlo, xhi, lift: float = 0.0) -> None:
+        """The k-distance curve's knee (``plotdata.knee_index``): a dot on the
+        curve and a dashed line across at its distance, labelled as the eps
+        it suggests. Nothing when the curve has no knee or it is turned off."""
         from vispy import scene
 
-        if data.reference is None or not self.spec.show_ref:
-            for item in (self._ref_line, self._ref_label):
+        items = (self._knee_line, self._knee_label, self._knee_dot)
+        if data.knee is None or not self.spec.show_ref:
+            for item in items:
                 if item is not None:
                     item.parent = None
             return
-        y = float(data.reference)
+        kx, y = (float(v) for v in data.knee)
         guide = QColor(self._ds("guide_color")).getRgbF()
         n = 60  # dashes: consecutive point pairs are drawn, gaps between
         pos = np.empty((2 * n, 2), "float32")
         pos[:, 0] = np.linspace(xlo, xhi, 2 * n + 1)[:2 * n]
         pos[:, 1] = y
-        if self._ref_line is None:
-            self._ref_line = scene.visuals.Line(
+        if self._knee_line is None:
+            self._knee_line = scene.visuals.Line(
                 pos=pos, color=guide, width=1.0, connect="segments",
                 parent=self._view.scene)
         else:
-            self._ref_line.set_data(pos=pos, color=guide)
-            if self._ref_line.parent is None:
-                self._ref_line.parent = self._view.scene
-        self._ref_line.order = 2
-        # Label at the right end, just above the line.
-        text = f"eps = {_fmt(y)} mm"
-        if self._ref_label is None:
-            self._ref_label = scene.visuals.Text(
-                text, pos=(xhi, y + lift), color=guide, anchor_x="right",
-                anchor_y="top", font_size=9, parent=self._view.scene, font_manager=self._fonts)
+            self._knee_line.set_data(pos=pos, color=guide)
+            if self._knee_line.parent is None:
+                self._knee_line.parent = self._view.scene
+        self._knee_line.order = 2
+        dot = np.array([[kx, y]], "float32")
+        if self._knee_dot is None:
+            self._knee_dot = scene.visuals.Markers(parent=self._view.scene)
+            self._knee_dot.set_gl_state("translucent", depth_test=False)
+        elif self._knee_dot.parent is None:
+            self._knee_dot.parent = self._view.scene
+        self._knee_dot.set_data(dot, face_color=guide, edge_color="white",
+                                edge_width=1.5, size=9)
+        self._knee_dot.order = 3
+        # Label at the left end, just above the line (the knee sits right).
+        text = f"knee: eps \u2248 {_fmt(y)} mm"
+        if self._knee_label is None:
+            self._knee_label = scene.visuals.Text(
+                text, pos=(xlo, y + lift), color=guide, anchor_x="left",
+                anchor_y="top", font_size=9, parent=self._view.scene,
+                font_manager=self._fonts)
         else:
-            self._ref_label.text = text
-            self._ref_label.color = guide
-            self._ref_label.pos = (xhi, y + lift)
-            if self._ref_label.parent is None:
-                self._ref_label.parent = self._view.scene
+            self._knee_label.text = text
+            self._knee_label.color = guide
+            self._knee_label.pos = (xlo, y + lift)
+            if self._knee_label.parent is None:
+                self._knee_label.parent = self._view.scene
 
     def _render_violins(self) -> None:
         """One violin per category, coloured by its median, with an optional
@@ -1211,6 +1240,9 @@ class PlotTab(QWidget):
         if (data is None or not self._curve_lines
                 or getattr(event, "pos", None) is None):
             return
+        if self.spec.is_kdist:
+            self._kdist_hover(event)
+            return
         if getattr(event, "buttons", None):
             self._hide_tooltip()
             return
@@ -1232,15 +1264,11 @@ class PlotTab(QWidget):
                 self._hide_tooltip()
                 return
             y = float(data.ys[c][j])
-            if self.spec.is_kdist:
-                lines = [f"rank: {int(x[j]):,} of {x.size:,}",
-                         f"{data.y_name}: {_fmt(y)}"]
-            else:
-                lines = ([f"{data.group_name}: {data.names[c]}"]
-                         if data.group_name else [])
-                lines += [f"{data.x_name}: {_fmt(float(x[j]))}",
-                          f"density: {_fmt(y)}",
-                          f"n = {data.counts[c]:,}"]
+            lines = ([f"{data.group_name}: {data.names[c]}"]
+                     if data.group_name else [])
+            lines += [f"{data.x_name}: {_fmt(float(x[j]))}",
+                      f"density: {_fmt(y)}",
+                      f"n = {data.counts[c]:,}"]
             if self._tooltip is None:
                 self._tooltip = PlotTooltip(self._canvas.native)
             native = self._canvas.native
@@ -1248,6 +1276,46 @@ class PlotTab(QWidget):
                                   lines, data.colors[c],
                                   (native.width(), native.height()))
         except Exception:  # noqa: BLE001
+            self._hide_tooltip()
+
+    def _kdist_hover(self, event) -> None:
+        """The k-distance point nearest the pointer, as the scatter hovers
+        do (within a few pixels on screen, so the steep end works too): its
+        rank, its distance and the curve's slope there."""
+        data = self._curve_data
+        if getattr(event, "buttons", None):
+            self._hide_tooltip()
+            return
+        try:
+            line = self._curve_lines[0]
+            x, y = data.x, data.ys[0]
+            canvas = line.get_transform("visual", "canvas").map(
+                np.column_stack([x, y]))
+            d2 = ((canvas[:, 0] - float(event.pos[0])) ** 2
+                  + (canvas[:, 1] - float(event.pos[1])) ** 2)
+            j = int(np.argmin(d2))
+            if d2[j] > _KDIST_HOVER_PX ** 2:
+                self._hide_tooltip()
+                return
+            # Over the knee's dot: the knee itself (a pixel holds many points).
+            knee = (int(data.knee[0]) if data.knee is not None
+                    and self.spec.show_ref else None)
+            at_knee = knee is not None and d2[knee] <= _KNEE_DOT_PX ** 2
+            if at_knee:
+                j = knee
+            lines = [f"rank: {int(x[j]):,} of {x.size:,}",
+                     f"{data.y_name}: {_fmt(float(y[j]))}"]
+            if data.slopes is not None:
+                lines.append(_slope_text(float(data.slopes[0][j]), x, y))
+            if at_knee:
+                lines.append("the knee: suggested eps")
+            if self._tooltip is None:
+                self._tooltip = PlotTooltip(self._canvas.native)
+            native = self._canvas.native
+            self._tooltip.show_at((float(canvas[j, 0]), float(canvas[j, 1])),
+                                  lines, data.colors[0],
+                                  (native.width(), native.height()))
+        except Exception:  # noqa: BLE001 - hover is a nicety; never break
             self._hide_tooltip()
 
     def _violin_hover(self, event) -> None:
@@ -1950,7 +2018,8 @@ class PlotTab(QWidget):
         """The toolbar controls that apply to this plot right now: its view's
         controls (``plotcontrols``), less any with nothing to act on (a
         legend needs one on the plot, a bounding box a 3D scene, the level
-        lines a field without gaps, the eps guide a k-distance curve)."""
+        lines a field without gaps, the knee line a k-distance curve with a
+        knee)."""
         from dataclasses import replace
 
         s = self.spec
@@ -1964,7 +2033,7 @@ class PlotTab(QWidget):
                 continue
             if k == "show_lines" and not self._contour_lines_ok:
                 continue
-            if k == "show_ref" and (curve is None or curve.reference is None):
+            if k == "show_ref" and (curve is None or curve.knee is None):
                 continue
             if k in ("layer_prev", "layer_next") and len(self._layers) < 2:
                 continue
@@ -3113,7 +3182,7 @@ class PlotTab(QWidget):
         self._bar_data = None
         self._curve_data = None
         self._curve_lines = []
-        self._curve_fill = self._ref_line = self._ref_label = None
+        self._curve_fill = self._knee_line = self._knee_label = self._knee_dot = None
         self._violin_data = None
         self._violin_mesh = self._violin_edges = self._violin_marks = None
         self._dist_df = self._dist_key = self._dist_data = None

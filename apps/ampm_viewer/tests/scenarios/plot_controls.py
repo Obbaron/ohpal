@@ -227,16 +227,16 @@ if tco._contour_lines_ok:
     tco.set_control("show_lines", True); drain(); assert tco._contour_lines.visible
 w.panel.sync_plot(tco.panel_state()); assert w.panel.points_box.isHidden()
 
-# K-distance: the eps line; no legend, no colour -> the panel's note
+# K-distance: the knee line; no legend, no colour -> the panel's note
 td = w._open_plot(default_spec(KDIST, cols, s.renames, dbscan=c.dbscan_params()), ALL); drain()
 tt = tips(w.toolbar); print("K-distance:", tt)
-assert "eps guide line" in tt and "Legend" not in tt and "BBox" not in tt
-button(w.toolbar, "eps guide line").trigger(); drain()
-assert td.spec.show_ref is False and td._ref_line.parent is None and td._ref_label.parent is None
-button(w.toolbar, "eps guide line").trigger(); drain(); assert td._ref_line.parent is not None
+assert "Knee line" in tt and "eps guide line" not in tt and "Legend" not in tt and "BBox" not in tt
+button(w.toolbar, "Knee line").trigger(); drain()
+assert td.spec.show_ref is False and all(v.parent is None for v in (td._knee_line, td._knee_label, td._knee_dot))
+button(w.toolbar, "Knee line").trigger(); drain(); assert td._knee_line.parent is not None
 w.panel.sync_plot(td.panel_state())
 assert w.panel.points_box.isHidden() and w.panel.colour_box.isHidden() and not w.panel.plot_note.isHidden()
-print("contour points + lines; k-distance eps line; empty panel explains itself")
+print("contour points + lines; k-distance knee line; empty panel explains itself")
 done(tco, td)
 
 # toolbar options never change the macro step that made the plot

@@ -67,7 +67,7 @@ UI = {
     "violin_box": "box-plot", "kde_fill": "chart--area",
     "bandwidth": "chart--line-smooth", "bins": "chart--histogram",
     "sort": "sort--ascending", "contour_points": "dot-mark",
-    "contour_lines": "contour--draw", "eps_line": "chart--average",
+    "contour_lines": "contour--draw", "knee_line": "chart--average",
     "popout": "custom/popout", "dockin": "custom/dockin",
     # panel
     "marker": "dot-mark", "colormap": "color-palette",

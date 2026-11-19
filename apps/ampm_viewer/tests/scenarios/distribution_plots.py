@@ -61,7 +61,24 @@ dense = pl.DataFrame({"X": gx.ravel(), "Y": gy.ravel()})
 kd = P.build_kdist(dense, PlotSpec(kind=KDIST, x="X", y="Y", z=None, k=4, eps_xy=0.15, eps_z=1.0))
 assert kd.x.size == P.KDIST_SAMPLE and np.all(np.diff(kd.ys[0]) >= 0)
 assert abs(float(np.median(kd.ys[0])) - 0.1) < 1e-6, np.median(kd.ys[0])   # 4th neighbour on a 0.1 grid = 0.1
-assert kd.reference == 0.15 and kd.y_name == "4-distance (mm)" and kd.x_name.startswith("Rank")
+assert kd.y_name == "4-distance (mm)" and kd.x_name.startswith("Rank")
+# A grid's distances barely vary: whatever knee Kneedle finds is on the curve, and
+# the slope is the curve's own (over 0.5% of the points each side).
+assert kd.knee is None or kd.ys[0][int(kd.knee[0])] == kd.knee[1]
+assert len(kd.slopes) == 1 and kd.slopes[0].shape == kd.ys[0].shape and np.all(kd.slopes[0] >= 0)
+# Knee: dense scan plus 0.5% strays. The knee is where the strays start, at the
+# scan's spacing, not out among the strays.
+rng = np.random.default_rng(3)
+strays = pl.DataFrame({"X": rng.uniform(0, 60, 1800), "Y": rng.uniform(0, 60, 1800)})
+ks = P.build_kdist(pl.concat([dense, strays]), PlotSpec(kind=KDIST, x="X", y="Y", z=None, k=4, eps_xy=0.15, eps_z=1.0))
+kx, ky = ks.knee
+assert 0.98 * ks.x.size < kx < ks.x.size and 0.1 <= ky < 0.2, ks.knee
+assert P.knee_index(np.zeros(50)) is None and P.knee_index([1.0, 2.0]) is None
+assert P.knee_index(np.r_[np.linspace(0, 1, 90), np.linspace(1, 50, 11)[1:]]) == 89   # the last point before the climb
+x = np.arange(100.0); y = x ** 2
+s2 = P.curve_slope(x, y, span=0.01)
+assert np.allclose(s2[1:-1], 2 * x[1:-1]) and s2[0] == 1 and s2[-1] == 197   # central inside, one-sided at the ends
+print(f"k-distance knee: rank {kx:.0f} of {ks.x.size} at {ky:.3f} mm with 0.5% strays; slopes central")
 # Z is stretched by eps_xy / eps_z, as DBSCAN measures it
 col = pl.DataFrame({"X": np.zeros(400), "Y": np.zeros(400), "Z": np.arange(400) * 0.03})
 k3 = P.build_kdist(col, PlotSpec(kind=KDIST, x="X", y="Y", z="Z", k=2, eps_xy=0.3, eps_z=0.06))
@@ -141,8 +158,34 @@ assert "categories" in tv.element_keys()
 cached = tv._dist_data; tv.set_color_min(30); assert tv._dist_data is cached and tv.crange[0] > tv._full_range[0]
 td = w._open_plot(default_spec(KDIST, cols, s.renames, dbscan=c.dbscan_params()), ("all", None, None)); drain()
 d = td._curve_data
-assert d.n == 1 and d.reference == 0.3 and float(np.median(d.ys[0])) < 0.3, "the build's eps covers its points (full density)"
-assert td._ref_line is not None and "0.3" in td._ref_label.text and td._cbar is None
+assert d.n == 1 and float(np.median(d.ys[0])) < 0.3, "the build's eps covers its points (full density)"
+kx, ky = d.knee
+assert 0.1 < ky < 0.3 and "knee: eps" in td._knee_label.text and f"{ky:.4g}" in td._knee_label.text
+assert td._knee_line.parent is not None and td._knee_dot.parent is not None and td._cbar is None
+# Hover: the nearest point within a few pixels, with the slope there.
+class Ev:
+    def __init__(self, pos): self.pos, self.buttons = pos, []
+td._grid._update_child_widget_dim(); td.reset_view(); drain()   # the layout a draw would make (no GL here)
+line = td._curve_lines[0]
+at = line.get_transform("visual", "canvas").map([kx, ky])[:2]
+end = line.get_transform("visual", "canvas").map([d.x[-1], d.ys[0][-1]])[:2]
+assert abs(end[0] - at[0]) > 30, (at, end)
+td._hover_data(Ev((at[0] + 3, at[1] - 3)))   # over the knee's dot
+tip = td._tooltip._lines
+assert td._tooltip.isVisible() and tip[0] == f"rank: {int(kx):,} of {d.x.size:,}" and "10-distance (mm)" in tip[1], tip
+assert tip[2].startswith("slope: ") and " mm per 1,000 points (" in tip[2] and float(tip[2].split()[1]) > 0, tip
+rel = float(tip[2].split("(")[1].split("\u00d7")[0])
+assert rel > 0, tip
+assert tip[-1] == "the knee: suggested eps", tip
+mid = line.get_transform("visual", "canvas").map([d.x[1000], d.ys[0][1000]])[:2]
+td._hover_data(Ev((mid[0], mid[1] + 4)))       # on the curve elsewhere: that point, no knee line
+tip = td._tooltip._lines
+assert td._tooltip.isVisible() and len(tip) == 3 and abs(int(tip[0].split()[1].replace(",", "")) - 1000) < 400, tip
+assert tip[2].startswith("slope: "), tip
+from ampm_viewer.shell.plot_tab import _slope_text
+assert _slope_text(0.0, [0, 10], [0.1, 0.2]) == "slope: 0 mm per 1,000 points (flat)"
+assert _slope_text(0.02, [0, 10], [0.1, 0.2]) == "slope: 20 mm per 1,000 points (2.00\u00d7 average)"
+td._hover_data(Ev((at[0] + 60, at[1] + 200))); assert not td._tooltip.isVisible(), "nothing close: no tip"
 assert td._xaxis.axis.axis_label.startswith("Rank") and td._yaxis.axis.axis_label == "10-distance (mm)"
 print("app: menu entries; KDE legend + map-only panel + cached recolour; violins categorical + colour by median;"
       " k-distance at the build's eps (median %.3f mm < 0.3)" % float(np.median(d.ys[0])))

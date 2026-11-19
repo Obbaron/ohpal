@@ -53,7 +53,7 @@ class PlotSpec:
     fill: bool = True             # kde: shade under the curves
     sort: str = "name"            # bar / cov: order the bars by name | value
     show_lines: bool = True       # contour: level lines between the bands
-    show_ref: bool = True         # k-distance: the dashed eps guide
+    show_ref: bool = True         # k-distance: the knee line (suggested eps)
 
     @property
     def is_3d(self) -> bool:

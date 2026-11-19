@@ -341,9 +341,43 @@ class CurveData:
     x_name: str
     y_name: str
     group_name: str | None = None   # the column the curves are split by
-    reference: float | None = None  # a horizontal guide (k-distance: eps)
+    knee: tuple | None = None       # k-distance: the knee point (x, y), if any
     skipped: int = 0                # groups with too few values to draw
     n: int = 0
+    slopes: list | None = None      # k-distance: dy/dx per point, per curve
+
+
+# The k-distance curve's slope at a point is taken over this share of the
+# points on each side of it: the sorted distances step, so the slope from one
+# point to the next is mostly 0 or a spike.
+KDIST_SLOPE_SPAN = 0.005
+
+
+def curve_slope(x, y, span: float = KDIST_SLOPE_SPAN) -> np.ndarray:
+    """dy/dx at every point of a curve, from the points ``span`` of the curve
+    to each side (fewer at the ends)."""
+    x = np.asarray(x, "float64")
+    y = np.asarray(y, "float64")
+    n = y.size
+    if n < 2:
+        return np.zeros(n)
+    w = max(1, round(n * span))
+    i = np.arange(n)
+    lo, hi = np.maximum(i - w, 0), np.minimum(i + w, n - 1)
+    return (y[hi] - y[lo]) / (x[hi] - x[lo])
+
+
+def knee_index(y) -> int | None:
+    """The knee of a rising, bending-up curve (the sorted k-distances): the
+    Kneedle method (Satopaa et al., 2011). With both axes scaled to 0..1, the
+    knee is the point furthest below the straight line from the first point to
+    the last. None when the curve doesn't rise."""
+    y = np.asarray(y, "float64")
+    if y.size < 3 or not y[-1] > y[0]:
+        return None
+    x = np.linspace(0.0, 1.0, y.size)
+    i = int(np.argmax(x - (y - y[0]) / (y[-1] - y[0])))
+    return i if 0 < i < y.size - 1 else None
 
 
 def build_kde(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
@@ -399,8 +433,9 @@ def build_kde(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
 def build_kdist(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveData:
     """The sorted k-distance curve that DBSCAN's eps is read from: for each
     point, the distance to its k-th nearest neighbour (Z scaled by
-    eps_xy / eps_z in 3D, as DBSCAN measures it), sorted. The eps_xy in use is
-    drawn as a guide line.
+    eps_xy / eps_z in 3D, as DBSCAN measures it), sorted. Its knee
+    (``knee_index``) suggests eps; its slope at every point is kept for the
+    hover.
 
     Unlike ``ohpal.ampm.clustering.k_distance_curve``, which samples 50,000
     points and searches only among them, the neighbours here are searched
@@ -431,9 +466,12 @@ def build_kdist(df, spec, *, cmap=None, scale="linear", crange=None) -> CurveDat
     dist, _ = tree.query(probe, k=k + 1, workers=-1)
     kth = np.sort(dist[:, k])
     rank = np.arange(kth.size, dtype="float64")
+    i = knee_index(kth)
+    knee = None if i is None else (float(rank[i]), float(kth[i]))
     return CurveData(rank, [kth], [f"{k}-distance"], [int(kth.size)],
                      _sample_colors(1, "turbo"), "Rank (points, sorted)",
-                     f"{k}-distance (mm)", None, eps_xy, 0, 1)
+                     f"{k}-distance (mm)", None, knee, 0, 1,
+                     [curve_slope(rank, kth)])
 
 
 @dataclass

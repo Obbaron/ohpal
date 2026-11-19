@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   right drag now moves the view so the scene follows the mouse (it used to zoom,
   which scroll still does). Shift + left drag pans too. 2D plots are unchanged.
   New GUI scenario `camera_3d` (36 in all).
+- **K-distance curve: knee detection and slope.** The dashed eps line (the XY radius
+  you entered) is gone. In its place the curve's knee is found (the Kneedle method)
+  and marked with a dot and a dashed line, labelled as the eps it suggests
+  (**Knee line** on the toolbar hides it). Hovering the curve picks the nearest
+  point, as on a scatter plot, and shows its rank, its distance and the curve's
+  slope there (mm per 1,000 points, and against the average slope).
 
 ## [2.0.1] - 2026-11-18
 

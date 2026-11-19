@@ -86,7 +86,7 @@ the last row counts the rest.
 | **Scatter, layer views, 3D** | Marker, size, opacity, colour map, scale. These are the same settings as the side panel's **Points** and **Colour** boxes, and the two stay in step. |
 | **Bar, histogram, CoV** | Bar width (as a share of each bar's slot), an outline and its colour, the colour map. |
 | **KDE** | Line width, fill opacity (**Auto** fades as curves are added), the colour map. |
-| **K-distance curve** | The curve's colour and width, the eps guide's colour. |
+| **K-distance curve** | The curve's colour and width, the knee line's colour. |
 | **Violin** | Fill opacity, outline colour, the colour map. |
 | **Contour** | The level lines (colour, opacity, width), the measured points' size, the colour map. |
 
