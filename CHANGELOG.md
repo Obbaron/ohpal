@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **3D plots: right drag pans.** Left drag rotates and scroll zooms, as before; a
+  right drag now moves the view so the scene follows the mouse (it used to zoom,
+  which scroll still does). Shift + left drag pans too. 2D plots are unchanged.
+  New GUI scenario `camera_3d` (36 in all).
+
 ## [2.0.1] - 2026-11-18
 
 Installers for Windows and macOS, and a much faster start.

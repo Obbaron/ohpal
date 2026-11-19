@@ -565,7 +565,9 @@ class PlotTab(QWidget):
                 # No left axis column in 3D — an empty grid column would take an
                 # equal stretch and shove the view into the right half.
                 view = grid.add_view(row=1, col=0)
-                view.camera = scene.cameras.TurntableCamera(fov=45)
+                # Left drag rotates, scroll zooms, right drag pans.
+                from .cameras import Turntable3D
+                view.camera = Turntable3D(fov=45)
                 below = 2
             else:
                 view = grid.add_view(row=1, col=1)
@@ -3020,7 +3022,7 @@ class PlotTab(QWidget):
             or getattr(event, "pos", None) is None
         ):
             return
-        if getattr(event, "buttons", None):  # a drag rotates/zooms — not a hover
+        if getattr(event, "buttons", None):  # a drag rotates / pans: not a hover
             self._hide_tooltip()
             return
         try:

@@ -41,7 +41,8 @@ keywords: shortcut, keyboard, mouse, keys, ctrl, f1, double-click, hotkey
 | Action | Does |
 | --- | --- |
 | Drag | Pans (2D) or rotates (3D) |
-| Scroll or right-drag | Zooms |
+| Scroll | Zooms |
+| Right-drag | Zooms (2D) or pans (3D) |
 | Shift + drag | Pans a 3D plot |
 | Hover a point or bar | Shows its values |
 | Click a title, axis, label, colour bar, legend or the data | Selects it (an open side panel shows its [editor](help:plot-elements)) |

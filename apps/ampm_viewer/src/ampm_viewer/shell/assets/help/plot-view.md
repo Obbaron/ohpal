@@ -12,8 +12,11 @@ keywords: zoom, pan, rotate, reset view, axes, grid, bbox, legend, colour bar, t
 | --- | --- | --- |
 | **Drag** | Pan | Rotate |
 | **Scroll** | Zoom | Zoom |
-| **Right-drag** | Zoom | Zoom |
+| **Right-drag** | Zoom | Pan |
 | **Shift + drag** | Not used | Pan |
+
+In 3D the plot follows the mouse as you pan, so you can bring any part of the
+build to the middle and then zoom in on it.
 
 **Reset view** on the toolbar frames the data again.
 
