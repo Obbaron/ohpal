@@ -16,10 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New GUI scenario `camera_3d` (36 in all).
 - **K-distance curve: knee detection and slope.** The dashed eps line (the XY radius
   you entered) is gone. In its place the curve's knee is found (the Kneedle method)
-  and marked with a dot and a dashed line, labelled as the eps it suggests
-  (**Knee line** on the toolbar hides it). Hovering the curve picks the nearest
-  point, as on a scatter plot, and shows its rank, its distance and the curve's
-  slope there (mm per 1,000 points, and against the average slope).
+  and marked with a dot and a dashed line, labelled with the radii it suggests
+  (**Knee line** on the toolbar hides it). In 3D a distance on the curve stands for
+  both radii, eps XY and eps Z at the ratio the plot was made with, so the label and
+  the hover give both. Hovering the curve picks the nearest point, as on a scatter
+  plot, and shows those radii, the share of points with k neighbours within them
+  (DBSCAN's core points), the rank and the curve's slope there (mm per 1,000
+  points, and against the average slope).
 
 ## [2.0.1] - 2026-11-18
 

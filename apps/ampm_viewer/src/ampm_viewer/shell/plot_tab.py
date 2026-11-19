@@ -187,6 +187,26 @@ def _grid_range(a0: float, a1: float, step: float) -> np.ndarray:
 _FLOOR_PAD = 0.5
 
 
+def _kdist_tip(spec, data, j: int) -> list[str]:
+    """The k-distance hover for point ``j``: the DBSCAN radii its distance
+    stands for (``plotdata.kdist_eps``: eps XY, and eps Z at the plot's Z / XY
+    ratio), the share of the points that have k neighbours within those
+    radii (DBSCAN's core points), its rank and the curve's slope there."""
+    from .plotdata import eps_text, kdist_eps
+
+    x, y = data.x, data.ys[0]
+    d = float(y[j])
+    exy, ez = kdist_eps(d, spec)
+    k = max(1, int(spec.k or 10))
+    reach = int(np.searchsorted(y, d, side="right"))  # points with k-dist <= d
+    lines = [eps_text(exy, ez),
+             f"{reach / y.size:.1%} of points have {k} neighbours in reach",
+             f"rank: {int(x[j]):,} of {x.size:,}"]
+    if data.slopes is not None:
+        lines.append(_slope_text(float(data.slopes[0][j]), x, y))
+    return lines
+
+
 def _slope_text(slope: float, x, y) -> str:
     """The k-distance hover's slope: in mm per 1,000 points (the plot's own
     units, per point, is a tiny number), and against the curve's average
@@ -1091,8 +1111,11 @@ class PlotTab(QWidget):
         self._knee_dot.set_data(dot, face_color=guide, edge_color="white",
                                 edge_width=1.5, size=9)
         self._knee_dot.order = 3
-        # Label at the left end, just above the line (the knee sits right).
-        text = f"knee: eps \u2248 {_fmt(y)} mm"
+        # Label at the left end, just above the line (the knee sits right):
+        # the radii the knee stands for (in 3D, eps Z at the plot's ratio).
+        from .plotdata import eps_text, kdist_eps
+
+        text = "knee: " + eps_text(*kdist_eps(y, self.spec), approx=True)
         if self._knee_label is None:
             self._knee_label = scene.visuals.Text(
                 text, pos=(xlo, y + lift), color=guide, anchor_x="left",
@@ -1303,12 +1326,7 @@ class PlotTab(QWidget):
             at_knee = knee is not None and d2[knee] <= _KNEE_DOT_PX ** 2
             if at_knee:
                 j = knee
-            lines = [f"rank: {int(x[j]):,} of {x.size:,}",
-                     f"{data.y_name}: {_fmt(float(y[j]))}"]
-            if data.slopes is not None:
-                lines.append(_slope_text(float(data.slopes[0][j]), x, y))
-            if at_knee:
-                lines.append("the knee: suggested eps")
+            lines = _kdist_tip(self.spec, data, j)
             if self._tooltip is None:
                 self._tooltip = PlotTooltip(self._canvas.native)
             native = self._canvas.native

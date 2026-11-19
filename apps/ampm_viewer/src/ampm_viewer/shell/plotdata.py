@@ -367,6 +367,26 @@ def curve_slope(x, y, span: float = KDIST_SLOPE_SPAN) -> np.ndarray:
     return (y[hi] - y[lo]) / (x[hi] - x[lo])
 
 
+def kdist_eps(distance: float, spec) -> tuple[float, float | None]:
+    """The DBSCAN radii a k-distance stands for: (eps XY, eps Z), eps Z None
+    in 2D. In 3D, Z is stretched by eps_xy / eps_z before distances are
+    measured, so a distance d on the curve is DBSCAN's reach with eps XY = d
+    and eps Z = d * eps_z / eps_xy (the ratio the plot was made with)."""
+    d = float(distance)
+    if not spec.z:
+        return d, None
+    return d, d * float(spec.eps_z or 1.0) / float(spec.eps_xy or 1.0)
+
+
+def eps_text(eps_xy: float, eps_z: float | None, approx: bool = False) -> str:
+    """The radii as text: eps XY 0.164 mm, Z 0.0329 mm (only XY in 2D)."""
+    sep = " \u2248 " if approx else " "
+    text = f"eps XY{sep}{eps_xy:.4g} mm"
+    if eps_z is not None:
+        text += f", Z{sep}{eps_z:.4g} mm"
+    return text
+
+
 def knee_index(y) -> int | None:
     """The knee of a rising, bending-up curve (the sorted k-distances): the
     Kneedle method (Satopaa et al., 2011). With both axes scaled to 0..1, the

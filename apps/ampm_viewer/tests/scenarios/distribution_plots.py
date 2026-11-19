@@ -160,7 +160,8 @@ td = w._open_plot(default_spec(KDIST, cols, s.renames, dbscan=c.dbscan_params())
 d = td._curve_data
 assert d.n == 1 and float(np.median(d.ys[0])) < 0.3, "the build's eps covers its points (full density)"
 kx, ky = d.knee
-assert 0.1 < ky < 0.3 and "knee: eps" in td._knee_label.text and f"{ky:.4g}" in td._knee_label.text
+ratio = td.spec.eps_z / td.spec.eps_xy                      # 0.06 / 0.3 here
+assert td.spec.z and 0.1 < ky < 0.3 and td._knee_label.text == f"knee: eps XY \u2248 {ky:.4g} mm, Z \u2248 {ky * ratio:.4g} mm", td._knee_label.text
 assert td._knee_line.parent is not None and td._knee_dot.parent is not None and td._cbar is None
 # Hover: the nearest point within a few pixels, with the slope there.
 class Ev:
@@ -172,16 +173,23 @@ end = line.get_transform("visual", "canvas").map([d.x[-1], d.ys[0][-1]])[:2]
 assert abs(end[0] - at[0]) > 30, (at, end)
 td._hover_data(Ev((at[0] + 3, at[1] - 3)))   # over the knee's dot
 tip = td._tooltip._lines
-assert td._tooltip.isVisible() and tip[0] == f"rank: {int(kx):,} of {d.x.size:,}" and "10-distance (mm)" in tip[1], tip
-assert tip[2].startswith("slope: ") and " mm per 1,000 points (" in tip[2] and float(tip[2].split()[1]) > 0, tip
-rel = float(tip[2].split("(")[1].split("\u00d7")[0])
-assert rel > 0, tip
-assert tip[-1] == "the knee: suggested eps", tip
+assert td._tooltip.isVisible() and len(tip) == 4, tip
+assert tip[0] == f"eps XY {ky:.4g} mm, Z {ky * ratio:.4g} mm", tip               # the radii this distance stands for
+share = float(np.searchsorted(d.ys[0], ky, side="right")) / d.x.size
+assert tip[1] == f"{share:.1%} of points have 10 neighbours in reach", tip       # DBSCAN's core points at those radii
+assert tip[2] == f"rank: {int(kx):,} of {d.x.size:,}", tip
+assert tip[3].startswith("slope: ") and " mm per 1,000 points (" in tip[3] and float(tip[3].split()[1]) > 0, tip
+assert not any("suggested" in l for l in tip)
 mid = line.get_transform("visual", "canvas").map([d.x[1000], d.ys[0][1000]])[:2]
 td._hover_data(Ev((mid[0], mid[1] + 4)))       # on the curve elsewhere: that point, no knee line
 tip = td._tooltip._lines
-assert td._tooltip.isVisible() and len(tip) == 3 and abs(int(tip[0].split()[1].replace(",", "")) - 1000) < 400, tip
-assert tip[2].startswith("slope: "), tip
+assert td._tooltip.isVisible() and len(tip) == 4 and abs(int(tip[2].split()[1].replace(",", "")) - 1000) < 400, tip
+assert tip[3].startswith("slope: "), tip
+# 2D: one radius
+from types import SimpleNamespace as NS
+assert P.kdist_eps(0.2, NS(z=None, eps_xy=0.3, eps_z=0.06)) == (0.2, None)
+assert P.eps_text(*P.kdist_eps(0.2, NS(z=None, eps_xy=0.3, eps_z=0.06)), approx=True) == "eps XY \u2248 0.2 mm"
+assert np.isclose(P.kdist_eps(0.2, NS(z="Z", eps_xy=0.3, eps_z=0.06))[1], 0.04)
 from ampm_viewer.shell.plot_tab import _slope_text
 assert _slope_text(0.0, [0, 10], [0.1, 0.2]) == "slope: 0 mm per 1,000 points (flat)"
 assert _slope_text(0.02, [0, 10], [0.1, 0.2]) == "slope: 20 mm per 1,000 points (2.00\u00d7 average)"

@@ -30,8 +30,9 @@ out.
 ## The knee
 
 The app finds the knee for you: a red dot on the curve and a dashed line
-across at its distance, labelled **knee: eps ≈** that distance. It is a
-suggestion for eps, found with the *Kneedle* method: with both axes scaled to
+across at its distance, labelled with the radii it suggests, for example
+**knee: eps XY ≈ 0.164 mm, Z ≈ 0.0329 mm**. It is found with the *Kneedle*
+method: with both axes scaled to
 0 to 1, the knee is the point furthest below a straight line from the first
 point to the last. A few stray points that sit far from the rest don't move
 it: it stays where the curve leaves the scan's spacing.
@@ -42,18 +43,30 @@ of the rise, when a slightly larger eps would keep those points in their
 parts. Hover the curve to see how steep it is where, and choose with your
 knowledge of the build. **Knee line** on the toolbar hides the line.
 
+## Two radii from one curve
+
+DBSCAN on the position has two radii, eps XY and eps Z, but the curve has one
+distance. Before measuring, Z is stretched by eps XY / eps Z (the radii in the
+plot's settings, 0.3 and 0.06 mm by default, so Z counts five times), which
+turns DBSCAN's reach into a sphere. So a distance *d* on the curve stands for
+**eps XY = d** and **eps Z = d × eps Z / eps XY**: a pair of radii in the
+ratio you set. The knee's label and the hover give both. To try another
+ratio, make the plot again with other radii in its settings. Without Z (2D)
+there is only eps XY.
+
 ## Hovering
 
 Hover the curve to see the point under the pointer, as on a scatter plot:
 
+- the **radii** its distance stands for: eps XY and eps Z,
+- the share of points that have **k neighbours in reach** at those radii:
+  DBSCAN's core points. The rest are either at the edge of a cluster or
+  noise. Move along the curve to see what a larger or smaller eps takes in,
 - its **rank** among the points (smallest distance first),
-- its **k-distance**,
 - the curve's **slope** there: how fast the distance grows, in mm per 1,000
   points, measured over the 0.5% of points on each side. In brackets, how
   that compares with the curve's average slope: "flat" on the flat stretch,
   several times the average past the knee.
-
-Over the knee's dot the tip says so.
 
 ## Settings
 
@@ -66,10 +79,9 @@ rebuild.
   in the plane only.
 - **Neighbour (k)**: which neighbour to measure. Use the *min_samples* you
   give DBSCAN.
-- **XY radius (eps)**: DBSCAN's radius in the plane, in mm.
-- **Z radius**: DBSCAN's radius between layers. Only its ratio to the XY
-  radius matters here: Z is stretched by that ratio before distances are
-  measured, exactly as DBSCAN does.
+- **XY radius (eps)** and **Z radius**: only their ratio matters here. Z is
+  stretched by it before distances are measured, exactly as DBSCAN does,
+  and the radii the curve suggests keep it (see *Two radii from one curve*).
 
 ## How it is measured
 
