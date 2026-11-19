@@ -62,8 +62,12 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
     part. It is computationally expensive and takes a while on a full build.
     It runs in the background after the build opens: you can work meanwhile,
     and the part column appears when it finishes. The status bar shows how far
-    it has got, with **Cancel** to stop it. The result is saved, so reopening
-    the build is instant. Its settings appear when you choose it:
+    it has got, with **Cancel** to stop it. The result is saved with the
+    build and used again, by reopening or by a rebuild, for as long as what it
+    was made from is unchanged: the layers and their data files, the parts
+    CSV, the STL (both by their content, so moving the build doesn't matter)
+    and the settings below. A rebuild for anything else (columns, correction,
+    renames) keeps it. Its settings appear when you choose it:
     - **XY radius (mm)**: how close points must be in the plane to count as
       neighbours (DBSCAN's *eps*).
     - **Z radius (mm)**: the same between layers.
@@ -76,7 +80,7 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
       radius.
 
     They start from the build's `config.toml` and are kept with the build.
-    Changing them means a rebuild. A
+    Changing them means a rebuild, which clusters again. A
     [K-distance curve](help:plot-kdistance) helps choose the radius.
   - **Part filter** (fold it open): the parts to keep in the DataStore, all
     ticked to start with. Each part shows where it sits, its centre's X and Y
@@ -103,6 +107,8 @@ on from there (a rebuild starts over).
 On a build that already has a DataStore the button reads **Rebuild
 DataStore**. A rebuild is a clean slate: your column changes, filters, layout
 and open plots for that build are discarded and the data is converted again.
+A saved DBSCAN part assignment is kept when its inputs are unchanged (see
+above).
 
 When the build finishes you land on the Data tab, on the lowest layer that has
 data.

@@ -73,9 +73,10 @@ class AppController(QObject):
         self._side_thread: QThread | None = None
         self._side_worker = None
         # DBSCAN part assignment: a long clustering job on its own thread.
-        # ``_dbscan_wanted`` is "load" (reuse cached labels if they still match)
-        # or "force" (a rebuild: cluster again), set when the method is chosen
-        # and acted on once the layers are in the DataStore.
+        # ``_dbscan_wanted`` is "load" (reuse the saved labels while what they
+        # depend on is unchanged, see DbscanWorker._params) or "force" (cluster
+        # again), set when the method is chosen and acted on once the layers
+        # are in the DataStore.
         self._dbscan_thread: QThread | None = None
         self._dbscan_worker = None
         self._dbscan_wanted: str | None = None
@@ -409,9 +410,10 @@ class AppController(QObject):
         self._config["EXCLUDED_PARTS"] = sorted(self._excluded_parts)
         parts["excluded"] = sorted(self._excluded_parts)
         uistate.set_parts(store.cache_dir, parts)
+        # DBSCAN: a rebuild reuses the saved labels unless their inputs
+        # changed (layers, source files, parts CSV, STL, settings); the worker
+        # checks. Columns, correction or renames don't touch them.
         self._apply_part_assignment(store, method)
-        if self._dbscan_wanted:
-            self._dbscan_wanted = "force"  # a (re)build clusters afresh
         # Persist the choice (config.toml doesn't record it) and keep the
         # in-memory config in step, so reopening this cached build re-applies it.
         self._config["METHOD"] = method

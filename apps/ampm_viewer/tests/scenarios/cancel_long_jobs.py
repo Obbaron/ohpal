@@ -105,6 +105,46 @@ sp = default_spec(KDIST, list(s.result.df.columns), s.renames, dbscan=c.dbscan_p
 assert (sp.eps_xy, sp.k) == (0.35, 12), "the K-distance plot starts from them too"
 print("reopen: settings restored on the setup page and the K-distance plot")
 
+# --- a rebuild keeps the saved part ids while DBSCAN's inputs are unchanged ---------------
+import json, shutil
+from ampm_viewer.shell import workers
+def rebuild():
+    notes.clear()
+    wait_ready(w._on_build_requested); pump(idle)
+    return not any(t and "clustering chunk" in t for t in notes)   # True: read back, not clustered
+labels_file = cache / "dbscan_part_labels.parquet"
+stamp = labels_file.stat().st_mtime_ns
+w.backstage.set_datastore_config(c.current_config(), list(s.store.layers), list(s.store.columns), {})
+f.cmb_parts.setCurrentText("DBSCAN"); app.processEvents()
+assert rebuild() and c.has_part_assignment() and len(c.assigned_part_ids()) == 20
+assert labels_file.stat().st_mtime_ns == stamp and "read from this build's saved result" in w._log._full
+assert "DBSCAN part assignment: checking the saved result\u2026" in notes, notes
+print("rebuild with the same DBSCAN inputs: part ids read back, not clustered again")
+
+# The parts CSV moved (same content): still the same input.
+meta = json.loads((cache / "dbscan_part_labels.json").read_text())["params"]
+assert meta["version"] == 2 and ":" in meta["parts_csv"] and meta["points"], meta
+moved = Path(_harness.ROOT) / "moved" / "parts.csv"; moved.parent.mkdir(exist_ok=True)
+shutil.copyfile(c._config["PARTS_CSV"], moved)
+real_csv, c._config["PARTS_CSV"] = c._config["PARTS_CSV"], str(moved)
+assert rebuild() and labels_file.stat().st_mtime_ns == stamp, "a copy elsewhere is the same CSV"
+c._config["PARTS_CSV"] = real_csv
+print("parts CSV reached by another path, same content: still read back")
+
+# Inputs by content: an edited CSV, another STL, other layers or settings are different.
+same = workers.file_id(real_csv)
+moved.write_text(moved.read_text() + "\n")
+assert workers.file_id(moved) != same and workers.file_id(None) == "" and workers.file_id(moved.parent / "nope.csv") == "missing"
+pid = workers.points_id(s.store, sorted(s.store.cached_layers()))
+assert pid and pid == workers.points_id(s.store, sorted(s.store.cached_layers())) != workers.points_id(s.store, sorted(s.store.cached_layers())[:-1])
+
+# A result saved before (inputs by path) is used, and its record brought up to date.
+dw = workers.DbscanWorker(s.store, c._config, sorted(s.store.cached_layers()), thickness=s.layer_thickness, force=False)
+(cache / "dbscan_part_labels.json").write_text(json.dumps({"params": dw._params_v1(), "info": {"n_parts": 20}}))
+assert rebuild() and labels_file.stat().st_mtime_ns == stamp
+assert json.loads((cache / "dbscan_part_labels.json").read_text())["params"]["version"] == 2
+print("a result saved by 2.0.1 (paths) is used and its record updated")
+
 # --- Cancel a DataStore build ---------------------------------------------------------
 f.cmb_parts.setCurrentText("Direct"); c._setup_force = True
 progress = []; s.cacheProgress.connect(lambda d, t, L: progress.append(d))

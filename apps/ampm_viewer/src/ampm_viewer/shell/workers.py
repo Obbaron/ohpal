@@ -204,6 +204,43 @@ class TemplateWorker(QObject):
             self.finished.emit((self._out, kind))
 
 
+def file_id(path) -> str:
+    """A file by its content: ``"<size>:<sha256 prefix>"``, the same wherever
+    it is kept or however it is reached; ``""`` for none, ``"missing"`` for a
+    file that isn't there."""
+    import hashlib
+
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.is_file():
+        return "missing"
+    h = hashlib.sha256()
+    with p.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return f"{p.stat().st_size}:{h.hexdigest()[:16]}"
+
+
+def points_id(store, layers) -> str:
+    """The points of ``layers`` by their source files' names and sizes (cheap:
+    no reading). A rebuild converts the same files again, so it keeps this;
+    re-exported data changes it. ``""`` when the store doesn't say."""
+    import hashlib
+
+    files = getattr(store, "_source_files", None)
+    if not isinstance(files, dict):
+        return ""
+    h = hashlib.sha256()
+    for L in layers:
+        f = files.get(L)
+        try:
+            h.update(f"{L}:{Path(f).name}:{Path(f).stat().st_size};".encode())
+        except (OSError, TypeError):
+            h.update(f"{L}:?;".encode())
+    return h.hexdigest()[:16]
+
+
 class DbscanWorker(QObject):
     """DBSCAN part assignment: the expensive option, off the UI thread, with
     the clustering itself in a separate process so it can be cancelled.
@@ -220,11 +257,15 @@ class DbscanWorker(QObject):
     DBSCAN can't be interrupted from Python, but a process can be stopped at
     once, so ``cancel`` ends it immediately and frees its memory.
 
-    The labels are cached beside the DataStore with the settings that produced
-    them, so reopening a build reads them back instead of clustering again;
-    ``force`` (a rebuild) always re-clusters. Emits ``progress(text)`` as it
-    goes and ``finished((labels, info))``, or ``finished(None)`` when
-    cancelled; ``info`` has n_parts / n_points / n_labelled / from_cache.
+    The labels are cached beside the DataStore with what produced them
+    (``_params``): the layers and their source files, the parts CSV and STL
+    by content, and the clustering settings. Opening or rebuilding the build
+    reads them back while all of that is unchanged, instead of clustering
+    again: a rebuild for other reasons (columns, correction) keeps them, and
+    so does moving the build or reaching it by another path. ``force``
+    always re-clusters. Emits ``progress(text)`` as it goes and
+    ``finished((labels, info))``, or ``finished(None)`` when cancelled;
+    ``info`` has n_parts / n_points / n_labelled / from_cache.
     """
 
     progress = pyqtSignal(str)
@@ -251,6 +292,28 @@ class DbscanWorker(QObject):
             proc.kill()
 
     def _params(self) -> dict:
+        """What the labels depend on: compared with the saved result's own,
+        and recorded with a new one. Input files by content (``file_id``),
+        not path; the points by their layers' source files (``points_id``)."""
+        c = self._config
+        return {
+            "version": 2,
+            "layers": self._layers,
+            "points": points_id(self._store, self._layers),
+            "parts_csv": file_id(c.get("PARTS_CSV")),
+            "stl": file_id(c.get("STL")),
+            "eps_xy": c.get("EPS_XY", 0.3),
+            "eps_z": c.get("EPS_Z", 0.06),
+            "min_samples": c.get("MIN_SAMPLES", 10),
+            "layers_per_chunk": c.get("LAYERS_PER_CHUNK", 11),
+            "overlap_layers": c.get("OVERLAP_LAYERS"),
+            "layer_thickness": self._thickness,
+        }
+
+    def _params_v1(self) -> dict:
+        """The settings record of results saved before 2.0.2 (input files by
+        path): such a result is still used when they match, and its record is
+        brought up to date."""
         c = self._config
         return {
             "version": 1,
@@ -277,13 +340,21 @@ class DbscanWorker(QObject):
 
             labels_path = cache / "dbscan_part_labels.parquet"
             meta_path = cache / "dbscan_part_labels.json"
+            self.progress.emit("checking the saved result")
             params = self._params()
             if not self._force and labels_path.is_file() and meta_path.is_file():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 except ValueError:
                     meta = {}
-                if meta.get("params") == json.loads(json.dumps(params)):
+                saved = meta.get("params")
+                same = saved == json.loads(json.dumps(params))
+                if not same and saved == json.loads(json.dumps(self._params_v1())):
+                    same = True  # an older record of the same inputs: update it
+                    meta_path.write_text(json.dumps(
+                        {"params": params, "info": meta.get("info") or {}}),
+                        encoding="utf-8")
+                if same:
                     info = dict(meta.get("info") or {}, from_cache=True)
                     # glob=False: build folders are often named like
                     # "[3] Export Packets", which Polars reads as a wildcard.

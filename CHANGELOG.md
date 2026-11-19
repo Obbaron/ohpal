@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **DBSCAN part assignment is clustered again only when its inputs change.** A
+  rebuild used to cluster again every time; now it reads the saved part ids back
+  unless the layers, their data files, the parts CSV, the STL or the DBSCAN
+  settings changed. The parts CSV and STL are recognised by their content, so a
+  moved build folder or another drive letter keeps the result. Results saved by
+  2.0.1 are still used (their record is brought up to date). The status bar shows
+  "checking the saved result" while it compares.
 - **File ▸ Close closes everything.** With a build or plots open, Close now closes
   the build, the Data tab and every plot (tabs, floating windows and library plots),
   leaving the app as it is when it starts. The build's plots, columns and filters
