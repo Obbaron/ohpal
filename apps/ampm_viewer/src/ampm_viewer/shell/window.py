@@ -13,7 +13,7 @@ actual data and plot actions are inert, to be connected in a later pass.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, QSize, QTimer
+from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QPainter, QPalette, QPen, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -85,6 +85,9 @@ class _ElidingLabel(QLabel):
 
 
 class MainWindow(QMainWindow):
+    # File ▸ Close made a fresh window in this one's place (payload: it).
+    relaunched = pyqtSignal(object)
+
     def __init__(self, log_bus=None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
@@ -259,6 +262,7 @@ class MainWindow(QMainWindow):
         self.backstage.libraryFolderRequested.connect(self._open_plot_library_folder)
         self.backstage.infoRequested.connect(self._show_build_info)
         self.backstage.revealRequested.connect(self._reveal_folder)
+        self.backstage.closeRequested.connect(self._close_everything)
         self.backstage.ds_form.browseRequested.connect(self._browse_input)
         self.backstage.ds_form.part_lister = self.controller.part_positions
         self.backstage.apply_icons(color)
@@ -400,6 +404,7 @@ class MainWindow(QMainWindow):
         self._grid_cache_dir = store.cache_dir
         self._pending_plots = plot_library.load_build_plots(store.cache_dir)
         self._plots_store = store
+        self._sync_close_button()
         self._reset_history()  # undo history (and a recording) is per build
         state = uistate.load_state(store.cache_dir)
         self.session.derivations = list(state["derivations"])
@@ -604,6 +609,7 @@ class MainWindow(QMainWindow):
                 f"saved {plot_library.when(info.get('saved') or '')}")
         if select:
             self.tabbar.setCurrentIndex(index)
+        self._sync_close_button()
 
     @staticmethod
     def _frozen(tab) -> dict | None:
@@ -993,6 +999,7 @@ class MainWindow(QMainWindow):
             lambda t=win._tab: self._on_plot_spec_changed(t))
         self._detached.append(win)
         win.show()
+        self._sync_close_button()
         # Remove the original docked tab (the window now owns this plot).
         idx = self.stack.indexOf(p)
         if idx >= 0:
@@ -1013,6 +1020,7 @@ class MainWindow(QMainWindow):
     def _on_detached_closed(self, win) -> None:
         if win in self._detached:
             self._detached.remove(win)
+        self._sync_close_button()
 
     def _dock_plot(self, win) -> None:
         """Re-add a floating window's plot as a self-contained tab, then close
@@ -1207,6 +1215,7 @@ class MainWindow(QMainWindow):
                 widget.release()
             widget.deleteLater()
             self._save_plots()
+            self._sync_close_button()
 
     def _wire_panel_controls(self) -> None:
         """Route side-panel controls to whichever plot is active."""
@@ -2426,9 +2435,79 @@ class MainWindow(QMainWindow):
                 self.panel.edit_element(self._active_plot, key)
 
     # -- shutdown ------------------------------------------------------
+    # -- File ▸ Close: everything, as a fresh start --------------------------
+    def _has_open_work(self) -> bool:
+        """A build, or any plot (a tab or a floating window), is open."""
+        return bool(self.session.store is not None or self._plot_tabs
+                    or self._detached)
+
+    def _sync_close_button(self) -> None:
+        self.backstage.set_closable(self._has_open_work())
+
+    def _close_everything(self) -> None:
+        """File ▸ Close. With a build or plots open: close them all, as if the
+        app had been closed and started again (``relaunch``). Asks first only
+        when something would be lost: a running DataStore build or DBSCAN,
+        or a macro being recorded. With nothing open: the landing page."""
+        if not self._has_open_work():
+            self.backstage.show_start_page()
+            return
+        if self.controller.side_job_running():
+            self.set_status("Wait for the Excel template to be written, then close.")
+            return
+        lost = [f"{job} is stopped" for job in self.controller.running_jobs()]
+        if self.recorder.active:
+            lost.append("the macro being recorded is discarded")
+        if lost:
+            from .message_dialog import ask
+
+            text = ("Closing ends everything open, as if the app were started "
+                    "again. " + "; ".join(s[0].upper() + s[1:] for s in lost)
+                    + ".")
+            if not ask(self, "Close everything?", text,
+                       ok_text="Close", cancel_text="Cancel"):
+                return
+        self.relaunch()
+
+    def relaunch(self) -> MainWindow:
+        """Replace this window with a new one, where it was: no build, no
+        plots, the landing page; the way the app starts. This window closes as
+        it does when the app is closed (its build's plots and settings are
+        saved, so the build reopens as it was) and is deleted once its work
+        has stopped. Emits ``relaunched`` with the new window."""
+        name = self.session.build_name if self.session.store is not None else ""
+        new = MainWindow(log_bus=self.log_bus)
+        new.setWindowIcon(self.windowIcon())
+        if self.isFullScreen():
+            new.setGeometry(self.normalGeometry())
+            new.showFullScreen()
+        elif self.isMaximized():
+            new.setGeometry(self.normalGeometry())
+            new.showMaximized()
+        else:
+            new.setGeometry(self.geometry())
+            new.show()
+        new.set_status(f"Closed {name}." if name else "Closed.")
+        self.relaunched.emit(new)
+        self.close()
+
+        def delete_when_idle() -> None:  # a thread still finishing its step
+            if self.controller.threads_running():
+                QTimer.singleShot(200, delete_when_idle)
+            else:
+                self.deleteLater()
+
+        delete_when_idle()
+        return new
+
     def closeEvent(self, event) -> None:
         # The build's plots, with their latest look (floating windows too:
         # they reopen as tabs).
         self._save_plots(windows=True)
+        # Then the floating windows themselves (top-level windows: they would
+        # outlive this one), without saving again as each goes.
+        self._plots_hold = True
+        for win in list(self._detached):
+            win.close()
         self.controller.shutdown()  # stop any running worker thread
         super().closeEvent(event)

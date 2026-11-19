@@ -92,8 +92,8 @@ position (*Demand X*, *Demand Y*), *Start time*, *layer*, *Z* and
 ## Build, rebuild, cancel
 
 **Build DataStore** converts the chosen layers; progress shows in the status
-bar. **Cancel** on this page (or **Close** in the sidebar) returns to the File
-tab's landing page without changing anything.
+bar. **Cancel** on this page returns to the File tab's landing page without
+changing anything.
 
 To stop a build that is running, press **Cancel** beside the progress bar. It
 stops after the layer it is on and brings you back here with your choices as

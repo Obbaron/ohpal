@@ -31,8 +31,15 @@ steps, read as one) and an [Excel template](help:create-excel).
 Once a build is loaded, **Info** in the File tab's sidebar shows its
 properties: its type and folder, how many layers are built and the
 DataStore's size on disk, the processing it was built with and its inputs.
-**Open build folder** shows the folder. **Close** appears on any page other
-than the landing page and leads back to it.
+**Open build folder** shows the folder.
+
+**Close** in the sidebar closes everything: the build, the Data tab and every
+plot, including plots in their own windows and plots from the library. The
+app is then as it is when it starts. Nothing is lost: the build's plots,
+columns, filters and grid layout are kept with it, and come back when you
+open it again. If DBSCAN is still running, or a macro is being recorded,
+you are asked first, because those would stop. With nothing open, **Close**
+just leads back to the landing page.
 
 ## What a build folder contains
 

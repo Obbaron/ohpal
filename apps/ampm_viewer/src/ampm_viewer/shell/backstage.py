@@ -3,7 +3,9 @@
 Full-window takeover (no per-tab toolbar). Left sidebar: **New** (a menu: a
 single build, a stacked build or an Excel template), **Open** and **Plot
 library**, then, while a build is loaded, **DataStore** and **Info**, and
-**Close** (back to the landing page) on any other page. The main area stacks
+**Close** while a build or a plot is open (it closes them all: the window
+starts afresh, ``MainWindow.relaunch``) or on any other page (back to the
+landing page). The main area stacks
 the landing page (New tiles + Recent / Favourites / Search), the DataStore
 setup page, the Plot library (frozen plots, openable with or without a build)
 and the build's Info page.
@@ -112,6 +114,7 @@ class Backstage(QWidget):
     libraryOpenRequested = pyqtSignal(str)  # open a frozen plot (its file)
     libraryBrowseRequested = pyqtSignal()   # open one from anywhere
     libraryFolderRequested = pyqtSignal()   # show the library folder
+    closeRequested = pyqtSignal()           # Close: everything, as a fresh start
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -156,9 +159,11 @@ class Backstage(QWidget):
         self.btn_info = add("Info")
         self.btn_info.setVisible(False)
         lay.addStretch(1)
-        # Back to the landing page, from any other page.
+        # Close: the build and every plot, as if the app were started again
+        # (the window decides); with nothing open, back to the landing page.
         self.btn_close = add("Close")
         self.btn_close.setVisible(False)
+        self._closable = False  # a build or a plot is open
 
         # New: what to make.
         self.new_menu = QMenu(self)
@@ -174,7 +179,7 @@ class Backstage(QWidget):
         self.btn_library.clicked.connect(self.show_library_page)
         self.btn_datastore.clicked.connect(self.show_datastore_page)
         self.btn_info.clicked.connect(self.infoRequested)
-        self.btn_close.clicked.connect(self.show_start_page)
+        self.btn_close.clicked.connect(self.closeRequested)
         return bar
 
     def _show_new_menu(self) -> None:
@@ -197,9 +202,9 @@ class Backstage(QWidget):
         return container
 
     def _on_page_changed(self, index: int) -> None:
-        # Close leads back to the landing page from anywhere else; the page
-        # shown is marked in the sidebar.
-        self.btn_close.setVisible(index != START)
+        # Close shows while there's something to close, or a page to leave;
+        # the page shown is marked in the sidebar.
+        self.btn_close.setVisible(index != START or self._closable)
         for button, page in ((self.btn_datastore, DATASTORE),
                              (self.btn_library, LIBRARY), (self.btn_info, INFO)):
             button.setProperty("current", "true" if index == page else "false")
@@ -547,6 +552,12 @@ class Backstage(QWidget):
         return line
 
     # -- state / navigation --------------------------------------------
+    def set_closable(self, closable: bool) -> None:
+        """Whether a build or a plot is open (Close then closes them)."""
+        self._closable = bool(closable)
+        self.btn_close.setVisible(
+            self.main_stack.currentIndex() != START or self._closable)
+
     def set_build_loaded(self, loaded: bool) -> None:
         self.btn_datastore.setVisible(loaded)
         self.btn_info.setVisible(loaded)

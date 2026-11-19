@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **File ▸ Close closes everything.** With a build or plots open, Close now closes
+  the build, the Data tab and every plot (tabs, floating windows and library plots),
+  leaving the app as it is when it starts. The build's plots, columns and filters
+  are saved first and come back when it is reopened. A running DBSCAN or a macro
+  being recorded is asked about first. With nothing open, Close goes back to the
+  landing page as before. New GUI scenario `close_everything` (37 in all).
 - **Excel template: you choose where to save it.** After the build folder, a save
   window asks where the workbook goes, starting in the build folder with the
   build's name. It no longer writes to an `exports` folder inside the build. A

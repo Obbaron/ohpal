@@ -98,9 +98,19 @@ def main() -> None:
         sys.exit(1)
 
     # Files from the command line or from macOS, and later ones another start
-    # hands over, open in this window.
+    # hands over, open in the window. File > Close puts a new window in the
+    # old one's place (MainWindow.relaunch): follow it.
+    current = [window]
+
+    def adopt(new) -> None:
+        current[0] = new
+        app.open_files = new.open_files
+        new.relaunched.connect(adopt)
+
+    window.relaunched.connect(adopt)
     app.open_files = window.open_files
-    listener = single_instance.Listener(window.open_files, app)  # noqa: F841
+    listener = single_instance.Listener(  # noqa: F841
+        lambda paths: current[0].open_files(paths), app)
     if files or app.pending:
         window.open_files(files + app.pending)
         app.pending.clear()

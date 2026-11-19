@@ -1813,6 +1813,35 @@ class AppController(QObject):
             self._worker = None
 
     # -- shutdown ------------------------------------------------------
+    def running_jobs(self) -> list[str]:
+        """Long work a Close would stop, for the question asked first."""
+        from .workers import CacheWorker
+
+        jobs = []
+        if self._busy and isinstance(self._worker, CacheWorker):
+            jobs.append("the DataStore build")
+        if self._dbscan_worker is not None:
+            jobs.append("DBSCAN part assignment")
+        if self._cluster_worker is not None:
+            jobs.append("DBSCAN clusters")
+        return jobs
+
+    def side_job_running(self) -> bool:
+        """An Excel template is being written (it can't be stopped midway)."""
+        return self._side_thread is not None
+
+    def threads_running(self) -> bool:
+        """Any worker thread still running (after ``shutdown``, one that is
+        finishing its current step)."""
+        for thread in (self._thread, self._mask_thread, self._side_thread,
+                       self._dbscan_thread, self._cluster_thread):
+            try:
+                if thread is not None and thread.isRunning():
+                    return True
+            except RuntimeError:  # already deleted: finished
+                continue
+        return False
+
     def shutdown(self) -> None:
         """Stop any running worker thread. Safe to call at any moment: a thread
         that has just finished deletes its Qt objects before our references are
