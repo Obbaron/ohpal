@@ -311,7 +311,7 @@ class DbscanWorker(QObject):
         }
 
     def _params_v1(self) -> dict:
-        """The settings record of results saved before 2.0.2 (input files by
+        """The settings record of results saved by 2.0.1 and earlier (input files by
         path): such a result is still used when they match, and its record is
         brought up to date."""
         c = self._config

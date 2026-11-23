@@ -6,11 +6,11 @@ from PyQt6.QtCore import QTimer, QEventLoop
 from PyQt6.QtWidgets import QApplication
 
 import ampm_viewer
-assert ampm_viewer.__version__ == "2.0.1" and callable(ampm_viewer.main)
+assert ampm_viewer.__version__ == "2.1.0" and callable(ampm_viewer.main)
 for gone in ("ampm_viewer.main", "ampm_viewer.views"):
     assert importlib.util.find_spec(gone) is None, gone
 assert "ampm_viewer.shell" not in sys.modules, "importing the package stays light"
-print("version 2.0.1 from __init__; legacy main.py and views/ gone")
+print("version 2.1.0 from __init__; legacy main.py and views/ gone")
 
 app = QApplication([]); app.setOrganizationName("AMPM"); app.setApplicationName("AMPM Viewer")
 from ampm_viewer.shell import crash
@@ -19,7 +19,7 @@ bus = LogBus(); bus.log_line("opened build JR299"); sys.stderr = StreamTee(bus, 
 crash.install(bus)
 folder = crash.report_dir()
 assert folder.parts[-2:] == ("AMPM", "crash-reports"), folder
-fatal = (folder / "fatal.log").read_text(); assert "AMPM Viewer 2.0.1 started" in fatal
+fatal = (folder / "fatal.log").read_text(); assert "AMPM Viewer 2.1.0 started" in fatal
 
 def run_until(cond, limit=10):
     t0 = time.time()
@@ -53,7 +53,7 @@ assert seen["more"].startswith("1 more error since this one"), seen["more"]
 assert "Traceback" in seen["details"] and "boom" in seen["details"]
 reports = sorted(folder.glob("crash-*.log")); assert len(reports) == 2, reports
 r = reports[0].read_text()
-assert "AMPM Viewer 2.0.1" in r and "ValueError" in r and "opened build JR299" in r and "Qt 6" in r
+assert "AMPM Viewer 2.1.0" in r and "ValueError" in r and "opened build JR299" in r and "Qt 6" in r
 assert "KeyError: 'second'" in reports[1].read_text()
 assert "ValueError" in bus.history(), "the traceback also reaches the in-app log"
 print("slot error: report written, dialog shown, a second error counted on it, app kept running")

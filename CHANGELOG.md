@@ -8,35 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [2.1.0] - 2026-11-23
 
-- **No "could not determine DPI" warning per plot.** On Linux without `xdpyinfo` or
-  `xrandr` (WSL, Wayland), VisPy logged it for every plot, after trying both tools.
-  The screen DPI is now found once per session (96, as before, when it can't be).
-- **DBSCAN part assignment is clustered again only when its inputs change.** A
-  rebuild used to cluster again every time; now it reads the saved part ids back
-  unless the layers, their data files, the parts CSV, the STL or the DBSCAN
-  settings changed. The parts CSV and STL are recognised by their content, so a
-  moved build folder or another drive letter keeps the result. Results saved by
-  2.0.1 are still used (their record is brought up to date). The status bar shows
-  "checking the saved result" while it compares.
-- **File ▸ Close closes everything.** With a build or plots open, Close now closes
-  the build, the Data tab and every plot (tabs, floating windows and library plots),
-  leaving the app as it is when it starts. The build's plots, columns and filters
-  are saved first and come back when it is reopened. A running DBSCAN or a macro
-  being recorded is asked about first. With nothing open, Close goes back to the
-  landing page as before. New GUI scenario `close_everything` (37 in all).
-- **Excel template: you choose where to save it.** After the build folder, a save
-  window asks where the workbook goes, starting in the build folder with the
-  build's name. It no longer writes to an `exports` folder inside the build. A
-  folder with nothing to build from is reported before the save window.
-- **Log:** DBSCAN's progress (part assignment and DBSCAN clusters) is written to the
-  log as well as the status bar, one line per step. Loading a layer ("Loading
-  layer 3…", "Loaded layer 3: … rows") now shows in the status bar only.
-- **3D plots: right drag pans.** Left drag rotates and scroll zooms, as before; a
-  right drag now moves the view so the scene follows the mouse (it used to zoom,
-  which scroll still does). Shift + left drag pans too. 2D plots are unchanged.
-  New GUI scenario `camera_3d` (36 in all).
+A better K-distance curve for choosing DBSCAN's radii, panning in 3D, a Close that
+starts afresh, and DBSCAN part assignment that is no longer redone on every rebuild.
+
+### Added
+
 - **K-distance curve: knee detection and slope.** The dashed eps line (the XY radius
   you entered) is gone. In its place the curve's knee is found (the Kneedle method)
   and marked with a dot and a dashed line, labelled with the radii it suggests
@@ -46,6 +24,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plot, and shows those radii, the share of points with k neighbours within them
   (DBSCAN's core points), the rank and the curve's slope there (mm per 1,000
   points, and against the average slope).
+- **3D plots: right drag pans.** Left drag rotates and scroll zooms, as before; a
+  right drag now moves the view so the scene follows the mouse (it used to zoom,
+  which scroll still does). Shift + left drag pans too. 2D plots are unchanged.
+  New GUI scenario `camera_3d` (36 in all).
+- **File ▸ Close closes everything.** With a build or plots open, Close now closes
+  the build, the Data tab and every plot (tabs, floating windows and library plots),
+  leaving the app as it is when it starts. The build's plots, columns and filters
+  are saved first and come back when it is reopened. A running DBSCAN or a macro
+  being recorded is asked about first. With nothing open, Close goes back to the
+  landing page as before. New GUI scenario `close_everything` (37 in all).
+
+### Changed
+
+- **DBSCAN part assignment is clustered again only when its inputs change.** A
+  rebuild used to cluster again every time; now it reads the saved part ids back
+  unless the layers, their data files, the parts CSV, the STL or the DBSCAN
+  settings changed. The parts CSV and STL are recognised by their content, so a
+  moved build folder or another drive letter keeps the result. Results saved by
+  2.0.1 are still used (their record is brought up to date). The status bar shows
+  "checking the saved result" while it compares.
+- **Excel template: you choose where to save it.** After the build folder, a save
+  window asks where the workbook goes, starting in the build folder with the
+  build's name. It no longer writes to an `exports` folder inside the build. A
+  folder with nothing to build from is reported before the save window.
+- **Log:** DBSCAN's progress (part assignment and DBSCAN clusters) is written to the
+  log as well as the status bar, one line per step. Loading a layer ("Loading
+  layer 3…", "Loaded layer 3: … rows") now shows in the status bar only.
+- **No "could not determine DPI" warning per plot.** On Linux without `xdpyinfo` or
+  `xrandr` (WSL, Wayland), VisPy logged it for every plot, after trying both tools.
+  The screen DPI is now found once per session (96, as before, when it can't be).
 
 ## [2.0.1] - 2026-11-18
 
@@ -693,7 +701,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Obbaron/ohpal/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/Obbaron/ohpal/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/Obbaron/ohpal/releases/tag/v2.0.0
 [1.3.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...v1.3.1
