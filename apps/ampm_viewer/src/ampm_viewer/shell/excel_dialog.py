@@ -13,12 +13,20 @@ rows they cover), the dialog says how many keys each choice matches, starts on
 the grid column they cover best, and asks before adding a column that nothing
 matches.
 
+It starts on the choices that are usually right, so a filled-in samples
+template needs no changes: the key is the Excel column whose values a grid
+column holds (a ``part_id``-like name first), the value is the first column
+someone filled in (not one the template generated, shaded grey, nor one the
+grid has or already imported; numbers first), and the new column is named
+after it.
+
 The value dtype is inferred: all-numeric values store as floats (colormap-able,
 usable in later formulas); otherwise they store as text (a discrete label).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -43,6 +51,29 @@ from .derive import norm_key
 from .message_dialog import ask
 from .widgets import fix_combo
 
+# The samples template (ohpal.samples.template) shades the columns it generates
+# this grey; they hold keys and coordinates, never a measurement to bring in.
+_GENERATED_FILL = "D9D9D9"
+# ... and these are its generated columns, for a copy that lost the shading.
+_GENERATED_NAMES = {"buildid", "xmin", "xmax", "ymin", "ymax", "zmin", "zmax"}
+# Key column names to try first, best first (compared by ``_canon``).
+_KEY_HINTS = ("partid", "part", "sampleid", "sample", "id", "name")
+_KEY_TRIES = 3  # candidate key columns counted against the grid, at most
+
+
+def _canon(header: str) -> str:
+    """``Part ID``, ``part_id`` and ``part-id`` alike."""
+    return re.sub(r"[\s_\-]+", "", str(header).lower())
+
+
+def _num(x) -> bool:
+    try:
+        float(x)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
     "QPushButton { background: palette(highlight); color: palette(highlighted-text);"
@@ -61,6 +92,8 @@ class ExcelImportDialog(DraggableCard, QDialog):
         self._keys: set[str] = set()       # the Excel key column, normalised
         self._matches: dict[str, tuple] = {}  # grid column -> (keys, row share)
         self._grid_picked = False           # the user chose the grid column
+        self._columns: dict[str, tuple[list, bool]] = {}  # header -> (values, generated)
+        self._counted: dict[str, tuple[set, dict]] = {}   # key header -> (keys, matches)
         self._taken = set(taken or [])
         self._start_dir = start_dir or str(Path.home())
         self._path: str | None = None
@@ -198,21 +231,89 @@ class ExcelImportDialog(DraggableCard, QDialog):
     def _on_sheet(self) -> None:
         if not self._path:
             return
+        self._counted = {}
         try:
-            headers = self._read_headers(self._path, self._sheet())
+            self._columns = read_columns(self._path, self._sheet())
         except Exception as exc:  # noqa: BLE001
             self._error(f"Couldn't read the sheet: {exc}")
-            headers = []
-        for cb in (self.key_combo, self.val_combo):
+            self._columns = {}
+        headers = list(self._columns)
+        key = self._pick_key()
+        value = self._pick_value(key)
+        for cb, pick in ((self.key_combo, key), (self.val_combo, value)):
             cb.blockSignals(True)
             cb.clear()
             cb.addItems(headers)
+            if pick:
+                cb.setCurrentText(pick)
             cb.blockSignals(False)
-        if len(headers) >= 2:  # sensible default: 1st = key, 2nd = value
-            self.key_combo.setCurrentIndex(0)
-            self.val_combo.setCurrentIndex(1)
         self._on_val()
         self._on_key()
+
+    # -- the starting choices ------------------------------------------
+    def _keys_of(self, header: str) -> list[str]:
+        return [norm_key(v) for v in self._columns.get(header, ([], False))[0]]
+
+    def _count(self, header: str) -> tuple[set, dict]:
+        """The column's keys, and (keys, row share) for each grid column."""
+        if header not in self._counted:
+            keys = set(self._keys_of(header))
+            matches = {}
+            if keys and self._match_count is not None:
+                matches = {c: self._match_count(c, keys) for c in self._grid_columns}
+            self._counted[header] = (keys, matches)
+        return self._counted[header]
+
+    def _pick_key(self) -> str | None:
+        """A column that could be a key (unique, varied values), ``part_id``-like
+        names first, then ones the grid also has, then left to right; the
+        first whose values a grid column holds."""
+        grid = {_canon(c) for c in self._grid_columns}
+
+        def rank(item):
+            pos, header = item
+            name = _canon(header)
+            if name in _KEY_HINTS:
+                return (_KEY_HINTS.index(name), pos)
+            return (len(_KEY_HINTS) + (name not in grid), pos)
+
+        keyish = []
+        for item in sorted(enumerate(self._columns), key=rank):
+            keys = self._keys_of(item[1])
+            if len(set(keys)) > 1 and len(set(keys)) == len(keys):
+                keyish.append(item[1])
+        if not keyish:
+            return next(iter(self._columns), None)
+        if self._match_count is not None:
+            for header in keyish[:_KEY_TRIES]:
+                if any(n for n, _share in self._count(header)[1].values()):
+                    return header
+        return keyish[0]
+
+    def _pick_value(self, key: str | None) -> str | None:
+        """The first column someone filled in: not the key, not generated (grey
+        or a template name), not a grid column or one imported already, not
+        empty; numbers before text. With none left, one imported before (to
+        bring it in again)."""
+        imported = {_canon(c) for c in self._taken}
+        have = {_canon(c) for c in self._grid_columns} | imported
+        ours = [h for h, (values, generated) in self._columns.items()
+                if h != key and values and not generated
+                and _canon(h) not in _GENERATED_NAMES
+                and (_canon(h) not in have or _canon(h) in imported)]
+        filled = [h for h in ours if _canon(h) not in have]
+        numeric = [h for h in filled if all(_num(v) for v in self._columns[h][0])]
+        rest = [h for h in self._columns if h != key]
+        return next(iter(numeric or filled or ours or rest), None)
+
+    def _unique(self, name: str) -> str:
+        """``name``, or ``name 2``, ``name 3``... if a column has it already."""
+        have = {*self._grid_columns, *self._taken}
+        out, n = name, 1
+        while out in have:
+            n += 1
+            out = f"{name} {n}"
+        return out
 
     # -- which grid column the keys are in ---------------------------------
     def _on_grid_picked(self, _index: int) -> None:
@@ -223,14 +324,12 @@ class ExcelImportDialog(DraggableCard, QDialog):
         the user picks one, start on the column that holds the most."""
         self._keys, self._matches = set(), {}
         key_h = self.key_combo.currentText()
-        if self._match_count is not None and self._path and key_h:
+        if self._match_count is not None and key_h in self._columns:
             try:
-                self._keys = read_keys(self._path, self._sheet(), key_h)
+                self._keys, self._matches = self._count(key_h)
             except Exception:  # noqa: BLE001 - the count is a help, not a must
-                self._keys = set()
-        if self._keys:
-            for col in self._grid_columns:
-                self._matches[col] = self._match_count(col, self._keys)
+                self._keys, self._matches = set(), {}
+        if self._keys and self._matches:
             best = self._best()
             if best and not self._grid_picked:
                 self.gridkey_combo.setCurrentText(best)
@@ -255,17 +354,12 @@ class ExcelImportDialog(DraggableCard, QDialog):
         n, total = self._hits(col), len(self._keys)
         if n:
             self.match_label.setStyleSheet("color: palette(mid);")
-            self.match_label.setText(
-                f"{n} of {total} keys are values of {col!r} on this layer.")
+            self.match_label.setText(f"{n} of {total} keys match.")
         else:
             best = self._best()
-            # The way out first: the column that holds the keys.
-            fix = (f"Match on {best!r}: it holds {self._hits(best)} of the "
-                   f"{total} keys. " if best else "")
+            try_ = f" Try {best!r} ({self._hits(best)} of {total})." if best else ""
             self.match_label.setStyleSheet("color: #c0392b;")
-            self.match_label.setText(
-                f"{fix}None of them is a value of {col!r} on this layer, so "
-                "the new column would be empty.")
+            self.match_label.setText(f"No keys match.{try_}")
         self._fit()
 
     def _fit(self) -> None:
@@ -285,7 +379,8 @@ class ExcelImportDialog(DraggableCard, QDialog):
 
     def _on_val(self) -> None:
         if not self._name_edited:  # mirror the value header until the user types
-            self.name_edit.setText(self.val_combo.currentText())
+            value = self.val_combo.currentText()
+            self.name_edit.setText(self._unique(value) if value else "")
 
     # -- openpyxl reads (each opens/closes; import files are small) -----
     @staticmethod
@@ -295,20 +390,6 @@ class ExcelImportDialog(DraggableCard, QDialog):
         wb = load_workbook(path, read_only=True, data_only=True)
         try:
             return list(wb.sheetnames)
-        finally:
-            wb.close()
-
-    @staticmethod
-    def _read_headers(path, sheet) -> list[str]:
-        from openpyxl import load_workbook
-
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            ws = wb[sheet]
-            for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
-                return [str(c).strip() for c in row
-                        if c is not None and str(c).strip()]
-            return []
         finally:
             wb.close()
 
@@ -346,10 +427,9 @@ class ExcelImportDialog(DraggableCard, QDialog):
             return self._error("No usable key/value rows found in the sheet.")
         if self._keys and grid_key in self._matches and not self._hits(grid_key):
             best = self._best()
-            text = (f"None of the keys in {key_h!r} is a value of {grid_key!r} "
-                    "on this layer, so the new column would be empty here.")
+            text = f"No keys match {grid_key!r}, so the new column would be empty."
             if best:
-                text += f" {best!r} holds {self._hits(best)} of them."
+                text += f" Try {best!r} ({self._hits(best)} of {len(self._keys)})."
             if not ask(self, "No keys match", text,
                        ok_text="Add anyway", cancel_text="Go back"):
                 return None
@@ -363,21 +443,39 @@ class ExcelImportDialog(DraggableCard, QDialog):
         return self._result
 
 
-def read_keys(path, sheet: str, key_h: str) -> set[str]:
-    """The key column's values, ``norm_key``-ed (empty cells left out)."""
+def _blank(v) -> bool:
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def _generated(cell) -> bool:
+    """Shaded the template's grey (``_GENERATED_FILL``)."""
+    try:
+        return str(cell.fill.fgColor.rgb).upper().endswith(_GENERATED_FILL)
+    except Exception:  # noqa: BLE001 - no fill, a theme colour, ...
+        return False
+
+
+def read_columns(path, sheet: str) -> dict[str, tuple[list, bool]]:
+    """Each named column of the sheet: header -> (its non-empty values,
+    shaded as generated). The first column of a repeated header wins."""
     from openpyxl import load_workbook
 
     wb = load_workbook(path, read_only=True, data_only=True)
     try:
-        rows = wb[sheet].iter_rows(values_only=True)
-        header = next(rows, None) or ()
-        hdr = ["" if c is None else str(c).strip() for c in header]
-        if key_h not in hdr:
-            return set()
-        ki = hdr.index(key_h)
-        return {norm_key(row[ki]) for row in rows
-                if ki < len(row) and row[ki] is not None
-                and str(row[ki]).strip()}
+        rows = wb[sheet].iter_rows()
+        cols: dict[str, tuple[list, bool]] = {}
+        where = []
+        for i, cell in enumerate(next(rows, None) or ()):
+            header = "" if cell.value is None else str(cell.value).strip()
+            if header and header not in cols:
+                cols[header] = ([], _generated(cell))
+                where.append((i, header))
+        for row in rows:
+            for i, header in where:
+                v = row[i].value if i < len(row) else None
+                if not _blank(v):
+                    cols[header][0].append(v)
+        return cols
     finally:
         wb.close()
 
@@ -424,13 +522,6 @@ def parse_mapping(path, sheet: str, key_h: str, val_h: str):
             f"Duplicate keys in '{key_h}': {', '.join(uniq[:5])}{tail}. "
             "Dedupe in Excel and re-import."
         )
-
-    def _num(x) -> bool:
-        try:
-            float(x)
-            return True
-        except (TypeError, ValueError):
-            return False
 
     if pairs and all(_num(v) for _, v in pairs):
         return {nk: float(v) for nk, v in pairs}, "f64", len(pairs)

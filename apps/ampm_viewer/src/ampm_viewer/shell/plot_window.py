@@ -17,14 +17,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFileDialog,
     QMainWindow,
     QSplitter,
-    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
-from . import derive, plot_library, plotneeds, toolbars
+from . import derive, plot_library, plotneeds, shortcuts, toolbars
 from .dock import SidePanel
 from .plot_tab import PlotTab
 from .workers import release_after
@@ -65,14 +67,28 @@ class DetachedPlotWindow(QMainWindow):
         split.addWidget(self._panel)
         split.addWidget(self._tab)
         split.setStretchFactor(1, 1)
-        self.setCentralWidget(split)
 
-        self._toolbar = QToolBar()
+        self._toolbar = toolbars.Ribbon()
         from .widgets import on_blank_click  # empty toolbar space deselects
         on_blank_click(self._toolbar, lambda: self._tab.select_element(None))
         self._toolbar.setMovable(False)
-        self.addToolBar(self._toolbar)
+        # In the window's body, not a toolbar area: its group names go under it.
+        central = QWidget()
+        body = QVBoxLayout(central)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._toolbar.with_captions())
+        body.addWidget(split, 1)
+        self.setCentralWidget(central)
         self._build_toolbar()
+        # The plot toolbar's shortcuts work here too (as in the main window).
+        for name, button in (("panel", "Show/hide panel"), ("reset_view", "Reset view"),
+                             ("screenshot", "Screenshot"),
+                             ("layer_prev", "Previous layer"),
+                             ("layer_next", "Next layer")):
+            for keys in shortcuts.keys(name):
+                QShortcut(QKeySequence(keys), self,
+                          activated=lambda b=button: toolbars.press(self._toolbar, b))
         self._wire_panel()
 
         self._tab.titleChanged.connect(self._on_renamed)

@@ -120,6 +120,8 @@ QToolButton { padding: 4px 8px; border-radius: 4px; color: palette(button-text);
 QToolButton:hover { background: palette(window); }
 QToolButton:checked { background: palette(alternate-base); }
 QToolBar QLabel { color: palette(placeholder-text); padding: 0 2px 0 6px; }
+/* A ribbon's bottom edge is its caption strip's (toolbars.Ribbon). */
+QToolBar#Ribbon { border-bottom: none; }
 .ToolbarGlyph { font-size: 15px; padding: 4px 8px; }
 
 /* --- Backstage --- */

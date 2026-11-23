@@ -135,7 +135,7 @@ def drain():
         time.sleep(0.02)
 wait_ready(lambda: c.open_recent(BUILD)); drain()
 assert c.dbscan_params() == (0.3, 0.06, 10), c.dbscan_params()
-menu = [a.text() for a in next(b for b in w.toolbar.findChildren(__import__("PyQt6.QtWidgets", fromlist=["QToolButton"]).QToolButton) if b.toolTip() == "New plot").menu().actions()]
+menu = [a.text() for a in next(b for b in w.toolbar.findChildren(__import__("PyQt6.QtWidgets", fromlist=["QToolButton"]).QToolButton) if b.accessibleName() == "New plot").menu().actions()]
 assert {"Violin", "KDE", "K-Distance Curve"} <= set(menu), menu
 cols = list(s.result.df.columns); MP = next(n for n in cols if "elt" in n and "ool" in n)
 

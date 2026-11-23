@@ -34,7 +34,8 @@ python -m ampm_viewer.shell      # the same app
 | `backstage.py` | File tab: open / new build, recent builds, Create Excel |
 | `datastore_settings.py` | DataStore setup page (mask, part assignment, correction, columns) |
 | `data_tab.py`, `grid_model.py` | Data tab: the virtualised grid over a Polars frame |
-| `toolbars.py` | The Data and Plot toolbars (the Plot one is built from a plot's controls) |
+| `toolbars.py` | The Data and Plot toolbars, as a ribbon (named button groups; the Plot one is built from a plot's controls) |
+| `shortcuts.py` | The keyboard shortcuts table, shared by the window, the toolbar tooltips and the help |
 | `dock.py` | Side panel: column info, plot appearance, plot-element editor |
 | `controller.py`, `workers.py` | Build loading, queries and long jobs, off the UI thread |
 | `state.py`, `uistate.py`, `recents.py` | Session state, per-build UI state, recent builds |

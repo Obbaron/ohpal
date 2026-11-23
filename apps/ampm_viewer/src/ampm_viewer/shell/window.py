@@ -26,13 +26,22 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStatusBar,
     QTabBar,
-    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from . import icons, macros, plot_library, plotneeds, theme, titlebar, toolbars, uistate
+from . import (
+    icons,
+    macros,
+    plot_library,
+    plotneeds,
+    shortcuts,
+    theme,
+    titlebar,
+    toolbars,
+    uistate,
+)
 from .actions import Actions
 from .backstage import Backstage
 from .controller import AppController
@@ -158,9 +167,10 @@ class MainWindow(QMainWindow):
             btn.setIconSize(QSize(18, 18))
             btn.setIcon(icons.ui(key, color))
             if key == "settings":
-                btn.clicked.connect(self._open_settings)
+                btn.setToolTip(shortcuts.tip("Settings", "settings"))
+                btn.clicked.connect(lambda: self._open_settings())
             elif key == "help":
-                btn.setToolTip("Help (F1)")
+                btn.setToolTip(shortcuts.tip("Help", "help"))
                 btn.clicked.connect(self._open_help)
             row.addWidget(btn)
             self._global_btns[key] = btn
@@ -172,16 +182,15 @@ class MainWindow(QMainWindow):
         # Context-swapping toolbar — now a plain widget in the layout, below the
         # tab strip. Contents rebuilt per active tab. Icon-only (Office-style);
         # each action's text becomes its tooltip.
-        self.toolbar = QToolBar("Main")
+        # A ribbon: big icons in groups, each group named under it.
+        self.toolbar = toolbars.Ribbon("Main")
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         # A click on the toolbar's empty space deselects (as on empty grid or
         # plot space).
         from .widgets import on_blank_click
         on_blank_click(self.toolbar, self._deselect)
-        self.toolbar.setIconSize(QSize(18, 18))
-        root.addWidget(self.toolbar)
+        root.addWidget(self.toolbar.with_captions())
 
         # Content row: the tab pages, with the side panel beside them (so the
         # panel sits under the tabs/toolbar, not up at the title bar). A
@@ -237,9 +246,7 @@ class MainWindow(QMainWindow):
         self.actions.history.changed.connect(self._sync_history_buttons)
         self._global_btns["undo"].clicked.connect(self._undo)
         self._global_btns["redo"].clicked.connect(self._redo)
-        for keys, slot in (("Ctrl+Z", self._undo), ("Ctrl+Shift+Z", self._redo),
-                           ("Ctrl+Y", self._redo), ("F1", self._open_help)):
-            QShortcut(QKeySequence(keys), self, activated=slot)
+        self._install_shortcuts()
         self._sync_history_buttons()
 
         # Macro recorder: captures the actions committed between Record and Stop.
@@ -1200,10 +1207,6 @@ class MainWindow(QMainWindow):
             if kind == "float":
                 dt.set_column_sigfigs(name, n)
 
-    def _reset_selection(self) -> None:
-        if self._data_tab is not None:
-            self._data_tab.clear_selection()
-
     def _close_tab(self, index: int) -> None:
         widget = self.stack.widget(index)
         if widget is not None and widget.property("tabkind") == "plot":
@@ -1587,7 +1590,6 @@ class MainWindow(QMainWindow):
                 on_add_excel=self._add_excel_column,
                 on_remove_column=self._remove_columns,
                 on_restore_column=self._restore_column,
-                on_reset_selection=self._reset_selection,
                 has_parts=self.controller.has_part_assignment(),
                 part_has_csv=self.controller.has_parts_csv(),
                 on_part_calc=self._add_part_calc,
@@ -2411,6 +2413,52 @@ class MainWindow(QMainWindow):
             return f"{Path(path).name}: no usable key/value rows in '{sheet}'."
         params["mapping"], params["dtype"] = mapping, dtype
         return ""
+
+    # -- keyboard shortcuts (the table is shortcuts.SHORTCUTS) -------------
+    def _install_shortcuts(self) -> None:
+        slots = {
+            "panel": lambda: self._press("Show/hide panel"),
+            "open": self.controller.open_build,
+            "close": lambda: self._has_open_work() and self._close_everything(),
+            "settings": lambda: self._open_settings(),
+            "help": self._open_help,
+            "undo": self._undo,
+            "redo": self._redo,
+            "next_tab": lambda: self._step_tab(1),
+            "prev_tab": lambda: self._step_tab(-1),
+            "layer_next": lambda: self._step_layer(1),
+            "layer_prev": lambda: self._step_layer(-1),
+            "rename": lambda: self._press("Rename column"),
+            "filter": lambda: self._press("Filter"),
+            "new_plot": lambda: self._press("New plot"),
+            "export": lambda: self._press("Export to Excel"),
+            "reset_view": lambda: self._press("Reset view"),
+            "screenshot": lambda: self._press("Screenshot"),
+        }
+        self._shortcuts: dict[str, list[QShortcut]] = {}
+        for name, slot in slots.items():
+            self._shortcuts[name] = [
+                QShortcut(QKeySequence(k), self, activated=slot)
+                for k in shortcuts.keys(name)]
+
+    def _press(self, name: str) -> bool:
+        return toolbars.press(self.toolbar, name)
+
+    def _step_tab(self, step: int) -> None:
+        n = self.tabbar.count()
+        if n > 1:
+            self.tabbar.setCurrentIndex((self.tabbar.currentIndex() + step) % n)
+
+    def _step_layer(self, step: int) -> None:
+        """The next / previous layer: of the grid on the Data tab, of a layer
+        viewer on its own tab."""
+        if self.toolbar.isHidden():
+            return
+        spin = self.toolbar.findChild(toolbars.LayerSpinBox)
+        if spin is not None and spin.isEnabled():
+            spin.stepBy(step)
+            return
+        self._press("Next layer" if step > 0 else "Previous layer")
 
     def _toggle_sidebar(self, checked: bool) -> None:
         kind = self.stack.currentWidget().property("tabkind")

@@ -2,19 +2,48 @@
 title: Keyboard and mouse
 section: Reference
 order: 20
-keywords: shortcut, keyboard, mouse, keys, ctrl, f1, double-click, hotkey
+keywords: shortcut, keyboard, mouse, keys, ctrl, alt, cmd, f1, f2, double-click, hotkey, panel, sidebar, layer, tab
 ---
 # Keyboard and mouse
+
+On a Mac, use **Cmd** where this page says **Ctrl**. A toolbar button with a
+shortcut shows it in its tooltip.
 
 ## Keyboard
 
 | Keys | Does |
 | --- | --- |
 | **F1** | Opens help for what you are doing |
+| **Ctrl+B** | Shows or hides the side panel |
 | **Ctrl+Z** | [Undo](help:undo-redo) |
 | **Ctrl+Shift+Z** or **Ctrl+Y** | Redo |
+| **Ctrl+O** | Opens a build |
+| **Ctrl+W** | Closes the build and every plot (**File ▸ Close**) |
+| **Ctrl+,** | Settings |
+| **Ctrl+Tab** or **Ctrl+PgDown** | Next tab |
+| **Ctrl+Shift+Tab** or **Ctrl+PgUp** | Previous tab |
 | **Enter** | Confirms a header rename or a dialog |
-| **Esc** | Cancels a header rename or a dialog |
+| **Esc** | Cancels a header rename or a dialog; in the grid, clears the selection |
+
+## Data tab keys
+
+| Keys | Does |
+| --- | --- |
+| **Alt+Down** / **Alt+Up** | Next / previous layer |
+| **F2** | Renames the selected column |
+| **Ctrl+F** | Adds a [filter](help:filters) |
+| **Ctrl+N** | Opens the **New plot** menu |
+| **Ctrl+E** | [Exports to Excel](help:export-excel) |
+
+## Plot keys
+
+These work in a [pop-out window](help:plot-windows) too.
+
+| Keys | Does |
+| --- | --- |
+| **Ctrl+0** | Resets the view |
+| **Ctrl+Shift+S** | Saves a screenshot |
+| **Alt+Down** / **Alt+Up** | Next / previous layer (Layer Viewer) |
 
 ## Window
 

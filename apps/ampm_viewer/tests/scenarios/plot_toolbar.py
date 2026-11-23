@@ -29,7 +29,7 @@ def drain():
 wait_ready(lambda: c.open_recent(BUILD)); drain()
 cols = list(s.result.df.columns); MP = next(n for n in cols if "elt" in n and "ool" in n)
 w._open_plot(PlotSpec(kind="2D Scatter", x="Demand X", y="Demand Y", color=MP), ("all", None, None)); drain()
-tips = [a.toolTip() for a in w.toolbar.actions() if a.toolTip()]
+tips = [a.text() for a in w.toolbar.actions() if a.text()]  # names (tooltips add shortcuts)
 print("plot toolbar:", tips)
 assert not any(t in tips for t in ("Clear", "Invert", "Select")), tips
 assert not w.toolbar.findChildren(QComboBox), "no combo left on the plot toolbar"
@@ -37,12 +37,12 @@ assert tips[:8] == ["Show/hide panel", "Reset view", "Equal axes (1:1)", "Axes",
 assert "BBox" not in tips, "a 2D plot has no bounding box"
 assert "Pop out" in tips
 win = (w._popout_plot(), app.processEvents(), w._detached[-1])[2]
-ptips = [a.toolTip() for a in win._toolbar.actions() if a.toolTip()]
+ptips = [a.text() for a in win._toolbar.actions() if a.text()]
 print("floating window toolbar:", ptips)
 assert not any(t in ptips for t in ("Clear", "Invert", "Select")) and not win._toolbar.findChildren(QComboBox)
 assert "Dock in" in ptips
-# the Data toolbar keeps its own (column) Reset selection
+# the Data toolbar has no Deselect button either: empty space deselects
 w.tabbar.setCurrentIndex(w.stack.indexOf(w._data_tab)); app.processEvents()
-assert "Reset selection" in [a.toolTip() for a in w.toolbar.actions()]
+assert "Reset selection" not in [a.text() for a in w.toolbar.actions()]
 c.shutdown()
 print("PLOT TOOLBAR CHECKS PASS")

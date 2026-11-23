@@ -11,13 +11,19 @@ where this toolbar is hidden.
 
 Everything here is inert — actions carry no connections. Discrete
 actions/toggles/presets live on the toolbar; sliders live in the dock.
+
+It is the main place to work, so it is roomy: bigger icons than menus have,
+in groups, each group named under its buttons (``Ribbon``, ``_group``), as in
+Office's ribbon. A button's full name, and its keyboard shortcut if it has one
+(``shortcuts``), is its tooltip.
 """
 
 from __future__ import annotations
 
 import bisect
 
-from PyQt6.QtGui import QAction, QActionGroup
+from PyQt6.QtCore import QRect, QSize, Qt
+from PyQt6.QtGui import QAction, QActionGroup, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
@@ -25,10 +31,152 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QToolBar,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
-from . import icons
+from . import icons, shortcuts
+
+ICON_PX = 24  # toolbar icons; menus and the title row keep 18
+
+
+class Ribbon(QToolBar):
+    """A toolbar whose buttons come in named groups (``_group``): separators
+    fall between groups, and each group's name is written under it, on a
+    strip of its own (a toolbar lays its buttons out over its whole height).
+    Put ``with_captions()`` in the layout, not the toolbar itself."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.setObjectName("Ribbon")
+        self.setIconSize(QSize(ICON_PX, ICON_PX))
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._groups: list[tuple[str, int]] = []  # (name, first action's index)
+        self._captions = _Captions(self)
+
+    def with_captions(self) -> QWidget:
+        """The toolbar with its group names under it, for a layout."""
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self)
+        lay.addWidget(self._captions)
+        return box
+
+    def setVisible(self, visible: bool) -> None:
+        super().setVisible(visible)
+        self._captions.setVisible(visible)
+
+    def begin_group(self, name: str) -> None:
+        """The buttons added from here on are the group ``name``."""
+        if self.actions():
+            self.addSeparator()
+        self._groups.append((name, len(self.actions())))
+        self._captions.update()
+
+    def clear(self) -> None:
+        self._groups = []
+        super().clear()
+        self._captions.update()
+
+    def fit_captions(self) -> None:
+        """Widen a group whose buttons are narrower than its name (a group of
+        one, say), so the names never run into each other."""
+        acts = self.actions()
+        metrics = self._captions.fontMetrics()
+        gap = self.layout().spacing() if self.layout() is not None else 0
+        for i, (name, start) in enumerate(self._groups):
+            end = (self._groups[i + 1][1] if i + 1 < len(self._groups)
+                   else len(acts))
+            widgets = [w for a in acts[start:end] if not a.isSeparator()
+                       and (w := self.widgetForAction(a)) is not None
+                       and w.objectName() != "RibbonSpacer"]
+            if not widgets:
+                continue
+            have = sum(w.sizeHint().width() for w in widgets) + gap * (len(widgets) - 1)
+            short = metrics.horizontalAdvance(name) + 14 - have
+            if short > 0:
+                each = -(-short // len(widgets))
+                for w in widgets:
+                    w.setMinimumWidth(w.sizeHint().width() + each)
+
+    def separator_xs(self) -> list[int]:
+        """Where the separators between groups are (their centres)."""
+        out = []
+        for act in self.actions():
+            w = self.widgetForAction(act) if act.isSeparator() else None
+            if w is not None and w.isVisible():
+                out.append(w.geometry().center().x())
+        return out
+
+    def group_rects(self) -> list[tuple[str, QRect]]:
+        """Each group's name and the area its shown buttons cover."""
+        acts = self.actions()
+        out = []
+        for i, (name, start) in enumerate(self._groups):
+            end = (self._groups[i + 1][1] if i + 1 < len(self._groups)
+                   else len(acts))
+            rect = QRect()
+            for act in acts[start:end]:
+                w = self.widgetForAction(act)
+                if (act.isSeparator() or w is None or not w.isVisible()
+                        or w.objectName() == "RibbonSpacer"):
+                    continue
+                rect = rect.united(w.geometry())
+            if not rect.isNull():
+                out.append((name, rect))
+        return out
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        self._captions.update()  # the buttons may have moved
+
+
+class _Captions(QWidget):
+    """The strip under a ``Ribbon``: each group's name, centred under it."""
+
+    def __init__(self, ribbon: Ribbon) -> None:
+        super().__init__()
+        self._ribbon = ribbon
+        self.setObjectName("RibbonCaptions")
+        font = self.font()
+        font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
+        self.setFont(font)
+        self.setFixedHeight(self.fontMetrics().height() + 6)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        pal = self.palette()
+        ribbon = self._ribbon
+        painter.fillRect(self.rect(), ribbon.palette().color(ribbon.backgroundRole()))
+        painter.setPen(pal.color(QPalette.ColorRole.Mid))
+        painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        dx = ribbon.x() - self.x()
+        for x in ribbon.separator_xs():  # the separators carry on down
+            painter.drawLine(x + dx, 0, x + dx, self.height() - 5)
+        painter.setPen(pal.color(QPalette.ColorRole.PlaceholderText))
+        metrics = self.fontMetrics()
+        for name, rect in self._ribbon.group_rects():
+            width = max(rect.width(), metrics.horizontalAdvance(name) + 4)
+            area = QRect(rect.center().x() + dx - width // 2, 0, width,
+                         self.height() - 3)
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, name)
+        painter.end()
+
+
+def _fit(toolbar: QToolBar) -> None:
+    if isinstance(toolbar, Ribbon):
+        toolbar.fit_captions()
+
+
+def _group(toolbar: QToolBar, name: str) -> None:
+    """Start the group ``name``: named under its buttons on a ``Ribbon``, set
+    off by a separator on any toolbar."""
+    if isinstance(toolbar, Ribbon):
+        toolbar.begin_group(name)
+    elif toolbar.actions():
+        toolbar.addSeparator()
 
 
 class LayerSpinBox(QSpinBox):
@@ -81,11 +229,13 @@ class LayerSpinBox(QSpinBox):
 
 # -- small builders ----------------------------------------------------
 def _action(
-    toolbar: QToolBar, text: str, icon: str, color: str, *, checkable: bool = False
+    toolbar: QToolBar, text: str, icon: str, color: str, *,
+    checkable: bool = False, shortcut: str | None = None,
 ) -> QAction:
+    """An icon button; ``text`` (+ its shortcut) is the tooltip."""
     act = QAction(text, toolbar)
-    act.setToolTip(text)  # icon-only toolbar -> text becomes the tooltip
-    act.setIcon(icons.ui(icon, color))
+    act.setToolTip(shortcuts.tip(text, shortcut))
+    act.setIcon(icons.ui(icon, color, ICON_PX))
     act.setCheckable(checkable)
     toolbar.addAction(act)
     return act
@@ -94,6 +244,25 @@ def _action(
 def _muted(text: str) -> QLabel:
     lab = QLabel(text)
     return lab
+
+
+def press(toolbar: QToolBar, name: str) -> bool:
+    """Press the button called ``name`` (its full name, as in its tooltip) if
+    ``toolbar`` shows it and it is enabled; a menu button drops its menu. So
+    a keyboard shortcut does just what its button does, where the button is."""
+    if toolbar.isHidden():
+        return False
+    for act in toolbar.actions():
+        if act.text() == name and act.isVisible():
+            if act.isEnabled():
+                act.trigger()
+            return act.isEnabled()
+    for btn in toolbar.findChildren(QToolButton):
+        if btn.accessibleName() == name and btn.menu() is not None:
+            if btn.isEnabled():
+                btn.showMenu()
+            return btn.isEnabled()
+    return False
 
 
 class _StayOpenMenu(QMenu):
@@ -122,13 +291,16 @@ class _StayOpenMenu(QMenu):
 
 
 def _menu_button(
-    toolbar: QToolBar, text: str, icon: str, color: str, *, stay_open: bool = False
+    toolbar: QToolBar, text: str, icon: str, color: str, *,
+    stay_open: bool = False, shortcut: str | None = None,
 ) -> QToolButton:
     """An icon button that drops a menu (instant popup)."""
     btn = QToolButton()
     btn.setText(text)
-    btn.setToolTip(text)
-    btn.setIcon(icons.ui(icon, color))
+    btn.setAccessibleName(text)  # what a shortcut presses
+    btn.setToolTip(shortcuts.tip(text, shortcut))
+    btn.setIcon(icons.ui(icon, color, ICON_PX))
+    btn.setIconSize(toolbar.iconSize())
     btn.setAutoRaise(True)
     btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     menu = _StayOpenMenu(btn) if stay_open else QMenu(btn)
@@ -136,6 +308,10 @@ def _menu_button(
     toolbar.addWidget(btn)
     return btn
 
+
+# The plot toolbar's groups (``plotcontrols.GROUPS``), as named under them.
+GROUP_NAMES = {"view": "View", "scene": "Show", "options": "Options",
+               "export": "Save"}
 
 _RECORDING_RED = "#d93025"  # the Stop button while a macro is recording
 
@@ -159,7 +335,6 @@ def populate_data(
     on_add_excel=None,
     on_remove_column=None,
     on_restore_column=None,
-    on_reset_selection=None,
     has_parts=False,
     part_has_csv=False,
     on_part_calc=None,
@@ -180,15 +355,19 @@ def populate_data(
 ) -> None:
     columns = columns or []
 
+    _group(toolbar, "View")
     # Panel toggle — show/hide the side panel.
-    panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
+    panel = _action(toolbar, "Show/hide panel", "sidebar", color,
+                    checkable=True, shortcut="panel")
     panel.setChecked(sidebar_open)
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
 
     # Layer — which layer the grid shows (grid-only; plots carry their own span).
-    toolbar.addWidget(_muted("Layer"))
     layer = LayerSpinBox()
+    layer.setObjectName("LayerSpin")
+    layer.setToolTip(f"Layer ({shortcuts.native('layer_prev')} / "
+                     f"{shortcuts.native('layer_next')})")
     layer.setFixedWidth(80)
     if layers:
         layer.set_layers(layers, current_layer)
@@ -196,13 +375,14 @@ def populate_data(
         layer.setEnabled(False)
     if on_layer_changed is not None:
         layer.valueChanged.connect(on_layer_changed)
+    toolbar.addWidget(_muted("Layer"))
     toolbar.addWidget(layer)
-    toolbar.addSeparator()
 
+    _group(toolbar, "Columns")
     # Columns — show/hide reflects the grid's current hidden set.
     cols_btn = _menu_button(
-        toolbar, "Show/hide columns", "show_hide", color, stay_open=True
-    )
+        toolbar, "Show/hide columns", "show_hide", color,
+        stay_open=True)
     hidden = hidden_columns or set()
     for name in columns:
         a = cols_btn.menu().addAction(name)
@@ -210,7 +390,7 @@ def populate_data(
         a.setChecked(name not in hidden)
         if on_column_visibility is not None:
             a.toggled.connect(lambda vis, n=name: on_column_visibility(n, vis))
-    rename = _action(toolbar, "Rename column", "rename_column", color)
+    rename = _action(toolbar, "Rename column", "rename_column", color, shortcut="rename")
     if on_rename is not None:
         rename.triggered.connect(lambda: on_rename())
     # Add column — a menu of sources. "Derive column" is a row-wise formula over
@@ -240,15 +420,14 @@ def populate_data(
     remove = _action(toolbar, "Remove column", "remove_column", color)
     if on_remove_column is not None:
         remove.triggered.connect(lambda: on_remove_column())
-    reset_sel = _action(toolbar, "Reset selection", "clear_sel", color)
-    if on_reset_selection is not None:
-        reset_sel.triggered.connect(lambda: on_reset_selection())
-    toolbar.addSeparator()
+    # No Deselect button: a click on empty grid or toolbar space (or Esc in
+    # the grid) clears the selection.
 
     # Filters (query-time; on top of the cache). Mask / assign-parts /
     # correction are not here: they're defined with the DataStore in the
     # backstage setup page.
-    flt = _action(toolbar, "Filter", "filter", color)
+    _group(toolbar, "Filters")
+    flt = _action(toolbar, "Filter", "filter", color, shortcut="filter")
     if on_filter is not None:
         flt.triggered.connect(lambda: on_filter())
     rmf = _action(toolbar, "Remove filter", "remove_filter", color)
@@ -257,11 +436,11 @@ def populate_data(
     rsf = _action(toolbar, "Reset filters", "reset_filter", color)
     if on_reset_filter is not None:
         rsf.triggered.connect(lambda: on_reset_filter())
-    toolbar.addSeparator()
 
     # Parts — contextual: only shown once a successful part assignment gives a
     # usable part_id, so these part-wise actions can count on it.
     if has_parts:
+        _group(toolbar, "Parts")
         parts_btn = _menu_button(toolbar, "Parts", "assign_parts", color)
         pcalc = parts_btn.menu().addAction("Per-part calculation…")
         if on_part_calc is not None:
@@ -272,19 +451,21 @@ def populate_data(
         else:
             pimport.setEnabled(False)  # contextual: needs a parts CSV
             pimport.setToolTip("No QuantAM parts CSV configured for this build.")
-        toolbar.addSeparator()
 
     # DBSCAN for any purpose: clusters on the position and / or other columns
     # of the rows the filters keep, as a new column (runs in the background).
+    _group(toolbar, "Clusters")
     clu = _action(toolbar, "DBSCAN clusters", "cluster", color)
     if on_cluster is not None:
         clu.triggered.connect(lambda: on_cluster())
     else:
         clu.setEnabled(False)
-    toolbar.addSeparator()
 
     # New plot — dropdown of plot types (icon per type).
-    plot_btn = _menu_button(toolbar, "New plot", "new_plot", color)
+    _group(toolbar, "Plots")
+    plot_btn = _menu_button(toolbar, "New plot", "new_plot", color,
+                            shortcut="new_plot")
+    plot_btn.setObjectName("NewPlotButton")
     for view_name in icons.PLOT_TYPE:
         a = plot_btn.menu().addAction(icons.for_view(view_name, color), view_name)
         if on_new_plot is not None:
@@ -294,19 +475,19 @@ def populate_data(
         lib = plot_btn.menu().addAction(
             icons.ui("plot_library", color), "Open from the plot library…")
         lib.triggered.connect(lambda _c=False: on_plot_library())
-    toolbar.addSeparator()
 
     # Export
-    xls = _action(toolbar, "Export to Excel", "export_excel", color)
+    _group(toolbar, "Export")
+    xls = _action(toolbar, "Export to Excel", "export_excel", color, shortcut="export")
     if on_export_excel is not None:
         xls.triggered.connect(lambda: on_export_excel())
     else:
         xls.setEnabled(False)
-    toolbar.addSeparator()
 
     # Macros — record the actions performed here, save them to a file, and run
     # a saved macro. The record button turns into a (red) Stop while recording;
     # a macro can't be run in the middle of recording one.
+    _group(toolbar, "Macros")
     if recording:
         rec = _action(toolbar, "Stop recording and save the macro", "macro_stop",
                       _RECORDING_RED)
@@ -344,6 +525,7 @@ def populate_data(
             run.triggered.connect(lambda: on_macro_run())
         else:
             run.setEnabled(False)
+    _fit(toolbar)
 
 
 # -- Plot toolset ------------------------------------------------------
@@ -367,25 +549,31 @@ def populate_plot(
             on_control(key, v)
 
     # Panel toggle: same control as the Data toolbar.
-    panel = _action(toolbar, "Show/hide panel", "sidebar", color, checkable=True)
+    _group(toolbar, GROUP_NAMES["view"])
+    panel = _action(toolbar, "Show/hide panel", "sidebar", color,
+                    checkable=True, shortcut="panel")
     panel.setChecked(sidebar_open)
     if on_toggle_sidebar is not None:
         panel.toggled.connect(on_toggle_sidebar)
 
-    group = None
+    group = "view"  # the panel's
     for c in controls:
-        if c.group != group:  # a separator between groups
-            toolbar.addSeparator()
+        if c.group != group:  # a new group: its name under it
+            _group(toolbar, GROUP_NAMES.get(c.group, c.group.title()))
             group = c.group
+        keys = shortcuts.CONTROL_SHORTCUT.get(c.key)
         if c.kind == "toggle":
-            act = _action(toolbar, c.label, c.icon, color, checkable=True)
+            act = _action(toolbar, c.label, c.icon, color,
+                          checkable=True, shortcut=keys)
             act.setChecked(bool(value(c.key)))
             act.toggled.connect(lambda on, k=c.key: fire(k, on))
         elif c.kind == "action":
-            act = _action(toolbar, c.label, c.icon, color)
+            act = _action(toolbar, c.label, c.icon, color,
+                          shortcut=keys)
             act.triggered.connect(lambda _=False, k=c.key: fire(k))
         elif c.kind in ("choice", "menu"):
-            btn = _menu_button(toolbar, c.label, c.icon, color)
+            btn = _menu_button(toolbar, c.label, c.icon, color,
+                               shortcut=keys)
             menu = btn.menu()
             menu.setTitle(c.label)
             ticks = QActionGroup(menu) if c.kind == "choice" else None
@@ -400,11 +588,15 @@ def populate_plot(
 
     # Pop out / dock in: pushed to the far right with an expanding spacer.
     spacer = QWidget()
+    spacer.setObjectName("RibbonSpacer")
     spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     toolbar.addWidget(spacer)
+    if on_popout is not None or on_dock is not None:
+        _group(toolbar, "Window")
     if on_popout is not None:
         pop = _action(toolbar, "Pop out", "popout", color)
         pop.triggered.connect(lambda: on_popout())
     if on_dock is not None:
         dock = _action(toolbar, "Dock in", "dockin", color)
         dock.triggered.connect(lambda: on_dock())
+    _fit(toolbar)

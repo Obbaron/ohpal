@@ -50,20 +50,21 @@ def drain():
             if not c._queue and c._current is None: return
         time.sleep(0.02)
 def tips(tb):
-    """Tooltips across the toolbar: plain actions and menu buttons, in order."""
+    """Button names across the toolbar (their tooltips, less any shortcut):
+    plain actions and menu buttons, in order."""
     out = []
     for a in tb.actions():
         wdg = tb.widgetForAction(a)
-        t = wdg.toolTip() if isinstance(wdg, QToolButton) and wdg.menu() else a.toolTip()
+        t = wdg.accessibleName() if isinstance(wdg, QToolButton) and wdg.menu() else a.text()
         if t:
             out.append(t)
     return out
 def button(tb, tip):
     for a in tb.actions():
         wdg = tb.widgetForAction(a)
-        if isinstance(wdg, QToolButton) and wdg.menu() and wdg.toolTip() == tip:
+        if isinstance(wdg, QToolButton) and wdg.menu() and wdg.accessibleName() == tip:
             return wdg
-        if a.toolTip() == tip:
+        if a.text() == tip:
             return a
     raise AssertionError(f"{tip!r} not in {tips(tb)}")
 def menu_pick(tb, tip, text):

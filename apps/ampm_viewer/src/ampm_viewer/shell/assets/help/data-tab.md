@@ -12,8 +12,8 @@ at a time. It is where you prepare the data that plots and exports use.
 
 ## Moving between layers
 
-The **Layer** box on the toolbar chooses the layer on screen. It only stops on
-layers that have data. Layers that were not built, or that the mask emptied,
+The **Layer** box on the toolbar chooses the layer on screen (**Alt+Down** and
+**Alt+Up** step through them). It only stops on layers that have data. Layers that were not built, or that the mask emptied,
 are skipped. The status bar shows how many rows the layer has.
 
 The table shows one layer, but the changes you make here (new columns,
@@ -22,14 +22,16 @@ filters, renames) apply to every layer and to every plot.
 ## Working with columns
 
 - **Select** a column by clicking its header. Ctrl-click or Shift-click selects
-  several. Clicking empty space in the grid or on the toolbar, or **Reset
-  selection** on the toolbar, clears it.
+  several. Clicking empty space in the grid or on the toolbar, or **Esc** in
+  the grid, clears it.
 - **Reorder** by dragging a header; a line shows where it will land.
 - **Resize** by dragging a header's edge. A name too long for its column shows
   its end (`…ches Power`), since that is usually the part that differs.
 - **Show or hide** columns from the **Show/hide columns** menu. The menu stays
   open so you can tick several. Hiding only tidies the view; the column is
-  still there for formulas and plots.
+  still there for formulas and plots. A few columns start hidden: Start time,
+  Duration, Demand focus, layer and LaserVIEW (mean), which is always loaded
+  because the melt-pool correction needs it.
 - **Rename** by double-clicking a header, or select the column and use
   **Rename column**. Formulas, filters and open plots that use the column
   follow the new name.

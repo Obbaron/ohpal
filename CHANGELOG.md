@@ -18,14 +18,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release-prep` and `release-publish` do the first and last parts alone. The
   release workflow falls back to the changelog section when there are no release
   notes.
+- **Keyboard shortcuts** for the main actions: **Ctrl+B** shows or hides the side
+  panel, **Alt+Down/Up** steps through the layers (grid and Layer Viewer),
+  **Ctrl+Tab** / **Ctrl+PgDown** and back move between tabs, **F2** renames,
+  **Ctrl+F** filters, **Ctrl+N** opens New plot, **Ctrl+E** exports, **Ctrl+0**
+  resets a plot's view, **Ctrl+Shift+S** saves a screenshot, **Ctrl+O** opens,
+  **Ctrl+W** closes, **Ctrl+,** opens Settings, and **Esc** in the grid clears the
+  selection (Cmd on a Mac). A button's tooltip shows its shortcut; Help > Keyboard
+  and mouse lists them all. The plot ones work in pop-out windows too.
 
 ### Changed
 
-- **Add from Excel helps choose the column to match on.** It starts on the table
-  column that holds the sheet's keys, shows how many of them it holds on the layer
-  shown, warns in red when it holds none (naming the column that does), and asks
-  before adding a column that would be empty. The status bar then says how many
-  rows got a value. New GUI scenario `excel_import_keys` (38 in all).
+- **The toolbar is a ribbon.** Bigger icons (24 px), in groups named under them
+  (*View*, *Columns*, *Filters*, *Parts*, *Clusters*, *Plots*, *Export*, *Macros* on
+  the Data tab; *View*, *Show*, *Options*, *Save*, *Window* on a plot), in the main
+  window and in pop-out plot windows. The Deselect button is gone: click empty space
+  (or press Esc in the grid) instead.
+- **Add from Excel starts on the usual choices,** so a filled-in samples template
+  needs no changes: the key is a `part_id`-like column whose values the table holds
+  (never one with the same value on every row, such as `build_id`), the value is the
+  first column you filled in (numbers first; columns the template generated, shaded
+  grey, columns the table has and ones already imported are passed over, so the next
+  import starts on your next measurement), and the new column is named after it
+  (numbered if the name is taken). It matches on the table column the keys cover
+  best, says how many keys match on the layer shown, warns in red when none do
+  (suggesting the column that holds them), and asks before adding a column that
+  would be empty. The status bar then says how many rows got a value.
+- **LaserVIEW (mean) starts hidden in the grid.** It is always loaded, for the
+  melt-pool correction, rather than because anyone asked to see it; shown once, it
+  stays shown. New GUI scenarios `excel_import_keys`, `grid_default_hidden` and
+  `ribbon_shortcuts` (40 in all).
 
 ### Fixed
 

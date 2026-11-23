@@ -133,7 +133,10 @@ DEFAULT_ORDER = [
     "MeltVIEW melt pool (median)", "MeltVIEW plasma (median)",
     "LaserVIEW (median)", "Laser back reflection (median)",
 ]
-DEFAULT_HIDDEN = {"Start time", "Duration", "Demand focus", "layer"}
+# LaserVIEW (mean) is always loaded, for the melt-pool correction, rather than
+# because anyone asked to see it.
+DEFAULT_HIDDEN = {"Start time", "Duration", "Demand focus", "layer",
+                  "LaserVIEW (mean)"}
 # A shown column narrower than this is a leftover of the header's own
 # bookkeeping (see DataTab._fit_sections), never a width the user chose.
 _MIN_SHOWN_WIDTH = 12
@@ -187,8 +190,9 @@ class DataTab(QWidget):
         self.table.selectionModel().selectionChanged.connect(
             self._on_selection_changed)                          # follow selection
 
-        # Clicking empty grid space clears the column selection.
+        # Clicking empty grid space clears the column selection; so does Esc.
         self.table.viewport().installEventFilter(self)
+        self.table.installEventFilter(self)
 
         # Inline column-rename state.
         self._rename_armed = False
@@ -208,6 +212,9 @@ class DataTab(QWidget):
         self._last_cols: list[str] = []
         self._order_names: list[str] = []
         self._hidden_names: set[str] = set()
+        # Every column the grid has had: one new to it that is hidden by
+        # default (LaserVIEW) starts hidden; one restored or renamed doesn't.
+        self._known: set[str] = set()
         self._widths: dict[str, int] = {}  # column -> width, kept by name
 
     # -- filter chip bar -----------------------------------------------
@@ -321,7 +328,7 @@ class DataTab(QWidget):
             self.columnSelectionChanged.emit(sel[0])
 
     def clear_selection(self) -> None:
-        """Toolbar 'Reset selection' — drop the column selection."""
+        """Drop the column selection."""
         self.table.clearSelection()
 
     def column_info(self, name: str) -> dict | None:
@@ -399,6 +406,11 @@ class DataTab(QWidget):
         QApplication.instance().removeEventFilter(self)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if (event.type() == QEvent.Type.KeyPress and obj is self.table
+                and event.key() == Qt.Key.Key_Escape
+                and self.table.selectionModel().hasSelection()):
+            self.table.clearSelection()
+            return True
         if event.type() == QEvent.Type.MouseButtonPress:
             # Deselect: a press on empty grid space clears the selection.
             if obj is self.table.viewport():
@@ -459,6 +471,7 @@ class DataTab(QWidget):
         self._order_names = [new if c == old else c for c in self._order_names]
         self._hidden_names = {new if c == old else c for c in self._hidden_names}
         self._last_cols = [new if c == old else c for c in self._last_cols]
+        self._known.add(new)
 
     def set_dataframe(self, df) -> None:
         """Show a Polars DataFrame; (re)apply the column layout."""
@@ -494,6 +507,7 @@ class DataTab(QWidget):
         self._persisted_cols = list(columns or [])
         self._order_names = list(order or [])
         self._hidden_names = set(hidden or [])
+        self._known = set()  # another build's columns
         self._layout_done = False
 
     def _apply_layout(self, first: bool, cols_changed: bool = False) -> None:
@@ -540,6 +554,7 @@ class DataTab(QWidget):
         self._hidden_names = {
             cols[i] for i in range(n) if header.isSectionHidden(i)
         }
+        self._known |= set(cols)
         for i in range(min(n, header.count())):
             size = header.sectionSize(i)
             if not header.isSectionHidden(i) and size >= _MIN_SHOWN_WIDTH:
@@ -568,11 +583,19 @@ class DataTab(QWidget):
                     and header.sectionSize(i) < _MIN_SHOWN_WIDTH):
                 header.resizeSection(i, self._widths.get(name, default))
 
+    def _default_hidden(self) -> set[str]:
+        """``DEFAULT_HIDDEN`` by the names the grid shows (after renames)."""
+        return {self._renames.get(n, n) for n in DEFAULT_HIDDEN}
+
     def _apply_named_layout(self) -> None:
-        """Reorder + hide by saved column names; new columns go last, visible."""
+        """Reorder + hide by saved column names; new columns go last, visible
+        (hidden if they are hidden by default, such as LaserVIEW)."""
         header = self.table.horizontalHeader()
         cols = self.model.columns
         logical = {name: i for i, name in enumerate(cols)}
+        self._hidden_names |= {n for n in cols if n not in self._order_names
+                               and n not in self._known
+                               and n in self._default_hidden()}
         desired = [n for n in self._order_names if n in logical]
         desired += [n for n in cols if n not in self._order_names]
         for target_vis, name in enumerate(desired):
@@ -589,7 +612,7 @@ class DataTab(QWidget):
         # renamed column still gets its default position / hidden state.
         ren = self._renames
         default_order = [ren.get(n, n) for n in DEFAULT_ORDER]
-        default_hidden = {ren.get(n, n) for n in DEFAULT_HIDDEN}
+        default_hidden = self._default_hidden()
         desired = [n for n in default_order if n in logical]
         desired += [n for n in cols if n not in default_order]
         for target_vis, name in enumerate(desired):
