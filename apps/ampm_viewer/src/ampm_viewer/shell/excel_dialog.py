@@ -257,14 +257,31 @@ class ExcelImportDialog(DraggableCard, QDialog):
             self.match_label.setStyleSheet("color: palette(mid);")
             self.match_label.setText(
                 f"{n} of {total} keys are values of {col!r} on this layer.")
+        else:
+            best = self._best()
+            # The way out first: the column that holds the keys.
+            fix = (f"Match on {best!r}: it holds {self._hits(best)} of the "
+                   f"{total} keys. " if best else "")
+            self.match_label.setStyleSheet("color: #c0392b;")
+            self.match_label.setText(
+                f"{fix}None of them is a value of {col!r} on this layer, so "
+                "the new column would be empty.")
+        self._fit()
+
+    def _fit(self) -> None:
+        """Grow (or shrink) to show the whole note: a wrapped label in a form
+        doesn't ask for its height by itself, so the last line was cut off."""
+        width = self.match_label.width()
+        if not self.isVisible() or width <= 0:
             return
-        best = self._best()
-        hint = (f" {best!r} holds {self._hits(best)} of them."
-                if best else " No grid column holds them on this layer.")
-        self.match_label.setStyleSheet("color: #c0392b;")
-        self.match_label.setText(
-            f"None of the {total} keys is a value of {col!r} on this layer:"
-            f" the new column would be empty.{hint}")
+        self.match_label.setMinimumHeight(0)
+        need = self.match_label.heightForWidth(width) if self.match_label.text() else 0
+        self.match_label.setMinimumHeight(max(0, need))
+        self.resize(self.width(), self.sizeHint().height())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._fit()
 
     def _on_val(self) -> None:
         if not self._name_edited:  # mirror the value header until the user types

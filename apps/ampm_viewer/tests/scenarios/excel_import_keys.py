@@ -84,8 +84,8 @@ run_dialog(check_default)
 n = len(set(ids))
 assert seen["grid"] == pid, seen
 assert seen["label"] == f"{n} of {n} keys are values of {pid!r} on this layer.", seen["label"]
-assert seen["wrong"].startswith(f"None of the {n} keys is a value of 'Start time' on this layer") \
-    and f"{pid!r} holds {n} of them" in seen["wrong"], seen["wrong"]
+assert seen["wrong"] == (f"Match on {pid!r}: it holds {n} of the {n} keys. None of them is a "
+                         "value of 'Start time' on this layer, so the new column would be empty."), seen["wrong"]
 assert asked and asked[0][0] == "No keys match" and not seen["accepted_wrong"], asked
 col = s.result.df["density"]
 assert col.null_count() == s.result.df[pid].null_count(), "every row with a part has a density"
