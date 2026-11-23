@@ -2,7 +2,7 @@
 title: Adding a column from Excel
 section: Data
 order: 40
-keywords: excel, import, xlsx, spreadsheet, key, value, join, lookup, match, sheet
+keywords: excel, import, xlsx, spreadsheet, key, value, join, lookup, match, sheet, template, density, part_id, empty
 ---
 # Adding a column from Excel
 
@@ -12,15 +12,24 @@ column, such as a density per part or an operator's rating per region.
 1. **Browse…** to the workbook and choose the **sheet**.
 2. Choose the sheet's **key column** (what identifies a row, such as the part
    name) and its **value column** (what you want to bring in).
-3. Choose the table column to **match on**, usually `part_id`.
+3. Choose the table column to **match on**: the one holding the same values as
+   the key column, usually `part_id`. It starts on the column that holds the
+   keys, and says how many of the keys it found there on the layer shown. If
+   none of them is there, it says so in red and names the column that holds
+   them, and **Run** asks before adding a column that would be empty.
 4. Name the **new column** and confirm.
 
 Each row of the table gets the value whose key equals its match column. Rows
-with no matching key are left empty.
+with no matching key are left empty. The status bar then says how many rows on
+the layer shown got a value.
 
 ## Details
 
 - Keys are compared as text, so `1`, `1.0` and `"1"` are the same key.
+- Part names match part numbers: `Part(12)` (the table's `part_id`) and `12`
+  (the `part_id` of the samples template from **New ▸ Excel template**) are
+  the same part, so the template's columns, such as a density you filled in,
+  can be imported on `part_id` directly.
 - A key that appears twice in the sheet stops the import: remove the duplicate
   in Excel and try again.
 - If every value is a number the column is numeric (usable in formulas and as

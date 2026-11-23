@@ -1,15 +1,20 @@
 # Builds AMPM Viewer's installers and puts them on a GitHub release.
 #
-# Release: bump __version__ (apps/ampm_viewer/src/ampm_viewer/__init__.py),
-# add docs/release-notes/v<version>.md, commit, then push a tag that matches:
+# Release: `just release <version>` (apps/ampm_viewer/release.py) does it all:
+# version, changelog, release notes, tests, commit, push, main, the tag, then
+# follows this workflow and offers to publish. By hand: bump __version__
+# (apps/ampm_viewer/src/ampm_viewer/__init__.py), file the changelog, commit,
+# then push a tag that matches:
 #
-#     git tag v2.0.1
-#     git push origin v2.0.1
+#     git tag v2.2.0
+#     git push origin v2.2.0
 #
 # Both installers are built (Windows setup on a Windows runner, macOS disk
 # image on an Apple silicon runner) and attached to a *draft* release named
-# after the tag, with the notes file as its text. Check it on the Releases
-# page, then press Publish: only then can colleagues see it.
+# after the tag. Its text is docs/release-notes/v<version>.md, or, without
+# one, the version's section of CHANGELOG.md. Check it on the Releases page,
+# then press Publish (or `just release-publish <version>`): only then can
+# colleagues see it.
 #
 # Run it by hand (Actions > Release > Run workflow) to build the installers
 # without a release: they are kept as the run's artifacts for a week.
@@ -93,7 +98,15 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           notes="docs/release-notes/$GITHUB_REF_NAME.md"
-          if [ -f "$notes" ]; then
+          if [ ! -f "$notes" ]; then
+            # The version's section of the changelog instead.
+            notes="$RUNNER_TEMP/notes.md"
+            awk -v head="## [$version]" '
+              index($0, head) == 1 { on = 1; next }
+              on && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+              on { print }' CHANGELOG.md > "$notes"
+          fi
+          if [ -s "$notes" ]; then
             set -- --notes-file "$notes"
           else
             set -- --generate-notes

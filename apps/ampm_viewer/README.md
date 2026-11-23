@@ -121,14 +121,31 @@ that make the build work:
 ## Releasing on GitHub
 
 `.github/workflows/release.yml` builds both installers on GitHub's own Windows and
-Apple silicon machines and attaches them to a draft release:
+Apple silicon machines and attaches them to a draft release. Pushing a tag such as
+`v2.2.0` starts it. The tag must match `__version__`, or the run stops.
 
-1. Set `__version__` in `src/ampm_viewer/__init__.py`, add the changelog entry and
-   `docs/release-notes/v<version>.md` (the release's text), and push.
-2. Tag the commit and push the tag: `git tag v2.0.1` then `git push origin v2.0.1`.
-   The tag must match `__version__`, or the run stops.
-3. When the run (the repository's **Actions** tab) is done, open **Releases**, check
-   the draft (`...-x64-setup.exe` and `...-arm64.dmg` attached) and press **Publish**.
+**`just release 2.2.0`** (`release.py`) does the rest, from a branch whose work is
+committed and pushed, with what changed listed under `## [Unreleased]` in the
+changelog:
+
+1. **Checks:** the version is newer, its tag is new, nothing is uncommitted or
+   unpushed, the changelog has unreleased entries, `main` can fast-forward.
+2. **Files:** `__version__`; the Unreleased entries filed under the version and
+   today's date, with its compare link; `docs/release-notes/v2.2.0.md` (the release
+   page) made from them, unless you wrote one. Edit it while the tests run.
+3. **Tests:** the library tests, and the GUI scenarios when `AMPM_TEST_BUILD` (or
+   `--build PATH`) names a build.
+4. **Git**, after one "Go ahead?": commit "Release 2.2.0", push, fast-forward `main`
+   on GitHub, tag `v2.2.0` and push it.
+5. **Installers:** with the [GitHub CLI](https://cli.github.com) (`gh`) installed and
+   signed in, it follows the workflow (10 to 15 minutes), lists the draft's files and
+   asks whether to publish it. Without it, publish on the **Releases** page.
+
+Options: `--dry-run` shows the plan and changes nothing; `--yes` asks nothing;
+`--skip-tests`; `--no-main` leaves `main` alone. `just release-prep 2.2.0` only
+writes the files; `just release-publish 2.2.0` publishes a finished draft. If the
+workflow fails, fix it, re-run it from the **Actions** tab, then
+`just release-publish`.
 
 Colleagues then download from the release page, or from
 `https://github.com/Obbaron/ohpal/releases/latest`. In a private repository they need

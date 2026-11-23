@@ -11,7 +11,7 @@ APP_DIR  := apps/ampm_viewer
 PKG_AMPM := packages/ohpal_ampm
 
 .DEFAULT_GOAL := help
-.PHONY: help setup verify run test test-app build installer rebuild clean
+.PHONY: help setup verify run test test-app build installer release release-prep release-publish rebuild clean
 
 help:
 	@echo "  setup    - sync venv and install all packages (editable)"
@@ -21,6 +21,9 @@ help:
 	@echo "  test-app - run the app's GUI scenarios: make test-app BUILD=<build folder>"
 	@echo "  build    - compile the app from $(APP_DIR)/app.spec (a folder in $(APP_DIR)/dist)"
 	@echo "  installer - build, then a setup .exe (Windows, Inno Setup 6.6+) or a .dmg (macOS)"
+	@echo "  release VERSION=2.2.0 [FLAGS=--dry-run] - the whole release (see apps/ampm_viewer/release.py)"
+	@echo "  release-prep VERSION=2.2.0 - only the version, changelog and release notes"
+	@echo "  release-publish VERSION=2.2.0 - publish the draft GitHub release (needs gh)"
 	@echo "  clean    - remove caches and build artifacts"
 	@echo "  rebuild  - clean then build"
 
@@ -48,6 +51,15 @@ build:
 
 installer: build
 	uv --directory $(APP_DIR) run --no-sync python installer/build_installer.py
+
+release:
+	uv run --no-sync python $(APP_DIR)/release.py release $(VERSION) $(FLAGS)
+
+release-prep:
+	uv run --no-sync python $(APP_DIR)/release.py prepare $(VERSION)
+
+release-publish:
+	uv run --no-sync python $(APP_DIR)/release.py publish $(VERSION)
 
 rebuild:
 	$(MAKE) clean

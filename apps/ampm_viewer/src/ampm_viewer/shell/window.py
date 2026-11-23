@@ -1745,10 +1745,14 @@ class MainWindow(QMainWindow):
         dt = self._data_tab
         if dt is None:
             return
+        from .derive import key_matches
         from .excel_dialog import ExcelImportDialog
 
         taken = [d["name"] for d in self.session.derivations]
-        dlg = ExcelImportDialog(dt._columns, self, taken=taken)
+        frame = self.session.result.df if self.session.result is not None else None
+        dlg = ExcelImportDialog(
+            dt._columns, self, taken=taken,
+            match_count=lambda col, keys: key_matches(frame, col, keys))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, grid_key, mapping, dtype, _n = dlg.result_values()

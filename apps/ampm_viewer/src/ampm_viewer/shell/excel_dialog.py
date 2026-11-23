@@ -3,8 +3,15 @@
 The user picks an ``.xlsx``, a sheet, a **key** column and a **value** column;
 the pairs are left-joined onto the grid on a chosen grid column to make a new
 column. Keys are matched on their canonical string form (see
-``derive.norm_key``), so ``1``, ``1.0`` and ``"1"`` align; duplicate keys are
-rejected. Everything is validated on OK — errors keep the dialog open.
+``derive.norm_key``), so ``1``, ``1.0`` and ``"1"`` align, and so do
+``Part(12)`` and ``12``; duplicate keys are rejected. Everything is validated
+on OK; errors keep the dialog open.
+
+Given ``match_count(column, keys)`` (``derive.key_matches`` on the layer shown:
+how many of the Excel keys are values of a grid column, and the share of its
+rows they cover), the dialog says how many keys each choice matches, starts on
+the grid column they cover best, and asks before adding a column that nothing
+matches.
 
 The value dtype is inferred: all-numeric values store as floats (colormap-able,
 usable in later formulas); otherwise they store as text (a discrete label).
@@ -33,6 +40,7 @@ from PyQt6.QtWidgets import (
 
 from .card import DraggableCard
 from .derive import norm_key
+from .message_dialog import ask
 from .widgets import fix_combo
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
@@ -46,9 +54,13 @@ _PRIMARY_QSS = (
 
 class ExcelImportDialog(DraggableCard, QDialog):
     def __init__(self, grid_columns, parent=None, *, taken=None,
-                 start_dir=None) -> None:
+                 start_dir=None, match_count=None) -> None:
         super().__init__(parent)
         self._grid_columns = list(grid_columns)
+        self._match_count = match_count
+        self._keys: set[str] = set()       # the Excel key column, normalised
+        self._matches: dict[str, tuple] = {}  # grid column -> (keys, row share)
+        self._grid_picked = False           # the user chose the grid column
         self._taken = set(taken or [])
         self._start_dir = start_dir or str(Path.home())
         self._path: str | None = None
@@ -96,6 +108,7 @@ class ExcelImportDialog(DraggableCard, QDialog):
         form.addRow("Sheet", self.sheet_combo)
 
         self.key_combo = fix_combo(QComboBox())
+        self.key_combo.currentIndexChanged.connect(lambda _i: self._on_key())
         form.addRow("Excel key column", self.key_combo)
         self.val_combo = fix_combo(QComboBox())
         self.val_combo.currentIndexChanged.connect(lambda _i: self._on_val())
@@ -103,7 +116,13 @@ class ExcelImportDialog(DraggableCard, QDialog):
 
         self.gridkey_combo = fix_combo(QComboBox())
         self.gridkey_combo.addItems(self._grid_columns)
+        self.gridkey_combo.activated.connect(self._on_grid_picked)
+        self.gridkey_combo.currentIndexChanged.connect(lambda _i: self._show_matches())
         form.addRow("Match on grid column", self.gridkey_combo)
+        # How many of the Excel keys the grid column holds (on this layer).
+        self.match_label = QLabel("")
+        self.match_label.setWordWrap(True)
+        form.addRow("", self.match_label)
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("new column name")
@@ -193,6 +212,59 @@ class ExcelImportDialog(DraggableCard, QDialog):
             self.key_combo.setCurrentIndex(0)
             self.val_combo.setCurrentIndex(1)
         self._on_val()
+        self._on_key()
+
+    # -- which grid column the keys are in ---------------------------------
+    def _on_grid_picked(self, _index: int) -> None:
+        self._grid_picked = True
+
+    def _on_key(self) -> None:
+        """Read the key column; count its keys in each grid column and, until
+        the user picks one, start on the column that holds the most."""
+        self._keys, self._matches = set(), {}
+        key_h = self.key_combo.currentText()
+        if self._match_count is not None and self._path and key_h:
+            try:
+                self._keys = read_keys(self._path, self._sheet(), key_h)
+            except Exception:  # noqa: BLE001 - the count is a help, not a must
+                self._keys = set()
+        if self._keys:
+            for col in self._grid_columns:
+                self._matches[col] = self._match_count(col, self._keys)
+            best = self._best()
+            if best and not self._grid_picked:
+                self.gridkey_combo.setCurrentText(best)
+        self._show_matches()
+
+    def _hits(self, col: str) -> int:
+        return self._matches.get(col, (0, 0.0))[0]
+
+    def _best(self) -> str | None:
+        """The grid column the keys cover best: the largest share of its rows,
+        then the most keys (None: no column holds any)."""
+        found = [c for c in self._grid_columns if self._hits(c)]
+        if not found:
+            return None
+        return max(found, key=lambda c: (self._matches[c][1], self._matches[c][0]))
+
+    def _show_matches(self) -> None:
+        col = self.gridkey_combo.currentText()
+        if not self._keys or col not in self._matches:
+            self.match_label.setText("")
+            return
+        n, total = self._hits(col), len(self._keys)
+        if n:
+            self.match_label.setStyleSheet("color: palette(mid);")
+            self.match_label.setText(
+                f"{n} of {total} keys are values of {col!r} on this layer.")
+            return
+        best = self._best()
+        hint = (f" {best!r} holds {self._hits(best)} of them."
+                if best else " No grid column holds them on this layer.")
+        self.match_label.setStyleSheet("color: #c0392b;")
+        self.match_label.setText(
+            f"None of the {total} keys is a value of {col!r} on this layer:"
+            f" the new column would be empty.{hint}")
 
     def _on_val(self) -> None:
         if not self._name_edited:  # mirror the value header until the user types
@@ -255,6 +327,15 @@ class ExcelImportDialog(DraggableCard, QDialog):
             return self._error(str(exc))
         if not mapping:
             return self._error("No usable key/value rows found in the sheet.")
+        if self._keys and grid_key in self._matches and not self._hits(grid_key):
+            best = self._best()
+            text = (f"None of the keys in {key_h!r} is a value of {grid_key!r} "
+                    "on this layer, so the new column would be empty here.")
+            if best:
+                text += f" {best!r} holds {self._hits(best)} of them."
+            if not ask(self, "No keys match", text,
+                       ok_text="Add anyway", cancel_text="Go back"):
+                return None
         self._result = (name, grid_key, mapping, dtype, n)
         self._source = {"sheet": self._sheet(), "key_column": key_h,
                         "value_column": val_h}
@@ -263,6 +344,25 @@ class ExcelImportDialog(DraggableCard, QDialog):
     def result_values(self):
         """(name, grid_key, mapping, dtype, n_rows) — valid after accept()."""
         return self._result
+
+
+def read_keys(path, sheet: str, key_h: str) -> set[str]:
+    """The key column's values, ``norm_key``-ed (empty cells left out)."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = wb[sheet].iter_rows(values_only=True)
+        header = next(rows, None) or ()
+        hdr = ["" if c is None else str(c).strip() for c in header]
+        if key_h not in hdr:
+            return set()
+        ki = hdr.index(key_h)
+        return {norm_key(row[ki]) for row in rows
+                if ki < len(row) and row[ki] is not None
+                and str(row[ki]).strip()}
+    finally:
+        wb.close()
 
 
 def parse_mapping(path, sheet: str, key_h: str, val_h: str):

@@ -387,15 +387,55 @@ def _apply_formula(out, d):
     return out
 
 
+# QuantAM's part names: the grid's part_id is "Part(12)" (or "Part(12)#2" for a
+# repeated name); the samples template writes the same part as "12" ("12#2").
+_PART_NAME = r"^Part\((\d+)\)"
+
+
 def norm_key(value) -> str:
     """Canonical string form for join-key matching.
 
     Strips surrounding whitespace and a trailing ``.0`` run so a key that reads
     as ``1``, ``1.0`` or ``"1"`` (Excel's loose typing vs an integer grid
-    column) all collapse to the same token. Applied identically to the stored
-    Excel keys and to the grid key column, so both sides stay in step.
+    column) all collapse to the same token, and unwraps QuantAM's part names,
+    so ``Part(12)`` (the grid's part_id) and ``12`` (the samples template's
+    part_id) are the same part. Applied identically to the stored Excel keys
+    and to the grid key column (``_apply_join``), so both sides stay in step.
     """
-    return re.sub(r"\.0+$", "", str(value).strip())
+    text = re.sub(r"\.0+$", "", str(value).strip())
+    return re.sub(_PART_NAME, r"\1", text)
+
+
+def norm_key_expr(column: str):
+    """``norm_key`` as a Polars expression over a grid column."""
+    import polars as pl
+
+    return (pl.col(column).cast(pl.Utf8).str.strip_chars()
+            .str.replace(r"\.0+$", "").str.replace(_PART_NAME, "${1}"))
+
+
+def key_matches(df, column: str, keys) -> tuple[int, float]:
+    """Joining ``keys`` (already ``norm_key``-ed) on ``column`` of ``df``: how
+    many of the keys are values of it, and the share of its rows (with a
+    value) that would get one. The share tells the column the keys belong to
+    from one that holds a few of them by chance (an X of 1.0 mm among part
+    numbers 1 to 20)."""
+    import polars as pl
+
+    if df is None or column not in df.columns or not keys:
+        return 0, 0.0
+    expr = norm_key_expr(column)
+    hit = expr.is_in(list(keys))
+    try:
+        row = df.select(
+            expr.filter(hit).n_unique().alias("keys"),
+            hit.sum().alias("rows"),
+            pl.col(column).is_not_null().sum().alias("filled"),
+        ).row(0)
+    except (pl.exceptions.PolarsError, TypeError, ValueError):
+        return 0, 0.0
+    keys_hit, rows, filled = (int(v or 0) for v in row)
+    return keys_hit, (rows / filled if filled else 0.0)
 
 
 def _apply_join(out, d):
@@ -415,15 +455,16 @@ def _apply_join(out, d):
     if not key or key not in out.columns or not mapping:
         return out
     dtype = pl.Float64 if d.get("dtype") == "f64" else pl.Utf8
+    # Stored keys again too: a column imported before the part-name rule was
+    # added keeps matching (and two spellings of one key can't double rows).
+    mapping = {norm_key(k): v for k, v in mapping.items()}
     kv = pl.DataFrame(
         {
             "__join_k": pl.Series(list(mapping.keys()), dtype=pl.Utf8),
             name: pl.Series(list(mapping.values()), dtype=dtype, strict=False),
         }
     )
-    lk = (
-        pl.col(key).cast(pl.Utf8).str.strip_chars().str.replace(r"\.0+$", "")
-    )
+    lk = norm_key_expr(key)
     out = out.with_columns(lk.alias("__join_lk"))
     out = out.join(kv, left_on="__join_lk", right_on="__join_k", how="left")
     return out.drop("__join_lk")

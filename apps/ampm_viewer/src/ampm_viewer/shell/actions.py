@@ -667,10 +667,15 @@ class Actions(QObject):
         err = self._c.add_join_derivation(name, key, mapping, dtype)
         if err:
             return Outcome(False, f"Add from Excel failed: {err}")
-        return Outcome(
-            True,
-            f"Added column '{name}' from Excel ({len(mapping)} keys on '{key}').",
-            f"Add column '{name}' from Excel")
+        text = f"Added column '{name}' from Excel ({len(mapping)} keys on '{key}')"
+        df = self._s.result.df if self._s.result is not None else None
+        if df is not None and name in df.columns:
+            filled = df.height - df[name].null_count()
+            text += f": {filled:,} of {df.height:,} rows on this layer have a value"
+            if not filled:
+                text += (f". None of the keys is a value of '{key}' here: undo, "
+                         "and match on the column that holds them (often part_id)")
+        return Outcome(True, text + ".", f"Add column '{name}' from Excel")
 
     def _do_cluster(self, name, position, eps_xy, eps_z, features, min_samples,
                     layers_per_chunk=None, overlap_layers=None,

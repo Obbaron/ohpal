@@ -54,6 +54,20 @@ build:
 installer: build
     uv --directory {{app_dir}} run --no-sync python installer/build_installer.py
 
+# release a version: checks, changelog, release notes, tests, commit, push, main, tag,
+# then follows GitHub's installer build and offers to publish (needs gh for that part)
+# usage:  just release 2.2.0            (add --dry-run to see the plan, --yes to not be asked)
+release version *flags:
+    uv run --no-sync python {{app_dir}}/release.py release {{version}} {{flags}}
+
+# only the release files: version, changelog section, docs/release-notes/v<version>.md
+release-prep version:
+    uv run --no-sync python {{app_dir}}/release.py prepare {{version}}
+
+# publish the draft GitHub release once its installers are attached (needs gh)
+release-publish version:
+    uv run --no-sync python {{app_dir}}/release.py publish {{version}}
+
 # clean then build
 rebuild: clean build
 

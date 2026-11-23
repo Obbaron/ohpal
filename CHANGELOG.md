@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`just release <version>`** (and `make release VERSION=...`): the whole release in one
+  command. It checks the repository, files the changelog's Unreleased entries under
+  the version, writes the release notes, sets the version, runs the tests, commits,
+  pushes, fast-forwards `main`, tags, then follows GitHub's installer build and offers
+  to publish the draft (with the GitHub CLI). `--dry-run` shows the plan.
+  `release-prep` and `release-publish` do the first and last parts alone. The
+  release workflow falls back to the changelog section when there are no release
+  notes.
+
+### Changed
+
+- **Add from Excel helps choose the column to match on.** It starts on the table
+  column that holds the sheet's keys, shows how many of them it holds on the layer
+  shown, warns in red when it holds none (naming the column that does), and asks
+  before adding a column that would be empty. The status bar then says how many
+  rows got a value. New GUI scenario `excel_import_keys` (38 in all).
+
+### Fixed
+
+- **Add from Excel on the samples template gave an empty column.** The template
+  writes a part as `12`, the table's `part_id` as `Part(12)`; they are now the same
+  key, so a density (or anything) filled in on the template imports on `part_id`.
+  Columns imported before keep working.
+
 ## [2.1.0] - 2026-11-23
 
 A better K-distance curve for choosing DBSCAN's radii, panning in 3D, a Close that

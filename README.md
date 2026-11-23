@@ -71,6 +71,9 @@ Run `just` to list available tasks:
 | `test-all` | `test`, then `test-app` |
 | `build` | compile the app from `apps/ampm_viewer/app.spec` (a folder: `AMPM Viewer.exe` + `_internal`) |
 | `installer` | `build`, then the installer: a setup .exe on Windows (Inno Setup 6.6+), a .dmg on macOS (see [apps/ampm_viewer](apps/ampm_viewer/README.md#building-the-app-and-its-installers)) |
+| `release 2.2.0` | the whole release: checks, changelog, release notes, tests, commit, push, `main`, tag; then follows GitHub's installer build and offers to publish (see [Releasing on GitHub](apps/ampm_viewer/README.md#releasing-on-github)) |
+| `release-prep 2.2.0` | only the release files: version, changelog section, release notes |
+| `release-publish 2.2.0` | publish the draft GitHub release (needs `gh`) |
 | `clean` | remove caches and build artifacts |
 | `rebuild` | clean, then build |
 
