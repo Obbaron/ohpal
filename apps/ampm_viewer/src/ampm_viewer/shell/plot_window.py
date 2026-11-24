@@ -72,12 +72,11 @@ class DetachedPlotWindow(QMainWindow):
         from .widgets import on_blank_click  # empty toolbar space deselects
         on_blank_click(self._toolbar, lambda: self._tab.select_element(None))
         self._toolbar.setMovable(False)
-        # In the window's body, not a toolbar area: its group names go under it.
         central = QWidget()
         body = QVBoxLayout(central)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self._toolbar.with_captions())
+        body.addWidget(self._toolbar)
         body.addWidget(split, 1)
         self.setCentralWidget(central)
         self._build_toolbar()

@@ -14,7 +14,7 @@ actions/toggles/presets live on the toolbar; sliders live in the dock.
 
 It is the main place to work, so it is roomy: bigger icons than menus have,
 in groups, each group named under its buttons (``Ribbon``, ``_group``), as in
-Office's ribbon. A button's full name, and its keyboard shortcut if it has one
+Office's ribbon: a group is one widget, buttons over name. A button's full name, and its keyboard shortcut if it has one
 (``shortcuts``), is its tooltip.
 """
 
@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import bisect
 
-from PyQt6.QtCore import QRect, QSize, Qt
-from PyQt6.QtGui import QAction, QActionGroup, QPainter, QPalette
+from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
+from PyQt6.QtGui import QAction, QActionGroup, QPalette
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QMenu,
     QSizePolicy,
@@ -40,134 +41,193 @@ from . import icons, shortcuts
 ICON_PX = 24  # toolbar icons; menus and the title row keep 18
 
 
+class _Group(QWidget):
+    """One named group of a ``Ribbon``: its buttons in a row, its name
+    centred underneath. Clicks on its bare background pass up to the toolbar
+    (a plain widget doesn't take them), so they still deselect."""
+
+    def __init__(self, name: str, font) -> None:
+        super().__init__()
+        self.name = name
+        self.setObjectName("RibbonGroup")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 0, 4, 0)
+        lay.setSpacing(1)
+        self.row = QWidget()
+        self.row_lay = QHBoxLayout(self.row)
+        self.row_lay.setContentsMargins(0, 0, 0, 0)
+        self.row_lay.setSpacing(3)
+        lay.addWidget(self.row, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.caption = QLabel(name)
+        self.caption.setObjectName("RibbonCaption")
+        self.caption.setFont(font)
+        self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.caption)
+
+
 class Ribbon(QToolBar):
-    """A toolbar whose buttons come in named groups (``_group``): separators
-    fall between groups, and each group's name is written under it, on a
-    strip of its own (a toolbar lays its buttons out over its whole height).
-    Put ``with_captions()`` in the layout, not the toolbar itself."""
+    """A toolbar whose buttons come in named groups (``_group``), as in
+    Office's ribbon: each group is one widget, its buttons over its name, so
+    the names line up with their buttons by construction, and the separators
+    between groups run the toolbar's full height.
+
+    Callers keep the QToolBar way of adding things: ``addAction`` /
+    ``addWidget`` put a button or widget in the current group, and
+    ``actions()`` / ``widgetForAction()`` answer as for a plain toolbar (the
+    buttons' actions in order; a widget is stood for by an action of its own).
+    The toolbar's own items are the groups (and a stretch), so a narrow window
+    moves whole groups into the » menu."""
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
         self.setObjectName("Ribbon")
         self.setIconSize(QSize(ICON_PX, ICON_PX))
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self._groups: list[tuple[str, int]] = []  # (name, first action's index)
-        self._captions = _Captions(self)
+        self._groups: list[_Group] = []
+        self._acts: list[QAction] = []
+        self._widget_of: dict = {}
+        self._row_h = 0  # every group's button row: the tallest item's height
+        self._caption_font = self.font()
+        self._caption_font.setPointSizeF(max(7.0, self.font().pointSizeF() - 1))
+        self._style_overflow()
 
-    def with_captions(self) -> QWidget:
-        """The toolbar with its group names under it, for a layout."""
-        box = QWidget()
-        lay = QVBoxLayout(box)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self)
-        lay.addWidget(self._captions)
-        return box
+    def _style_overflow(self) -> None:
+        """The » button (groups that don't fit): our chevron, in the theme's
+        icon colour (the style's own is lost to the toolbar's button
+        padding)."""
+        btn = self.findChild(QToolButton, "qt_toolbar_ext_button")
+        if btn is None:
+            return
+        color = self.palette().color(QPalette.ColorRole.WindowText).name()
+        btn.setIcon(icons.icon("chevron--right", color, 14))
+        btn.setIconSize(QSize(12, 12))
+        btn.setToolTip("More")
+        if not getattr(self, "_overflow_hooked", False):
+            # Qt expands an overflowing toolbar only in a QMainWindow's toolbar
+            # area; ours sit in layouts. So the button drops a menu instead:
+            # its clicks are taken before Qt's own handler sees them.
+            self._overflow_hooked = True
+            btn.installEventFilter(self)
 
-    def setVisible(self, visible: bool) -> None:
-        super().setVisible(visible)
-        self._captions.setVisible(visible)
+    def eventFilter(self, obj, event) -> bool:
+        if obj.objectName() == "qt_toolbar_ext_button":
+            kind = event.type()
+            if kind == QEvent.Type.MouseButtonPress:
+                QTimer.singleShot(0, lambda b=obj: self._show_overflow(b))
+                return True
+            if kind in (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick):
+                return True
+            if kind == QEvent.Type.KeyPress and event.key() in (
+                    Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                QTimer.singleShot(0, lambda b=obj: self._show_overflow(b))
+                return True
+        return super().eventFilter(obj, event)
 
+    def overflow_menu(self) -> QMenu:
+        """The groups that don't fit, as a menu: each group's name, then its
+        buttons (a drop-down button as a submenu)."""
+        menu = QMenu(self)
+        for g in self._groups:
+            if g.isVisible():
+                continue
+            menu.addSection(g.name)
+            for act in self._acts:
+                widget = self._widget_of.get(act)
+                if widget is None or widget.parent() is not g.row:
+                    continue
+                if isinstance(widget, QToolButton) and widget.defaultAction() is act:
+                    if act.isVisible():
+                        menu.addAction(act)
+                elif isinstance(widget, QToolButton) and widget.menu() is not None:
+                    sub = widget.menu()
+                    sub.setTitle(widget.accessibleName() or widget.text())
+                    sub.setIcon(widget.icon())
+                    sub.setEnabled(widget.isEnabled())
+                    menu.addMenu(sub)
+        return menu
+
+    def _show_overflow(self, btn) -> None:
+        menu = self.overflow_menu()
+        if not menu.isEmpty():
+            menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+        menu.deleteLater()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            QTimer.singleShot(0, self._style_overflow)  # after the button's own
+    # -- building ----------------------------------------------------------
     def begin_group(self, name: str) -> None:
         """The buttons added from here on are the group ``name``."""
-        if self.actions():
-            self.addSeparator()
-        self._groups.append((name, len(self.actions())))
-        self._captions.update()
+        if super().actions():
+            super().addSeparator()
+        group = _Group(name, self._caption_font)
+        super().addWidget(group)
+        self._groups.append(group)
+
+    def _current(self) -> _Group:
+        if not self._groups:
+            self.begin_group("")
+        return self._groups[-1]
+
+    def addAction(self, act, *args):
+        """A button for ``act`` in the current group (``act`` is a QAction;
+        anything else goes to QToolBar as usual)."""
+        if args or not isinstance(act, QAction):
+            return super().addAction(act, *args)
+        btn = QToolButton()
+        btn.setDefaultAction(act)
+        btn.setAutoRaise(True)
+        btn.setIconSize(self.iconSize())
+        btn.setToolButtonStyle(self.toolButtonStyle())
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Into its group first: shown before it has a parent, a button would
+        # be a window of its own for a moment (and take the focus).
+        self._place(act, btn)
+        btn.setHidden(not act.isVisible())
+        act.changed.connect(lambda b=btn, a=act: b.setHidden(not a.isVisible()))
+        return act
+
+    def addWidget(self, widget):
+        """``widget`` in the current group; an expanding spacer
+        (``RibbonSpacer``) goes between groups."""
+        if widget.objectName() == "RibbonSpacer":
+            return super().addWidget(widget)
+        group = self._current()
+        act = QAction(group)  # stands for the widget, as QToolBar's would
+        self._place(act, widget)
+        return act
+
+    def _place(self, act: QAction, widget) -> None:
+        group = self._current()
+        group.row_lay.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._acts.append(act)
+        self._widget_of[act] = widget
+        widget.ensurePolished()
+        height = widget.sizeHint().height()
+        if height > self._row_h:  # one row height for all, so names line up
+            self._row_h = height
+            for g in self._groups:
+                g.row.setFixedHeight(height)
+        else:
+            group.row.setFixedHeight(self._row_h)
 
     def clear(self) -> None:
-        self._groups = []
+        self._groups, self._acts, self._widget_of = [], [], {}
+        self._row_h = 0
         super().clear()
-        self._captions.update()
 
-    def fit_captions(self) -> None:
-        """Widen a group whose buttons are narrower than its name (a group of
-        one, say), so the names never run into each other."""
-        acts = self.actions()
-        metrics = self._captions.fontMetrics()
-        gap = self.layout().spacing() if self.layout() is not None else 0
-        for i, (name, start) in enumerate(self._groups):
-            end = (self._groups[i + 1][1] if i + 1 < len(self._groups)
-                   else len(acts))
-            widgets = [w for a in acts[start:end] if not a.isSeparator()
-                       and (w := self.widgetForAction(a)) is not None
-                       and w.objectName() != "RibbonSpacer"]
-            if not widgets:
-                continue
-            have = sum(w.sizeHint().width() for w in widgets) + gap * (len(widgets) - 1)
-            short = metrics.horizontalAdvance(name) + 14 - have
-            if short > 0:
-                each = -(-short // len(widgets))
-                for w in widgets:
-                    w.setMinimumWidth(w.sizeHint().width() + each)
+    # -- as a plain toolbar answers ------------------------------------------
+    def actions(self) -> list:
+        """The buttons' and widgets' actions, in order (not the groups)."""
+        return list(self._acts)
 
-    def separator_xs(self) -> list[int]:
-        """Where the separators between groups are (their centres)."""
-        out = []
-        for act in self.actions():
-            w = self.widgetForAction(act) if act.isSeparator() else None
-            if w is not None and w.isVisible():
-                out.append(w.geometry().center().x())
-        return out
+    def widgetForAction(self, action):
+        return self._widget_of.get(action) or super().widgetForAction(action)
 
     def group_rects(self) -> list[tuple[str, QRect]]:
-        """Each group's name and the area its shown buttons cover."""
-        acts = self.actions()
-        out = []
-        for i, (name, start) in enumerate(self._groups):
-            end = (self._groups[i + 1][1] if i + 1 < len(self._groups)
-                   else len(acts))
-            rect = QRect()
-            for act in acts[start:end]:
-                w = self.widgetForAction(act)
-                if (act.isSeparator() or w is None or not w.isVisible()
-                        or w.objectName() == "RibbonSpacer"):
-                    continue
-                rect = rect.united(w.geometry())
-            if not rect.isNull():
-                out.append((name, rect))
-        return out
-
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        self._captions.update()  # the buttons may have moved
-
-
-class _Captions(QWidget):
-    """The strip under a ``Ribbon``: each group's name, centred under it."""
-
-    def __init__(self, ribbon: Ribbon) -> None:
-        super().__init__()
-        self._ribbon = ribbon
-        self.setObjectName("RibbonCaptions")
-        font = self.font()
-        font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
-        self.setFont(font)
-        self.setFixedHeight(self.fontMetrics().height() + 6)
-
-    def paintEvent(self, _event) -> None:
-        painter = QPainter(self)
-        pal = self.palette()
-        ribbon = self._ribbon
-        painter.fillRect(self.rect(), ribbon.palette().color(ribbon.backgroundRole()))
-        painter.setPen(pal.color(QPalette.ColorRole.Mid))
-        painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
-        dx = ribbon.x() - self.x()
-        for x in ribbon.separator_xs():  # the separators carry on down
-            painter.drawLine(x + dx, 0, x + dx, self.height() - 5)
-        painter.setPen(pal.color(QPalette.ColorRole.PlaceholderText))
-        metrics = self.fontMetrics()
-        for name, rect in self._ribbon.group_rects():
-            width = max(rect.width(), metrics.horizontalAdvance(name) + 4)
-            area = QRect(rect.center().x() + dx - width // 2, 0, width,
-                         self.height() - 3)
-            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, name)
-        painter.end()
-
-
-def _fit(toolbar: QToolBar) -> None:
-    if isinstance(toolbar, Ribbon):
-        toolbar.fit_captions()
+        """Each shown group's name and its area on the toolbar."""
+        return [(g.name, g.geometry()) for g in self._groups if g.isVisible()]
 
 
 def _group(toolbar: QToolBar, name: str) -> None:
@@ -525,7 +585,6 @@ def populate_data(
             run.triggered.connect(lambda: on_macro_run())
         else:
             run.setEnabled(False)
-    _fit(toolbar)
 
 
 # -- Plot toolset ------------------------------------------------------
@@ -599,4 +658,3 @@ def populate_plot(
     if on_dock is not None:
         dock = _action(toolbar, "Dock in", "dockin", color)
         dock.triggered.connect(lambda: on_dock())
-    _fit(toolbar)

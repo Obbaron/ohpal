@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-24
+
+A Mean ± SD plot for measurements such as Archimedes density, axis ranges and
+log scales, and toolbar group names that line up with their buttons.
+
 ### Added
 
 - **Mean ± SD plot** (New plot ▸ Mean ± SD), for measurements made on the parts,
@@ -27,8 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (never in Set as default). New unit tests `test_meansd.py` and GUI scenario
   `mean_sd_plot` (41 in all).
 
+### Changed
+
+- **Toolbar groups are single blocks**, each group's name centred under its
+  buttons, with full-height separators between groups. Before, the names were
+  drawn on a strip below the toolbar and sat a few pixels off its separators on
+  Windows. The pop-out plot window has the same toolbar.
+
 ### Fixed
 
+- **The » button** (toolbar groups that don't fit a narrow window) now opens a
+  menu of the hidden groups, each under its name, with drop-down buttons as
+  submenus. Before, its arrow didn't show and clicking it did nothing.
 - Renaming a column now also renames it in a plot's **group by** (KDE, CoV
   summary), which kept the old name.
 - The `crash_handler` GUI scenario no longer expects version 2.1.0 (it failed
@@ -780,7 +795,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Obbaron/ohpal/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/Obbaron/ohpal/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/Obbaron/ohpal/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/Obbaron/ohpal/compare/v2.0.0...v2.0.1

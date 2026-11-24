@@ -120,8 +120,10 @@ QToolButton { padding: 4px 8px; border-radius: 4px; color: palette(button-text);
 QToolButton:hover { background: palette(window); }
 QToolButton:checked { background: palette(alternate-base); }
 QToolBar QLabel { color: palette(placeholder-text); padding: 0 2px 0 6px; }
-/* A ribbon's bottom edge is its caption strip's (toolbars.Ribbon). */
-QToolBar#Ribbon { border-bottom: none; }
+/* A ribbon group's name, under its buttons (toolbars.Ribbon). */
+QToolBar QLabel#RibbonCaption { padding: 0 2px; }
+/* The » button: no padding, or its 12 px leave no room for the arrow. */
+QToolBar QToolButton#qt_toolbar_ext_button { padding: 0; margin: 0; }
 .ToolbarGlyph { font-size: 15px; padding: 4px 8px; }
 
 /* --- Backstage --- */

@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
         # plot space).
         from .widgets import on_blank_click
         on_blank_click(self.toolbar, self._deselect)
-        root.addWidget(self.toolbar.with_captions())
+        root.addWidget(self.toolbar)
 
         # Content row: the tab pages, with the side panel beside them (so the
         # panel sits under the tabs/toolbar, not up at the title bar). A
