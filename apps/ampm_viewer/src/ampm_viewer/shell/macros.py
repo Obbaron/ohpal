@@ -73,7 +73,7 @@ _SCHEMA: dict[str, dict] = {
     "filter_remove_last": {},
     "filter_reset": {},
     # outputs (not undoable)
-    "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by")}},
+    "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by", "more_y")}},
     "export_excel": {"names": ("key",), "lists": ("columns",),
                      "pairs": ("values",), "drop": ("path",)},
 }
@@ -183,6 +183,15 @@ def _map_refs(text, mapping: dict) -> str:
     return _BRACKET.sub(sub, text)
 
 
+def _map_field(v, mapping: dict):
+    """A column name, or a list of them (a spec's ``more_y``), mapped."""
+    if isinstance(v, str):
+        return mapping.get(v, v)
+    if isinstance(v, (list, tuple)):
+        return [mapping.get(n, n) if isinstance(n, str) else n for n in v]
+    return v
+
+
 def _translate(op: str, params: dict, mapping: dict) -> dict:
     spec = _SCHEMA[op]
     out = dict(params)
@@ -203,10 +212,8 @@ def _translate(op: str, params: dict, mapping: dict) -> dict:
             ]
     for key, fields in spec.get("nested", {}).items():
         if isinstance(out.get(key), dict):
-            out[key] = {
-                k: (mapping.get(v, v) if k in fields and isinstance(v, str) else v)
-                for k, v in out[key].items()
-            }
+            out[key] = {k: _map_field(v, mapping) if k in fields else v
+                        for k, v in out[key].items()}
     for key in spec.get("pairs", ()):
         if out.get(key):
             out[key] = [[mapping.get(a, a), b] for a, b in out[key]]
@@ -295,6 +302,10 @@ def describe(op: str, p: dict) -> str:
             what = f"(k = {s.get('k', 10)}) over '{dims}'"
         elif kind == "Contour":
             what = f"of '{s.get('z')}' over '{s.get('x')}' × '{s.get('y')}'"
+        elif kind == "Mean ± SD":
+            vals = "', '".join(c for c in (s.get("y"), *(s.get("more_y") or ())) if c)
+            what = (f"of '{vals}' against '{s.get('x')}', one point per "
+                    f"'{s.get('group_by')}'")
         elif s.get("z"):
             what = f"of '{s.get('x')}' × '{s.get('y')}' × '{s.get('z')}'"
         else:
@@ -362,7 +373,9 @@ def references(op: str, params: dict) -> list[str]:
     for key, fields in spec.get("nested", {}).items():
         nested = params.get(key) or {}
         for f in fields:
-            add(nested.get(f))
+            v = nested.get(f)
+            for name in (v if isinstance(v, (list, tuple)) else [v]):
+                add(name)
     for key in spec.get("pairs", ()):
         for pair in params.get(key) or []:
             add(pair[0] if pair else None)

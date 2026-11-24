@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mean ± SD plot** (New plot ▸ Mean ± SD), for measurements made on the parts,
+  such as an Archimedes density against energy density: one point per part (or
+  per group) at the mean of its measurement and its repeats (Density (1), (2),
+  (3)), with error bars: sample SD (n - 1, as Excel's STDEV.S), standard error,
+  95% confidence interval or none, switched from the toolbar. Each part counts
+  once however many rows it has; grouping by another column pools the parts that
+  share it. The dialog starts on a column named like energy density, a numbered
+  set of repeats (ticking one ticks the set) and `part_id`. The hover shows the
+  group, mean ± error, SD and n; the Points editor sizes and shapes the markers.
+  Help article "Mean ± SD plots".
+- **Axis range and log scale.** An axis's editor has **Minimum** and **Maximum**
+  (empty: automatic) on every 2D plot's numeric axes, and **Log scale** on 2D
+  Scatter and Mean ± SD, with ticks at 1, 2, 5 x 10^k and gridlines that follow
+  them. Reset view comes back to the range set. The range stays with the plot
+  (never in Set as default). New unit tests `test_meansd.py` and GUI scenario
+  `mean_sd_plot` (41 in all).
+
+### Fixed
+
+- Renaming a column now also renames it in a plot's **group by** (KDE, CoV
+  summary), which kept the old name.
+- The `crash_handler` GUI scenario no longer expects version 2.1.0 (it failed
+  from 2.1.1 on): it checks the version's form and uses the app's own.
+
 ## [2.1.1] - 2026-11-23
 
 A roomier toolbar with keyboard shortcuts, and Add from Excel that works on the

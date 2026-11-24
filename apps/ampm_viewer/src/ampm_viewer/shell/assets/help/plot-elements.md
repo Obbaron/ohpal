@@ -2,7 +2,7 @@
 title: Editing plot elements
 section: Plots
 order: 80
-keywords: font, text, title, axis, label, tick, ticks, number format, decimals, scientific, gridlines, axis line, size, bold, italic, colour, element, edit, select, default, reset, style, rename plot, colour bar, position, below, thickness, gap, legend, frame, corner, category, data, points, markers, bars, bar width, outline, curves, line width, violins, contour, alignment
+keywords: font, text, title, axis, label, tick, ticks, minimum, maximum, range, limits, log, log scale, logarithmic, number format, decimals, scientific, gridlines, axis line, size, bold, italic, colour, element, edit, select, default, reset, style, rename plot, colour bar, position, below, thickness, gap, legend, frame, corner, category, data, points, markers, bars, bar width, outline, curves, line width, violins, contour, alignment
 context: plot.elements
 ---
 # Editing plot elements
@@ -28,7 +28,7 @@ anywhere on a filled contour).
 | Element | Properties |
 | --- | --- |
 | **Title** | Text, font, size, bold / italic, colour, and alignment (left, centre or right). The title's text is the plot's name, so it also renames the tab. |
-| **X axis, Y axis** | The axis title (text, font, size, style, colour); the tick labels (font, size, colour); the number of ticks and their format; the axis line; the gridlines. |
+| **X axis, Y axis** | The axis title (text, font, size, style, colour); the tick labels (font, size, colour); the minimum, maximum and log scale; the number of ticks and their format; the axis line; the gridlines. |
 | **3D axis labels** | Text, font, size, style, colour for each of X, Y and Z. |
 | **Category labels** | Font, size, style, colour and angle of the names under a bar, CoV or violin chart. |
 | **Colour bar** | The label; the numbers (font, size, colour, how many, format); where it sits (right of the plot or below it), its gap to the plot and its thickness. |
@@ -37,6 +37,19 @@ anywhere on a filled contour).
 
 Leave an axis, colour-bar or legend **Text** empty to use the column's name;
 it then follows the column if you rename it.
+
+## Axis range and log scale
+
+- **Minimum** and **Maximum** fix where an axis starts and ends: type a
+  number and press Enter. Leave one empty for automatic (the data's extent,
+  with a margin). You can still pan and zoom; **Reset view** comes back to
+  the range you set. On a 2D scatter with **Equal axes** on, keeping one X
+  unit equal to one Y unit can widen the other axis.
+- **Log scale** (2D Scatter and Mean ± SD) puts the axis on powers of ten,
+  labelled 1, 2, 5, 10, 20... Points at zero or below can't be shown on it
+  and are left out; a Minimum of zero or below is ignored.
+- A category axis (bar, CoV and violin charts) has no range. The range is
+  kept with the plot, not in **Set as default**.
 
 ## Ticks and numbers
 

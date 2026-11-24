@@ -18,8 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .plotspec import (
-    BAR, CONTOUR, COV_SUMMARY, HISTOGRAM, KDE, KDIST, LAYER_VIEWER,
-    SCATTER_2D, SCATTER_3D, SINGLE_LAYER, VIOLIN,
+    BAR, CONTOUR, COV_SUMMARY, ERROR_NAMES, ERRORS, HISTOGRAM, KDE, KDIST,
+    LAYER_VIEWER, MEAN_SD, SCATTER_2D, SCATTER_3D, SINGLE_LAYER, VIOLIN,
 )
 
 # Toolbar groups, left to right; a separator falls between non-empty groups.
@@ -81,6 +81,8 @@ CONTOUR_POINTS = Control("show_points", "Measured points", "contour_points",
 CONTOUR_LINES = Control("show_lines", "Level lines", "contour_lines",
                         "toggle", "options")
 KNEE_LINE = Control("show_ref", "Knee line", "knee_line", "toggle", "options")
+ERROR_BARS = Control("error", "Error bars", "error_bars", "choice", "options",
+                     tuple((k, ERROR_NAMES[k]) for k in ERRORS))
 
 VIEW_OPTIONS: dict[str, tuple] = {
     SCATTER_2D: (EQUAL_AXES,),
@@ -94,6 +96,7 @@ VIEW_OPTIONS: dict[str, tuple] = {
     KDE: (KDE_FILL, BANDWIDTH),
     CONTOUR: (CONTOUR_POINTS, CONTOUR_LINES),
     KDIST: (KNEE_LINE,),
+    MEAN_SD: (ERROR_BARS,),
 }
 
 

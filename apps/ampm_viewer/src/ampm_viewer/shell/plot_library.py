@@ -196,7 +196,7 @@ def plot_columns(spec, columns, renames: dict | None = None) -> list[str]:
     """The columns a plot of ``spec`` reads, of ``columns`` (its axes,
     colour, grouping, and the part / layer shown on hover)."""
     renames = renames or {}
-    wanted = [spec.x, spec.y, spec.z, spec.color, spec.group_by,
+    wanted = [*spec.columns,
               renames.get("part_id", "part_id"), renames.get("layer", "layer")]
     have = set(columns)
     return list(dict.fromkeys(c for c in wanted if c and c in have))

@@ -71,7 +71,7 @@ _GROUP_STEMS = {
     "Violins": "chart--violin-plot", "Level lines": "contour--draw",
     "Measured points": "dot-mark", "Ticks": "x-axis", "Axis line": "x-axis",
     "Gridlines (both axes)": "grid", "Layout": "fit-to-screen", "Box": "legend",
-    "Names": "legend", "Numbers": "hashtag",
+    "Names": "legend", "Numbers": "hashtag", "Scale": "fit-to-screen",
 }
 # The short type tag beside a column's name.
 _KIND_TAGS = {"float": "1.2", "int": "123", "text": "Aa", "bool": "T/F",
@@ -412,6 +412,9 @@ class SidePanel(QWidget):
         element = pe.ELEMENTS.get(key)
         if element is None:
             return
+        schema = getattr(tab, "element_schema", None)
+        if schema is not None:  # only the fields that apply to this plot
+            element = schema(key)
         self.show_element(element, tab.element_values(key),
                           tab.element_auto_text(key))
 
@@ -522,7 +525,7 @@ class SidePanel(QWidget):
                 card.body.addWidget(control)
             elif f.kind == "check":
                 card.body.addWidget(control)
-            elif f.kind in ("int", "size", "color"):
+            elif f.kind in ("int", "size", "color", "number"):
                 card.body.addWidget(inline_row(f.label, control))
             else:
                 card.body.addWidget(stacked_row(f.label, control))
@@ -599,6 +602,26 @@ class SidePanel(QWidget):
             spin.valueChanged.connect(emit(f.name))
             self._el_controls[f.name] = ("int", spin)
             return spin
+        if f.kind == "number":
+            edit = QLineEdit()
+            edit.setPlaceholderText(f.special or "")
+            edit.setToolTip("A number; leave empty for automatic")
+            edit.setMinimumWidth(96)
+            edit.setMaximumWidth(140)
+
+            def commit(e=edit, n=f.name):
+                text = e.text().strip()
+                try:
+                    value = float(text) if text else None
+                except ValueError:  # not a number: back to what it was
+                    e.setText(e.property("shown") or "")
+                    return
+                if (e.property("shown") or "") != text:
+                    e.setProperty("shown", text)
+                    self.elementEdited.emit(key, n, value)
+            edit.editingFinished.connect(commit)
+            self._el_controls[f.name] = ("number", edit)
+            return edit
         if f.kind == "check":
             box = QCheckBox(f.label)
             box.toggled.connect(emit(f.name))
@@ -643,6 +666,10 @@ class SidePanel(QWidget):
                 widget.setCurrentIndex(i if i >= 0 else 0)
             elif kind in ("size", "int"):
                 widget.setValue(int(round(float(value))))
+            elif kind == "number":
+                shown = "" if value is None else f"{float(value):g}"
+                widget.setText(shown)
+                widget.setProperty("shown", shown)
             elif kind == "choice":
                 i = widget.findData(value)
                 if i >= 0:

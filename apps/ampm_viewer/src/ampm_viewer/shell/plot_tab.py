@@ -21,6 +21,7 @@ shows a labelled placeholder. Render arrays are released on close.
 from __future__ import annotations
 
 import functools
+from dataclasses import replace
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
@@ -48,7 +49,7 @@ from . import plot_elements as pe
 from . import plotcontrols
 from . import plotdata
 from .plotdata import DEFAULT_COLORMAP, colormap_stops
-from .plotspec import PlotSpec
+from .plotspec import SCATTER_2D, PlotSpec
 
 _BG = "#e5ecf6"  # soft blue-grey (Plotly-style) so sparse points still read
 # Axis label colours (x, y, z) for the 3D decorations.
@@ -85,7 +86,9 @@ _CAMERA_PRESETS = {"top": (90.0, 0.0), "front": (0.0, 0.0),
 # Toolbar options that live on the spec (they change what is drawn, so a
 # change re-renders); the rest are view state on the tab.
 _SPEC_OPTIONS = ("show_box", "fill", "bandwidth", "bins", "sort",
-                 "show_points", "show_lines", "show_ref")
+                 "show_points", "show_lines", "show_ref", "error")
+_ERRBAR_RGBA = (0.23, 0.25, 0.29, 0.9)  # Mean ± SD error bars
+_ERRBAR_CAP_PX = 9                     # their caps' width
 
 # Editable elements. Chrome sizes below are the built-in look's; a bigger font
 # grows its strip by the difference so text is never clipped.
@@ -385,7 +388,8 @@ class PlotTab(QWidget):
         self._show_legend = True
         self._show_title = True
         # Spatial 2D plots keep one X unit == one Y unit unless unlocked.
-        self._equal_axes = True
+        self._equal_axes = not spec.is_meansd
+        self._err_line = self._err_caps = None  # Mean ± SD error bars
         self._has_legend = False     # a colour bar / legend is on the plot
         self._legend_cmap = False    # categorical colours from the colormap
         self._contour_lines_ok = False  # the field allows level lines
@@ -402,6 +406,11 @@ class PlotTab(QWidget):
         self._cbar_orient = None     # "right" / "bottom": where the bar sits
         self._xaxis = self._yaxis = None
         self._gridlines = None  # 2D screen-aligned gridlines
+        # With a log axis, gridlines drawn at the ticks instead (VisPy's are
+        # evenly spaced): the ticks' positions per axis, and the lines.
+        self._tick_at: dict = {}
+        self._log_grid = None
+        self._log_grid_due = False
         self._floor = None      # 3D grid on the X-Y plane
         self._cbar = None
         self._cbar_label = None  # the signal name, left of the bar (no overlap)
@@ -704,8 +713,15 @@ class PlotTab(QWidget):
             self._render_violins()
             return
         try:
-            data = plotdata.build(self._df, self.spec, cmap=self.cmap,
-                                  scale=self.scale, crange=self.crange)
+            if self.spec.is_meansd:
+                data = plotdata.build_meansd(
+                    self._df, self.spec, sample=self._renames.get("part_id", "part_id"),
+                    cmap=self.cmap, scale=self.scale, crange=self.crange)
+            else:
+                data = plotdata.build(self._df, self.spec, cmap=self.cmap,
+                                      scale=self.scale, crange=self.crange)
+            linear = data
+            data, keep = self._log_scaled(data)
         except KeyError as exc:  # a spec column isn't in the data any more
             self._show_overlay(str(exc))
             return
@@ -724,6 +740,8 @@ class PlotTab(QWidget):
         self._last_pos, self._last_colors = data.pos, data.colors
         self._full_range = data.full_range
         self._set_scatter(self._effective_size())
+        if self.spec.is_meansd:
+            self._set_errorbars(linear.pos[keep], linear.err[keep])
         self._build_hover_index(data)
         self._update_decor(data)
         self._apply_elements()
@@ -1968,7 +1986,9 @@ class PlotTab(QWidget):
             # (A category axis is the x axis too, labelled with the names.)
             self._xaxis.visible = self._show_axes
         if self._gridlines is not None:
-            self._gridlines.visible = self._show_grid
+            self._gridlines.visible = self._show_grid and not any(self._logs())
+        if self._log_grid is not None:
+            self._log_grid.visible = self._show_grid
         if self._floor is not None:
             self._floor.visible = self._show_grid
         if self._bbox is not None:
@@ -2026,11 +2046,12 @@ class PlotTab(QWidget):
         """A 2D plot of positions (scatter, layer views): equal axes apply."""
         s = self.spec
         return not (s.is_3d or s.is_bar or s.is_hist or s.is_cov
-                    or s.is_contour or s.is_curve or s.is_violin)
+                    or s.is_contour or s.is_curve or s.is_violin
+                    or s.is_meansd)
 
     def _has_points(self) -> bool:
         """Drawn as markers whose size, symbol and opacity can be set."""
-        return self.spec.is_3d or self._is_spatial()
+        return self.spec.is_3d or self._is_spatial() or self.spec.is_meansd
 
     def controls(self) -> list:
         """The toolbar controls that apply to this plot right now: its view's
@@ -2145,7 +2166,7 @@ class PlotTab(QWidget):
             self.crange = None  # new bins, new counts: re-detect the colours
         self._render()
         self.specChanged.emit()
-        if key in ("bins", "bandwidth", "show_ref", "show_points"):
+        if key in ("bins", "bandwidth", "show_ref", "show_points", "error"):
             QTimer.singleShot(0, self.reset_view)  # the extent moved
 
     def _set_title(self, name: str) -> None:
@@ -2196,6 +2217,8 @@ class PlotTab(QWidget):
                 return str(self._bar_data.value_name)
             if self._curve_data is not None:  # density / k-distance
                 return str(self._curve_data.y_name)
+            if self.spec.is_meansd:  # Density (1), (2), (3) -> Density
+                return plotdata.value_label(self.spec.values)
             return str(self.spec.y or "")
         if key == "yaxis3d":
             return str(self.spec.y or "")
@@ -2309,7 +2332,30 @@ class PlotTab(QWidget):
             self._apply_data({name: value})
         else:
             self._apply_element(key)
+        if key in ("xaxis", "yaxis") and name == "log":
+            self._render()  # the points move to (or from) log10
+            QTimer.singleShot(0, self.reset_view)
+            QTimer.singleShot(0, self._draw_log_grid)
+        elif key in ("xaxis", "yaxis") and name in ("min", "max"):
+            self.reset_view()
         self._elements_changed()
+
+    def element_schema(self, key: str):
+        """The element's editor fields for this plot: an axis offers Log scale
+        only where the plot can draw one (2D Scatter, Mean ± SD), and a
+        category axis no Minimum / Maximum."""
+        from dataclasses import replace as _replace
+
+        el = pe.ELEMENTS[key]
+        if key not in ("xaxis", "yaxis"):
+            return el
+        drop = set()
+        if not self._log_ok(key):
+            drop.add("log")
+        if key == "xaxis" and (self.spec.is_bar or self.spec.is_cov
+                               or self.spec.is_violin):
+            drop |= {"min", "max", "log"}
+        return _replace(el, fields=tuple(f for f in el.fields if f.name not in drop))
 
     def reset_element(self, key: str, builtin: bool = False) -> None:
         """Back to the default for new plots (or the built-in look). The text
@@ -2480,7 +2526,9 @@ class PlotTab(QWidget):
                 self._grid_rgba = want
                 self._gridlines._grid_color_fn["color"] = want
                 self._gridlines.update()
-        sig = (st.get("ticks"), st.get("format"), st.get("decimals"),
+                if self._log_grid is not None:
+                    QTimer.singleShot(0, self._draw_log_grid)
+        sig = (st.get("ticks"), st.get("format"), st.get("decimals"), st.get("log"),
                tuple(sorted(self._el_style.get("categories", {}).items()))
                if category else None)
         if self._tick_sig.get(key) != sig:  # new ticks: lay out again
@@ -2516,12 +2564,56 @@ class PlotTab(QWidget):
         if key == "xaxis" and self._categories is not None:
             return self._category_fracs(axis)
         major, minor, labels = self._tick_values(key, own, axis)
+        lo, hi = (float(v) for v in axis.domain)
+        at = lo + np.asarray(major, "float64") * (hi - lo)
+        if not np.array_equal(at, self._tick_at.get(key, ())):
+            self._tick_at[key] = at
+            if any(self._logs()) and not self._log_grid_due:
+                self._log_grid_due = True
+                QTimer.singleShot(0, self._draw_log_grid)
         return major, minor, self._thin_labels(key, axis, major, labels)
+
+    def _draw_log_grid(self) -> None:
+        """With a log axis: gridlines at both axes' ticks (VisPy's own grid
+        is evenly spaced, so it would miss a log axis's ticks)."""
+        from vispy import scene
+
+        self._log_grid_due = False
+        if self._log_grid is not None:
+            self._log_grid.parent = None
+            self._log_grid = None
+        if self._view is None or self._gridlines is None:
+            return
+        on = any(self._logs())
+        self._gridlines.visible = self._show_grid and not on
+        if not on:
+            return
+        try:
+            rect = self._view.camera.rect
+        except Exception:  # noqa: BLE001
+            return
+        segs = []
+        for x in self._tick_at.get("xaxis", ()):
+            segs += [(x, rect.bottom), (x, rect.top)]
+        for y in self._tick_at.get("yaxis", ()):
+            segs += [(rect.left, y), (rect.right, y)]
+        if not segs:
+            return
+        r, g, b, alpha = self._grid_rgba or (0, 0, 0, 0.12)
+        rgba = (r, g, b, alpha * 0.55)  # a hard 1 px line: lighter, to match
+        self._log_grid = scene.visuals.Line(
+            np.asarray(segs, "float32"), connect="segments", color=rgba,
+            width=1, method="gl", parent=self._view.scene)
+        self._log_grid.set_gl_state("translucent", cull_face=False, depth_test=False)
+        self._log_grid.order = -10
+        self._log_grid.visible = self._show_grid
 
     def _tick_values(self, key: str, own, axis):
         st = self._el_style.get(key, {})
         count = int(st.get("ticks") or 0)
         fmt, dec = st.get("format", "auto"), st.get("decimals", 2)
+        if self._axis_log(key):
+            return self._log_ticks(axis, count, fmt, dec)
         if not count and fmt == "auto":
             return own()
         lo, hi = (float(v) for v in axis.domain)
@@ -2542,6 +2634,32 @@ class PlotTab(QWidget):
             return major_frac, minor, labels
         frac = (major - lo) / span if span else np.zeros_like(major)
         return (1.0 - frac if flip else frac), minor, labels
+
+    @staticmethod
+    def _log_ticks(axis, count: int, fmt: str, dec: int):
+        """Ticks on a log axis (its domain is log10 of the values): 1, 2, 5
+        x 10^k (every decade on a wide range, 1..9 on a narrow one), labelled
+        with the values. Within one decade: round values, as a linear axis."""
+        lo, hi = (float(v) for v in axis.domain)
+        flip = hi < lo
+        if flip:
+            lo, hi = hi, lo
+        span = hi - lo
+        if span <= 0:
+            return np.zeros(0), np.zeros(0), []
+        decades = span
+        mults = ((1,) if decades > 5 else (1, 2, 5) if decades > 1.5
+                 else (1, 2, 3, 4, 5, 6, 7, 8, 9))
+        vals = [m * 10.0 ** k for k in range(int(np.floor(lo)) - 1, int(np.ceil(hi)) + 1)
+                for m in mults]
+        vals = [v for v in vals if lo - 1e-9 <= np.log10(v) <= hi + 1e-9]
+        if len(vals) < 2:  # a narrow range: round values in between
+            vals = [v for v in pe.nice_ticks(10 ** lo, 10 ** hi, max(3, count or 5))
+                    if v > 0]
+        major = np.log10(np.asarray(vals, "float64"))
+        frac = (major - lo) / span
+        labels = [pe.format_number(float(v), fmt, dec) for v in vals]
+        return (1.0 - frac if flip else frac), np.zeros(0), labels
 
     def _fit_yaxis(self, force: bool = False) -> None:
         """Size the Y strip to the tick labels on screen, so the (rotated)
@@ -2818,6 +2936,107 @@ class PlotTab(QWidget):
             else:
                 self._canvas.native.unsetCursor()
 
+    # -- axis scale: log, and a set minimum / maximum (the axis editors) ----
+    def _log_ok(self, key: str) -> bool:
+        """Whether an axis can be on a log scale: the point plots' axes."""
+        return (key in ("xaxis", "yaxis") and not self.spec.is_3d
+                and (self.spec.kind == SCATTER_2D or self.spec.is_meansd))
+
+    def _axis_log(self, key: str) -> bool:
+        return self._log_ok(key) and bool(self._el_style.get(key, {}).get("log"))
+
+    def _logs(self) -> tuple[bool, bool]:
+        return self._axis_log("xaxis"), self._axis_log("yaxis")
+
+    def _log_scaled(self, data):
+        """``data`` with its positions on the log axes as log10 (points at or
+        below zero there are left out), and which points are kept."""
+        keep = np.ones(data.n_drawn, dtype=bool)
+        logs = self._logs()
+        if data.is_3d or not any(logs) or data.n_drawn == 0:
+            return data, keep
+        pos = data.pos.astype("float64")
+        for i, on in enumerate(logs):
+            if on:
+                keep &= pos[:, i] > 0
+        pos = pos[keep]
+        for i, on in enumerate(logs):
+            if on:
+                pos[:, i] = np.log10(pos[:, i])
+        import polars as pl
+
+        rows = data.rows.filter(pl.Series(keep)) if data.rows is not None else None
+        return replace(data, pos=pos.astype("float32"), colors=data.colors[keep],
+                       rows=rows, n_drawn=int(keep.sum()),
+                       err=None if data.err is None else data.err[keep]), keep
+
+    def _to_plot(self, x, y):
+        """Data values to the plot's coordinates (log10 on a log axis)."""
+        lx, ly = self._logs()
+        x = np.asarray(x, "float64")
+        y = np.asarray(y, "float64")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return (np.log10(x) if lx else x), (np.log10(y) if ly else y)
+
+    def _set_errorbars(self, pos, err) -> None:
+        """Mean ± SD: a vertical bar from mean - err to mean + err, with caps,
+        under each point (none where there is no error: n < 2, or None). On a
+        log axis a bar reaching zero or below stops at its point."""
+        from vispy import scene
+
+        for old in (self._err_line, self._err_caps):
+            if old is not None:
+                old.parent = None
+        self._err_line = self._err_caps = None
+        self._err_extent = None
+        if self._view is None or err is None or not len(pos):
+            return
+        x, y = pos[:, 0].astype("float64"), pos[:, 1].astype("float64")
+        ok = np.isfinite(err) & (err > 0)
+        if not ok.any():
+            return
+        x, y, e = x[ok], y[ok], err[ok].astype("float64")
+        lo, hi = y - e, y + e
+        if self._logs()[1]:
+            lo = np.where(lo > 0, lo, y)
+        px, plo = self._to_plot(x, lo)
+        _, phi = self._to_plot(x, hi)
+        segs = np.empty((2 * len(px), 2), "float32")
+        segs[0::2, 0] = segs[1::2, 0] = px
+        segs[0::2, 1], segs[1::2, 1] = plo, phi
+        self._err_line = scene.visuals.Line(
+            segs, connect="segments", color=_ERRBAR_RGBA, width=1.2,
+            method="gl", parent=self._view.scene)
+        self._err_line.order = -1  # under the points
+        caps = np.concatenate([np.column_stack([px, plo]),
+                               np.column_stack([px, phi])]).astype("float32")
+        self._err_caps = scene.visuals.Markers(parent=self._view.scene)
+        self._err_caps.set_data(caps, symbol="hbar", size=_ERRBAR_CAP_PX,
+                                face_color=_ERRBAR_RGBA, edge_width=0)
+        self._err_caps.order = -1
+        self._err_extent = (float(np.min(plo)), float(np.max(phi)))
+
+    def _user_range(self, key: str, lo: float, hi: float) -> tuple:
+        """An axis's range: the editor's Minimum / Maximum where set (in the
+        plot's coordinates), else ``lo`` / ``hi`` with the usual margin.
+        Returns (lo, hi, fixed_lo, fixed_hi)."""
+        st = self._el_style.get(key, {})
+        log = self._axis_log(key)
+        out = [lo, hi, False, False]
+        for i, name in ((0, "min"), (1, "max")):
+            v = st.get(name)
+            if v is None:
+                continue
+            v = float(v)
+            if log:
+                if v <= 0:
+                    continue
+                v = float(np.log10(v))
+            out[i], out[i + 2] = v, True
+        if out[1] <= out[0]:  # a minimum above the maximum: ignore both
+            return lo, hi, False, False
+        return tuple(out)
+
     def reset_view(self) -> None:
         if self._view is None:
             return
@@ -2843,8 +3062,18 @@ class PlotTab(QWidget):
                 margin = 0.03 if self.spec.show_points else 0.0
             elif self.spec.is_curve:
                 margin = 0.04  # a curve plot runs close to its axes
-            self._view.camera.set_range(
-                x=_span(lo[0], hi[0]), y=_span(lo[1], hi[1]), margin=margin)
+            ylo, yhi = float(lo[1]), float(hi[1])
+            if self.spec.is_meansd and getattr(self, "_err_extent", None):
+                ylo, yhi = min(ylo, self._err_extent[0]), max(yhi, self._err_extent[1])
+            # The editors' Minimum / Maximum are exact; the rest get the margin
+            # (set here, as VisPy's own margin can't be zero).
+            ranges = []
+            for key, a, z in (("xaxis", lo[0], hi[0]), ("yaxis", ylo, yhi)):
+                a, z = _span(a, z)
+                a, z, fixed_a, fixed_z = self._user_range(key, a, z)
+                pad = (z - a) * margin / 2
+                ranges.append((a if fixed_a else a - pad, z if fixed_z else z + pad))
+            self._view.camera.set_range(x=ranges[0], y=ranges[1], margin=1e-9)
             # Record the fit width as the zoom-adaptive reference, then size.
             try:
                 self._fit_width = float(self._view.camera.rect.width)
@@ -2854,8 +3083,10 @@ class PlotTab(QWidget):
 
     # -- marker sizing (zoom-adaptive, 2D) -----------------------------
     def _effective_size(self) -> float:
-        """On-screen px for the markers: base, grown when zoomed out (2D)."""
-        if self.spec.is_3d or self._view is None or not self._fit_width:
+        """On-screen px for the markers: base, grown when zoomed out (2D;
+        not Mean ± SD, a few points that keep their size)."""
+        if (self.spec.is_3d or self.spec.is_meansd or self._view is None
+                or not self._fit_width):
             return self._base_size
         try:
             w = float(self._view.camera.rect.width)
@@ -2879,7 +3110,7 @@ class PlotTab(QWidget):
         self._scatter.set_data(self._last_pos, face_color=colors,
                                size=px, edge_width=0, edge_color=None,
                                symbol=self._symbol)
-        self._scatter.antialias = 0
+        self._scatter.antialias = 1 if self.spec.is_meansd else 0
         self._applied_size = px
 
     def _resize_markers(self) -> None:
@@ -3004,6 +3235,7 @@ class PlotTab(QWidget):
         if self._view is not None and self._is_spatial():
             self._view.camera.aspect = 1 if self._equal_axes else None
         self.title = a.get("title_text", self.title)
+        logs = self._logs()
         for key, style in (a.get("elements") or {}).items():
             if key in self._el_style and isinstance(style, dict):
                 self._el_style[key].update(style)
@@ -3011,6 +3243,9 @@ class PlotTab(QWidget):
             self._title_label.text = self.title
             self._title_label.visible = self._show_title
         self._apply_elements()
+        if self._logs() != logs and self._df is not None:  # log axes: redraw
+            self._render()
+            QTimer.singleShot(0, self.reset_view)
 
     # -- overlay (errors / empty) on top of the canvas -----------------
     def _show_overlay(self, text: str) -> None:
@@ -3135,6 +3370,8 @@ class PlotTab(QWidget):
         rows = self._hover_rows
         if rows is None or i < 0 or i >= rows.height:
             return ""
+        if self.spec.is_meansd:
+            return self._meansd_text(rows.row(i, named=True))
         # Axis/colour columns follow renames via the spec; the part_id / layer
         # extras are raw, so map them through the rename map too.
         extras = [self._renames.get(c, c) for c in ("part_id", "layer")]
@@ -3145,6 +3382,28 @@ class PlotTab(QWidget):
         ))
         row = rows.row(i, named=True)
         return "\n".join(f"{c}: {_fmt(row.get(c))}" for c in cols)
+
+    def _meansd_text(self, row: dict) -> str:
+        """A Mean ± SD point: its group, X, the mean ± its error bar, the SD
+        and how many values."""
+        from .plotspec import ERROR_NAMES
+
+        s = self.spec
+        err, sd, n = row.get(plotdata.MS_ERR), row.get(plotdata.MS_SD), row.get(plotdata.MS_N)
+        lines = [f"{s.group_by}: {_fmt(row.get(plotdata.MS_GROUP))}",
+                 f"{s.x}: {_fmt(row.get(plotdata.MS_X))}"]
+        mean = _fmt(row.get(plotdata.MS_MEAN))
+        name = plotdata.value_label(s.values)
+        if err is not None and np.isfinite(err) and s.error != "none":
+            lines.append(f"{name}: {mean} ± {_fmt(err)} ({ERROR_NAMES[s.error]})")
+        else:
+            lines.append(f"{name}: {mean}")
+        if s.error != "sd" and sd is not None and np.isfinite(sd):
+            lines.append(f"SD: {_fmt(sd)}")
+        lines.append(f"n: {n}")
+        if s.color and s.color != s.group_by and s.color in row:
+            lines.append(f"{s.color}: {_fmt(row.get(s.color))}")
+        return "\n".join(lines)
 
     def _show_tooltip(self, i: int, tipx: float, tipy: float) -> None:
         text = self._hover_text(i)
@@ -3195,6 +3454,8 @@ class PlotTab(QWidget):
         self._hover_pos = None
         self._title_label = None
         self._last_pos = self._last_colors = None
+        self._err_line = self._err_caps = None
+        self._log_grid = None
         self._bars = None
         self._categories = None
         self._bar_data = None

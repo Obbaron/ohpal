@@ -81,6 +81,7 @@ class RenderData:
     crange: tuple | None = None  # (lo, hi) used for numeric colour, for the sliders
     full_range: tuple | None = None  # (min, max) of the colour column, for Min/Max
     rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
+    err: Any = None            # mean-sd: (N,) error bar half-heights (NaN: none)
 
 
 @dataclass
@@ -817,6 +818,153 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
     drawn = sub if idx is None else sub[idx]  # rows actually plotted, for hover
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
                       n_total, len(pos), eff_range, full_range, rows=drawn)
+
+
+# -- Mean ± SD: one point per group, with error bars -------------------
+# Two-sided 95% t quantiles for 1..30 degrees of freedom (beyond: 1.96).
+_T95 = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+        2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+        2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042)
+# Column names of the group table (``RenderData.rows`` of a mean-sd plot).
+MS_GROUP, MS_X, MS_MEAN, MS_SD, MS_N, MS_ERR = (
+    "__group", "__x", "__mean", "__sd", "__n", "__err")
+
+
+def t95(dof: int) -> float:
+    """The two-sided 95% Student's t quantile for ``dof`` degrees of freedom."""
+    if dof < 1:
+        return float("nan")
+    try:
+        from scipy.stats import t as student
+
+        return float(student.ppf(0.975, dof))
+    except Exception:  # noqa: BLE001 - no SciPy: the table
+        return _T95[dof - 1] if dof <= len(_T95) else 1.96
+
+
+def error_half(sd, n, kind: str):
+    """Error bar half-heights from the sample SDs and counts: ``sd``, ``se``
+    (SD / sqrt(n)), ``ci95`` (t(n-1) x SE) or ``none``. NaN where n < 2."""
+    sd = np.asarray(sd, dtype="float64")
+    n = np.asarray(n, dtype="float64")
+    ok = n >= 2
+    out = np.full(sd.shape, np.nan)
+    if kind == "sd":
+        out[ok] = sd[ok]
+    elif kind == "se":
+        out[ok] = sd[ok] / np.sqrt(n[ok])
+    elif kind == "ci95":
+        t = np.array([t95(int(k) - 1) for k in n[ok]])
+        out[ok] = t * sd[ok] / np.sqrt(n[ok])
+    return out
+
+
+def value_label(columns) -> str:
+    """The y axis's name for several value columns: what they share
+    (``Density (1)``, ``Density (2)`` -> ``Density``), else them all."""
+    from .plotspec import repeat_base
+
+    cols = list(columns)
+    if len(cols) == 1:
+        return cols[0]
+    bases = {repeat_base(c) for c in cols}
+    if len(bases) == 1:
+        return next(iter(bases))
+    return ", ".join(cols)
+
+
+def build_meansd(df, spec, *, sample: str | None = None,
+                 cmap: str = DEFAULT_COLORMAP, scale: str = "linear",
+                 crange: tuple | None = None) -> RenderData:
+    """One point per ``spec.group_by`` group: the mean of its values, with an
+    error bar (``spec.error``).
+
+    The table has a row per measured point, so a per-part value (a density
+    from the samples template) is on thousands of rows. Each *sample* (a
+    ``sample`` value, the part, when that column is given and isn't the group)
+    counts once: its value in each value column is the mean of its rows (for a
+    per-part column, just its value). The group's values are then every
+    sample's value in every value column (``spec.values``): the mean, the
+    sample SD (n - 1) and n are over those. X is the mean of the samples' X.
+    Points in no sample (no part, or DBSCAN's "noise") are left out.
+    A colour column is the group's mean (numbers) or first value (text)."""
+    import polars as pl
+
+    values = spec.values
+    group = spec.group_by
+    if not group:
+        raise ValueError("Choose a column to group by (one point per group).")
+    for ch in [spec.x, group, *values, spec.color]:
+        if ch and ch not in df.columns:
+            raise KeyError(f"Column {ch!r} is not in the data.")
+    for c in [spec.x, *values]:
+        if not df[c].dtype.is_numeric():
+            raise ValueError(f"{c!r} isn't a numeric column.")
+
+    keys = [group]
+    if sample and sample != group and sample in df.columns:
+        keys.append(sample)
+    keep = pl.col(group).is_not_null()
+    if sample and sample in df.columns:
+        # Points in no part (null) or DBSCAN's "noise" are no sample.
+        keep = keep & pl.col(sample).is_not_null()
+        if not df[sample].dtype.is_numeric():
+            keep = keep & (pl.col(sample).cast(pl.Utf8) != "noise")
+    color = spec.color
+    by_color = bool(color) and color != group  # else: none, or the group itself
+    sub = df.filter(keep).select(
+        *keys, pl.col(spec.x).cast(pl.Float64).alias("__x0"),
+        *[pl.col(c).cast(pl.Float64).alias(f"__r{i}") for i, c in enumerate(values)],
+        *([pl.col(color).alias("__c0")] if by_color else []))
+
+    def finite_mean(c):
+        col = pl.col(c)
+        return col.filter(col.is_finite()).mean()
+
+    def reduce(c, numeric):
+        return pl.col(c).mean() if numeric else pl.col(c).drop_nulls().first()
+
+    color_numeric = bool(color) and df[color].dtype.is_numeric()
+    per_sample = sub.group_by(keys).agg(
+        finite_mean("__x0").alias(MS_X),
+        *[finite_mean(f"__r{i}").alias(f"__v{i}") for i in range(len(values))],
+        *([reduce("__c0", color_numeric).alias("__c")] if by_color else []),
+    )
+    vcols = [f"__v{i}" for i in range(len(values))]
+    long = per_sample.unpivot(index=[group], on=vcols, value_name="__val")
+    stats = long.filter(pl.col("__val").is_not_null()).group_by(group).agg(
+        pl.col("__val").mean().alias(MS_MEAN),
+        pl.col("__val").std(ddof=1).alias(MS_SD),
+        pl.col("__val").count().alias(MS_N),
+    )
+    first = [pl.col(MS_X).mean().alias(MS_X)]
+    if by_color:
+        first.append(reduce("__c", color_numeric).alias(color))
+    groups = (per_sample.group_by(group).agg(*first)
+              .join(stats, on=group, how="inner")
+              .filter(pl.col(MS_X).is_not_null() & pl.col(MS_X).is_finite()
+                      & pl.col(MS_MEAN).is_not_null()))
+    order = sorted(range(groups.height), key=lambda i: (
+        _natural_key(groups[group][i])))
+    groups = groups[order] if order else groups
+    groups = groups.with_columns(pl.col(group).alias(MS_GROUP))
+
+    n = groups.height
+    if n == 0:
+        empty = np.zeros((0, 2), dtype="float32")
+        return RenderData(empty, np.zeros((0, 4), "float32"), False,
+                          (spec.x, value_label(values)), None, 0, 0)
+    sd = groups[MS_SD].fill_null(np.nan).to_numpy().astype("float64")
+    counts = groups[MS_N].to_numpy()
+    err = error_half(sd, counts, spec.error)
+    groups = groups.with_columns(pl.Series(MS_ERR, err))
+    pos = np.column_stack([groups[MS_X].to_numpy(),
+                           groups[MS_MEAN].to_numpy()]).astype("float32")
+    colors, legend, eff_range, full_range = _colors(
+        groups, spec, None, lambda a: a, n, cmap, scale, crange)
+    return RenderData(pos, colors, False, (spec.x, value_label(values)), legend,
+                      n, n, eff_range, full_range, rows=groups,
+                      err=err.astype("float32"))
 
 
 def _colors(sub, spec, idx, take, n, cmap, scale, crange):

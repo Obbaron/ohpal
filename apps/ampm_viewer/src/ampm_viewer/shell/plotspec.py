@@ -6,6 +6,7 @@ defaults below are only a starting point for the dialog; nothing is hardcoded.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 SCATTER_2D = "2D Scatter"
@@ -19,10 +20,11 @@ CONTOUR = "Contour"
 KDE = "KDE"
 KDIST = "K-Distance Curve"
 VIOLIN = "Violin"
+MEAN_SD = "Mean ± SD"
 # the wired plot types
 PLOT_KINDS = (
     SCATTER_2D, SCATTER_3D, LAYER_VIEWER, SINGLE_LAYER,
-    BAR, HISTOGRAM, COV_SUMMARY, CONTOUR, KDE, KDIST, VIOLIN,
+    BAR, HISTOGRAM, COV_SUMMARY, CONTOUR, KDE, KDIST, VIOLIN, MEAN_SD,
 )
 
 BAR_AGGS = ("as-is", "mean", "median", "sum", "min", "max", "count", "first")
@@ -30,6 +32,9 @@ BAR_AGGS = ("as-is", "mean", "median", "sum", "min", "max", "count", "first")
 COV_MODES = ("overall", "per_layer_mean", "across_layers")
 # KDE / violin: how the kernel's width is chosen (as scipy's gaussian_kde).
 BANDWIDTHS = ("scott", "silverman")
+# Mean ± SD: what the error bars show (sample SD, standard error, 95% CI).
+ERRORS = ("sd", "se", "ci95", "none")
+ERROR_NAMES = {"sd": "SD", "se": "SE", "ci95": "95% CI", "none": "None"}
 
 
 @dataclass
@@ -41,7 +46,7 @@ class PlotSpec:
     color: str | None = None  # None = single colour
     agg: str = "mean"         # bar only: how to reduce the value per category
     bins: int = 30            # histogram / contour: bin or contour-level count
-    group_by: str | None = None   # cov: the grouping column (x = one bar per)
+    group_by: str | None = None   # cov / kde / mean-sd: the grouping column
     cov_mode: str = "overall"     # cov: overall | per_layer_mean | across_layers
     show_points: bool = True      # contour: overlay the measured (x, y) points
     bandwidth: str = "scott"      # kde / violin: scott | silverman
@@ -49,11 +54,16 @@ class PlotSpec:
     k: int = 10                   # k-distance: which neighbour (= min_samples)
     eps_xy: float = 1.0           # k-distance: DBSCAN's XY radius (Z scaling,
     eps_z: float = 1.0            #   and the guide line) and its Z radius
+    more_y: tuple = ()            # mean-sd: value columns after y (repeats)
     # Changed from the plot's toolbar after it is made:
     fill: bool = True             # kde: shade under the curves
     sort: str = "name"            # bar / cov: order the bars by name | value
     show_lines: bool = True       # contour: level lines between the bands
     show_ref: bool = True         # k-distance: the knee line (suggested eps)
+    error: str = "sd"             # mean-sd: sd | se | ci95 | none
+
+    def __post_init__(self) -> None:
+        self.more_y = tuple(self.more_y or ())  # a list, from JSON
 
     @property
     def is_3d(self) -> bool:
@@ -94,6 +104,23 @@ class PlotSpec:
     @property
     def is_violin(self) -> bool:
         return self.kind == VIOLIN
+
+    @property
+    def is_meansd(self) -> bool:
+        return self.kind == MEAN_SD
+
+    @property
+    def values(self) -> list[str]:
+        """Mean ± SD: every value column (y, then the repeats)."""
+        return list(dict.fromkeys(c for c in (self.y, *self.more_y) if c))
+
+    @property
+    def columns(self) -> list[str]:
+        """Every column name the spec refers to (some may not be columns:
+        a histogram's "count", a KDE's "density")."""
+        return list(dict.fromkeys(
+            c for c in (self.x, self.y, self.z, self.color, self.group_by,
+                        *self.more_y) if c))
 
     @property
     def is_curve(self) -> bool:
@@ -171,6 +198,19 @@ def default_spec(kind: str, columns: list[str], renames=None,
                         z=z if z in cols else None, k=int(k),
                         eps_xy=float(eps_xy), eps_z=float(eps_z))
 
+    if kind == MEAN_SD:
+        # One point per part: a per-part value (a density imported from the
+        # samples template, say) and its repeats, over a process column.
+        grp = ren.get("part_id", "part_id")
+        x = next((c for c in cols if "energy" in c.lower()), None) or pick(
+            "Hatches Power", 0)
+        sets = repeat_sets(cols)
+        best = next((s for s in sets if "densit" in s[0].lower()),
+                    sets[0] if sets else None)
+        y, more = (best[0], tuple(best[1:])) if best else (pick("Z", 1), ())
+        return PlotSpec(kind=kind, x=x, y=y, more_y=more,
+                        group_by=grp if grp in cols else None)
+
     if kind == CONTOUR:
         # A value (z) over an (x, y) parameter grid; default to parametric
         # process columns when present, else the first numeric columns.
@@ -184,6 +224,25 @@ def default_spec(kind: str, columns: list[str], renames=None,
     z = pick("Z", 2) if kind == SCATTER_3D else None
     color = _default_color(cols, ren)
     return PlotSpec(kind=kind, x=x, y=y, z=z, color=color)
+
+
+_REPEAT = re.compile(r"[\s_\-]*(\(\d+\)|\d+)$")
+
+
+def repeat_base(name: str) -> str:
+    """A repeat column's shared name: ``Density (2)`` / ``Density_2`` ->
+    ``Density`` (a name without a number is its own base)."""
+    return _REPEAT.sub("", str(name)).strip() or str(name)
+
+
+def repeat_sets(columns) -> list[list[str]]:
+    """Columns that are numbered repeats of one measurement (two or more
+    sharing a base name, each with a number), in column order."""
+    sets: dict[str, list[str]] = {}
+    for c in columns:
+        if _REPEAT.search(str(c)) and repeat_base(c) != str(c):
+            sets.setdefault(repeat_base(c).lower(), []).append(c)
+    return [s for s in sets.values() if len(s) >= 2]
 
 
 def _default_color(columns: list[str], renames=None) -> str | None:

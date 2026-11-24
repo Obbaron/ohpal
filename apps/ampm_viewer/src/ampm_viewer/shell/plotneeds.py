@@ -32,7 +32,7 @@ def drawn_columns(spec, renames: dict | None = None) -> list[str]:
     axes, colour and grouping, and the part / layer its hover shows. Some
     may not be columns at all (a histogram's "count", a KDE's "density")."""
     renames = renames or {}
-    wanted = [spec.x, spec.y, spec.z, spec.color, spec.group_by,
+    wanted = [*spec.columns,
               renames.get("part_id", "part_id"), renames.get("layer", "layer")]
     return list(dict.fromkeys(c for c in wanted if c))
 

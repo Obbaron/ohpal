@@ -19,13 +19,24 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QRadioButton,
     QSpinBox,
     QVBoxLayout,
 )
 
 from .card import DraggableCard
-from .plotspec import BANDWIDTHS, BAR_AGGS, COV_MODES, PlotSpec, default_spec
+from .plotspec import (
+    BANDWIDTHS,
+    BAR_AGGS,
+    COV_MODES,
+    ERROR_NAMES,
+    ERRORS,
+    PlotSpec,
+    default_spec,
+    repeat_base,
+)
 from .toolbars import LayerSpinBox
 from .widgets import fix_combo
 
@@ -100,6 +111,8 @@ class NewPlotDialog(DraggableCard, QDialog):
         self.k_spin = None
         self.epsxy_spin = None
         self.epsz_spin = None
+        self.values_list = None
+        self.error_combo = None
 
         def bandwidth_combo(current: str) -> QComboBox:
             cb = fix_combo(QComboBox())
@@ -193,6 +206,43 @@ class NewPlotDialog(DraggableCard, QDialog):
             self.cov_mode_combo.addItems(COV_MODES)
             self.cov_mode_combo.setCurrentText(base.cov_mode)
             form.addRow("Mode", self.cov_mode_combo)
+        elif base.is_meansd:
+            # Mean ± SD: one point per group, the mean of its value columns
+            # (a measurement and its repeats) with an error bar.
+            self.x_combo = axis_combo(base.x)
+            form.addRow("X", self.x_combo)
+            self.y_combo = None
+            self.values_list = QListWidget()
+            self.values_list.setToolTip(
+                "Tick the measurement and its repeats, e.g. Density (1), "
+                "Density (2), Density (3): each point is their mean")
+            chosen = set(base.values)
+            for c in self._columns:
+                item = QListWidgetItem(c)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if c in chosen
+                                   else Qt.CheckState.Unchecked)
+                self.values_list.addItem(item)
+            self.values_list.setMaximumHeight(150)
+            if base.values and base.values[0] in self._columns:
+                self.values_list.scrollToItem(
+                    self.values_list.item(self._columns.index(base.values[0])))
+            self.values_list.itemChanged.connect(self._on_value_ticked)
+            form.addRow("Values", self.values_list)
+            self.group_combo = fix_combo(QComboBox())
+            self.group_combo.addItems(self._columns)
+            if base.group_by in self._columns:
+                self.group_combo.setCurrentText(base.group_by)
+            form.addRow("One point per", self.group_combo)
+            self.error_combo = fix_combo(QComboBox())
+            for key in ERRORS:
+                self.error_combo.addItem(ERROR_NAMES[key], key)
+            self.error_combo.setCurrentIndex(ERRORS.index(base.error))
+            form.addRow("Error bars", self.error_combo)
+            self.color_combo = fix_combo(QComboBox())
+            self.color_combo.addItem(_NONE)
+            self.color_combo.addItems(self._columns)
+            form.addRow("Colour by", self.color_combo)
         elif base.is_contour:
             # Contour: a value (z) gridded over an (x, y) parameter plane.
             self.x_combo = axis_combo(base.x)
@@ -235,9 +285,10 @@ class NewPlotDialog(DraggableCard, QDialog):
         self._is_layer_viewer = base.is_layer_viewer
         self._is_single_layer = base.is_single_layer
         if (self._is_layer_viewer or self._is_single_layer
-                or base.is_cov or base.is_contour):
+                or base.is_cov or base.is_contour or base.is_meansd):
             self._add_buttons(lay)
             self.setMinimumWidth(440)
+            self._on_value_ticked()
             return
 
         # Layer span this plot queries — its own, independent of the grid.
@@ -298,10 +349,35 @@ class NewPlotDialog(DraggableCard, QDialog):
         ok.setIcon(QIcon())      # drop the themed check icon
         ok.setDefault(True)
         ok.setStyleSheet(_PRIMARY_QSS)
+        self._ok = ok
         cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
         cancel.setText("Close")
         cancel.setIcon(QIcon())  # drop the themed cross icon
         lay.addWidget(buttons)
+
+    def _ticked(self) -> list[str]:
+        if self.values_list is None:
+            return []
+        return [self.values_list.item(i).text()
+                for i in range(self.values_list.count())
+                if self.values_list.item(i).checkState() == Qt.CheckState.Checked]
+
+    def _on_value_ticked(self, item=None) -> None:
+        """Mean ± SD: ticking one of a set of repeats ticks the rest
+        (``Density (1)`` -> (2), (3)); Plot needs at least one value."""
+        if self.values_list is None:
+            return
+        if item is not None and item.checkState() == Qt.CheckState.Checked:
+            base = repeat_base(item.text())
+            if base != item.text():
+                self.values_list.blockSignals(True)
+                for i in range(self.values_list.count()):
+                    other = self.values_list.item(i)
+                    if repeat_base(other.text()) == base:
+                        other.setCheckState(Qt.CheckState.Checked)
+                self.values_list.blockSignals(False)
+        if getattr(self, "_ok", None) is not None:
+            self._ok.setEnabled(bool(self._ticked()))
 
     def _sync_span_enabled(self) -> None:
         self.single_spin.setEnabled(self.radio_single.isChecked())
@@ -330,6 +406,18 @@ class NewPlotDialog(DraggableCard, QDialog):
                 k=self.k_spin.value(),
                 eps_xy=self.epsxy_spin.value(),
                 eps_z=self.epsz_spin.value(),
+            )
+        if self.values_list is not None:  # mean-sd
+            values = self._ticked()
+            color = self.color_combo.currentText()
+            return PlotSpec(
+                kind=self._kind,
+                x=self.x_combo.currentText(),
+                y=values[0] if values else "",
+                more_y=tuple(values[1:]),
+                group_by=self.group_combo.currentText() or None,
+                error=self.error_combo.currentData() or "sd",
+                color=None if color == _NONE else color,
             )
         if self.group_combo is not None:  # KDE
             grp = self.group_combo.currentText()
@@ -399,7 +487,7 @@ class NewPlotDialog(DraggableCard, QDialog):
         if self._is_single_layer:  # the layer chosen in the form
             L = self.sl_layer.value() if self.sl_layer is not None else self._current
             return ("single", L, L)
-        if not hasattr(self, "radio_single"):  # CoV / Contour: whole build
+        if not hasattr(self, "radio_single"):  # CoV / Contour / Mean ± SD: whole build
             return ("all", None, None)
         if self.radio_single.isChecked():
             L = self.single_spin.value()

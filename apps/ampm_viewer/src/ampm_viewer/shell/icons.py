@@ -68,6 +68,7 @@ UI = {
     "bandwidth": "chart--line-smooth", "bins": "chart--histogram",
     "sort": "sort--ascending", "contour_points": "dot-mark",
     "contour_lines": "contour--draw", "knee_line": "chart--average",
+    "error_bars": "custom/error-bars",
     "popout": "custom/popout", "dockin": "custom/dockin",
     # panel
     "marker": "dot-mark", "colormap": "color-palette",
@@ -84,6 +85,7 @@ PLOT_TYPE = {
     "K-Distance Curve": "chart--line",
     "KDE": "chart--area",
     "Contour": "contour-finding",
+    "Mean ± SD": "custom/error-bars",
     "CoV Summary": "chart--histogram",
     "Layer Viewer": "layers",
     "Single Layer": "custom/layer-single",

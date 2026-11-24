@@ -25,6 +25,7 @@ short dialog asks which columns to use, and the plot opens in its own tab.
 | **Violin** | The full distribution of a value for each part or category | [KDE and violin plots](help:plot-distributions) |
 | **KDE** | Smooth density curves of a value, one per part or group | [KDE and violin plots](help:plot-distributions) |
 | **K-Distance Curve** | How far apart points are, to choose DBSCAN's radius | [K-distance curve](help:plot-kdistance) |
+| **Mean ± SD** | One point per part at the mean of its measurements, with error bars | [Mean ± SD plots](help:plot-mean-sd) |
 
 ## Choosing columns
 

@@ -14,6 +14,7 @@ column's name), and it is never part of a saved default.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,6 +87,8 @@ class Field:
     - ``int``     a whole number in ``lo``..``hi`` (``special``: what ``lo``
                   means, e.g. "Auto"; ``suffix``: its unit)
     - ``check``   on / off
+    - ``number``  a decimal number, or None (``special``: what None shows,
+                  e.g. "Auto")
     """
 
     name: str
@@ -229,13 +232,18 @@ def _axis2d_full(key: str, label: str) -> Element:
     base = _axis2d(key, label)
     return Element(
         key, label,
-        (*base.fields, *_tick_fields("Ticks"),
+        (*base.fields,
+         Field("min", "Minimum", "number", "Scale", special="Auto"),
+         Field("max", "Maximum", "number", "Scale", special="Auto"),
+         Field("log", "Log scale", "check", "Scale"),
+         *_tick_fields("Ticks"),
          Field("line", "Show the axis line", "check", "Axis line"),
          Field("line_color", "Colour", "color", "Axis line"),
          Field("grid_color", "Colour", "color", "Gridlines (both axes)"),
          Field("grid_opacity", "Opacity", "int", "Gridlines (both axes)",
                lo=0, hi=100, suffix=" %")),
-        {**base.defaults, **_tick_defaults(), "line": False,
+        {**base.defaults, **_tick_defaults(), "min": None, "max": None,
+         "log": False, "line": False,
          "line_color": "#7a8290", "grid_color": _GRID, "grid_opacity": 12},
     )
 
@@ -416,6 +424,12 @@ def _clean(key: str, style: dict) -> dict:
         if kind == "choice":
             if v in {o for o, _ in f.options}:
                 out[k] = v
+        elif kind == "number":
+            try:
+                num = None if v is None or v == "" else float(v)
+            except (TypeError, ValueError):
+                continue
+            out[k] = num if num is None or math.isfinite(num) else None
         elif kind == "int":
             try:
                 out[k] = int(min(f.hi, max(f.lo, round(float(v)))))
@@ -444,7 +458,11 @@ KIND_DEFAULTS: dict[str, dict[str, dict]] = {
     "Contour": {"cbar": {"num_size": 9}},
     "Bar": _CATEGORY_AXIS, "CoV Summary": _CATEGORY_AXIS, "Violin": _CATEGORY_AXIS,
     "Histogram": {"data_bars": {"bar_width": 100}},   # bins touch
+    "Mean ± SD": {"data_points": {"size": 8}},          # a few points, visible
 }
+# Style keys that belong to one plot, never a default for new plots: an
+# axis's set range is about that plot's data.
+PER_PLOT = {"min", "max"}
 
 
 def builtin_style(key: str, kind: str | None = None) -> dict:
@@ -490,7 +508,7 @@ def clear_defaults() -> None:
 def save_default(key: str, style: dict, kind: str | None = None) -> None:
     """Make ``style`` (minus its text) the default for new plots. A style equal
     to the built-in look (of a ``kind`` plot) clears the saved default."""
-    clean = _clean(key, style)
+    clean = {k: v for k, v in _clean(key, style).items() if k not in PER_PLOT}
     built = builtin_style(key, kind)
     diff = {k: v for k, v in clean.items() if built.get(k) != v}
     s = _settings()

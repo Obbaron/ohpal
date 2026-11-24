@@ -150,7 +150,7 @@ align.setCurrentIndex(align.findData("left")); drain()
 assert t2.element_values("title")["align"] == "left"
 p.edit_element(t2, "xaxis"); drain()
 titles = [cd.title() for cd in p._el_form_host.findChildren(Card) if not cd.isHidden()]
-assert titles[:3] == ["AXIS TITLE", "TICK LABELS", "TICKS"], titles
+assert titles[:4] == ["AXIS TITLE", "TICK LABELS", "SCALE", "TICKS"], titles
 print("element editor: cards per group, joined rows")
 
 # Every card fits: the panel is as wide as the widest page or element editor
