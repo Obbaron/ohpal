@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-25
+
+Builds exported by an older version of the DataHUB open, with only the
+columns they have.
+
 ### Added
 
 - **Builds exported by the older DataHUB open.** Their packet files have seven
@@ -847,7 +852,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/Obbaron/ohpal/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/Obbaron/ohpal/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/Obbaron/ohpal/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/Obbaron/ohpal/compare/v2.1.0...v2.1.1
