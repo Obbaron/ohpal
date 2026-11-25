@@ -175,6 +175,17 @@ class StackedStore:
             self.steps.append(step)
             offset = step.stacked(step.last)
             z += (step.last - step.first + 1) * step.thickness
+        # One DataHUB export layout across the steps (an older-layout step
+        # beside a current one is refused, not stacked on the common columns).
+        base = self.steps[0]
+        for step in self.steps[1:]:
+            a, b = base.store.layout, step.store.layout
+            if a.kind != b.kind:
+                raise ValueError(
+                    f"This stack mixes DataHUB exports: step {base.label} "
+                    f"({base.root.name}) is in the {a.name} and step "
+                    f"{step.label} ({step.root.name}) in the {b.name}. "
+                    f"Every step of a stack must use the same layout.")
         self._layer_step: dict[int, StackStep] = {}
         for step in self.steps:
             for L in step.store.layers:
@@ -212,6 +223,18 @@ class StackedStore:
         for step in self.steps:
             out |= {step.stacked(L) for L in step.store.cached_layers()}
         return out
+
+    @property
+    def layout(self):
+        """The steps' DataHUB export layout (one for every step)."""
+        return self.steps[0].store.layout
+
+    def check_layouts(self, layers: Iterable[int] | None = None, *,
+                      force: bool = False) -> None:
+        """Each step's ``DataStore.check_layouts`` over its share of
+        ``layers`` (stacked numbers; None: all)."""
+        for step, local in self._split(layers):
+            step.store.check_layouts(local, force=force)
 
     def build_cache(self, layers: Iterable[int] | None = None, force: bool = False,
                     verbose: bool = True) -> None:

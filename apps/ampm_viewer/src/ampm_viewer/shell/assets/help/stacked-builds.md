@@ -2,7 +2,7 @@
 title: Stacked builds
 section: Getting started
 order: 35
-keywords: stacked, stepped, step, steps, seam, continuous, layers, build time, combine, merge
+keywords: stacked, stepped, step, steps, seam, continuous, layers, build time, combine, merge, layout, datahub
 ---
 # Stacked builds
 
@@ -52,6 +52,10 @@ every step. Each step reads its own inputs:
 - **Part assignment** (Direct or DHXML) uses each step's own parts CSV or
   .dhxml. A part never spans steps.
 - **Import from parts CSV** reads each step's parts CSV.
+
+Every step must come from the same DataHUB export layout: an
+[older-layout](help:about-data) step can't be stacked with a current one.
+**Add step...** says so, and a stack file naming such steps doesn't open.
 
 An input is offered only when every step has one (the setup page says which
 step is missing it). Each step keeps the layer thickness in its own

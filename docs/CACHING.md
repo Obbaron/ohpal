@@ -27,7 +27,7 @@ store.build_cache(force=True)
 
 Or simply delete the cache manually.
 
-The cache also auto-rebuilds if the schema changes (e.g., column dtypes change). The DataStore tracks a `CACHE_FORMAT_VERSION` and rebuilds when it doesn't match.
+The cache also auto-rebuilds a layer whose Parquet doesn't match what the DataStore would write now: a `Z` column of another type, a different layer thickness, or a different set of columns (the build's columns come from its packet files' header: the current DataHUB layout, or the older seven-column one, read under current names; see `ohpal.ampm.datastore.Layout`).
 
 ## Mask cache
 

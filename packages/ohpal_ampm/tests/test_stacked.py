@@ -131,3 +131,32 @@ def test_a_stack_needs_two_steps(tmp_path):
     write_stack(tmp_path / "one", "x", [tmp_path])
     with pytest.raises(ValueError, match="two steps"):
         read_stack(tmp_path / "one")
+
+
+def test_a_stack_mixing_layouts_is_refused(tmp_path):
+    from test_datastore import write_legacy_file
+
+    a_root, a = _step(tmp_path, "s1", [1, 2], 0.03)
+    b_root = tmp_path / "s2"
+    src = b_root / "[3] Export Packets"
+    src.mkdir(parents=True)
+    for L in (1, 2):
+        write_legacy_file(src, L)
+    b = DataStore(src, layer_thickness=0.03)
+    with pytest.raises(ValueError, match=r"mixes DataHUB exports: step S1 \(s1\) "
+                                         r"is in the current.*step S2 \(s2\) in the older"):
+        StackedStore([(a_root, a, {}), (b_root, b, {})],
+                     cache_dir=tmp_path / "stack" / ".cache")
+    # Two older-layout steps stack as usual, on the older columns.
+    c_root = tmp_path / "s3"
+    src = c_root / "[3] Export Packets"
+    src.mkdir(parents=True)
+    write_legacy_file(src, 1)
+    c = DataStore(src, layer_thickness=0.03)
+    st = StackedStore([(b_root, b, {}), (c_root, c, {})],
+                      cache_dir=tmp_path / "stack2" / ".cache")
+    assert st.layout.kind == "legacy"
+    st.check_layouts()
+    df = st.query()
+    assert df.height == 9 and "LaserVIEW (mean)" in df.columns
+    assert "Demand focus" not in st.columns

@@ -13,6 +13,8 @@ actual data and plot actions are inert, to be connected in a later pass.
 
 from __future__ import annotations
 
+import re
+
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QPainter, QPalette, QPen, QShortcut
 from PyQt6.QtWidgets import (
@@ -91,6 +93,21 @@ class _ElidingLabel(QLabel):
         fm = self.fontMetrics()
         avail = max(0, self.width() - 4)
         super().setText(fm.elidedText(self._full, Qt.TextElideMode.ElideRight, avail))
+
+
+_EXC_LINE = re.compile(r"^(?:[A-Za-z_][\w.]*(?:Error|Exception|Exit)): (.+)$")
+
+
+def error_line(message: str) -> str:
+    """One line for the status bar from an error or a traceback: the
+    exception's own message (its first line) rather than the traceback's last
+    line, which for a message over several lines is only its tail."""
+    lines = message.strip().splitlines()
+    for line in reversed(lines):
+        m = _EXC_LINE.match(line)
+        if m:
+            return m.group(1)
+    return lines[-1] if lines else message
 
 
 class MainWindow(QMainWindow):
@@ -535,8 +552,7 @@ class MainWindow(QMainWindow):
     def _on_load_failed(self, message: str) -> None:
         self.backstage.set_loading(False)
         self.show_progress(False)
-        first_line = message.strip().splitlines()[-1] if message.strip() else message
-        self.set_status(f"Load failed: {first_line}")
+        self.set_status(f"Load failed: {error_line(message)}")
         self.log_bus.log_line(message)  # full traceback to the log
 
     def _new_plot(self, kind: str | None = None) -> None:

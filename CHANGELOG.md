@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Builds exported by the older DataHUB open.** Their packet files have seven
+  columns under older names (`Start time / us`, `x position / mm`,
+  `LaserVIEW`, `MeltVIEW Melt Pool`, ...); the layout is recognised from the
+  header and the columns read under their current names (`Start time`,
+  `Demand X`, `LaserVIEW (mean)`, `MeltVIEW melt pool (mean)`, ...), at the
+  same compact types. Only the columns a build has are offered and loaded, so
+  an older build shows no blank focus, laser power, back reflection or median
+  columns; the melt-pool correction works on it as on a current build. The
+  build's Info page has a new **Packet data** row naming the layout. Tested on
+  real older-layout files (JR265).
+
+### Changed
+
+- **Only Start time, Duration, Demand X and Demand Y are required** in a
+  packet file (`ohpal.ampm.datastore.REQUIRED_COLUMNS`); the other known
+  columns are kept when present, and `DataStore.columns` lists what the build
+  has (new `DataStore.layout`). A missing required column is reported when the
+  build is opened, naming both layouts.
+- **A build mixing layouts is refused** (*This build mixes DataHUB exports*,
+  naming a layer of each), and so are layers with different columns. The
+  check reads only the header line of each layer about to be converted, and
+  runs before any is (new `DataStore.check_layouts`, also called by the app's
+  DataStore build), so nothing is half converted.
+- **A stacked build mixing layouts is refused**: New stacked build's
+  **Add step...** says so, and a stack file naming such steps doesn't open.
+- A layer whose cached Parquet has other columns than the build's is rebuilt.
+- "Load failed" in the status bar shows the error's own message, not the last
+  line of a message over several lines.
+
 ## [2.2.1] - 2026-11-25
 
 Imports from the parts CSV and the samples template land on the right parts

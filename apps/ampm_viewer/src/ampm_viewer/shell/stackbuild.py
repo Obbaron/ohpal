@@ -160,7 +160,31 @@ def probe_layers(folder) -> tuple[int, int] | None:
     """A build folder's first and last layer, from its packet files' names
     (where config.toml says they are, else found under the folder). None if
     it has none. Reads directory listings only, no files."""
-    folder = Path(folder)
+    found = _packet_dir(Path(folder))
+    return None if found is None else (min(found[1]), max(found[1]))
+
+
+def probe_layout(folder) -> str | None:
+    """A build folder's DataHUB export layout (``"current"`` or ``"legacy"``,
+    see ``ohpal.ampm.datastore.Layout``), from its first packet file's header
+    line. None if it has no packet data."""
+    found = _packet_dir(Path(folder))
+    if found is None:
+        return None
+    from ohpal.ampm.datastore import read_layout
+
+    d, layers = found
+    first = min(layers)
+    name = next(e.name for e in os.scandir(d) if e.is_file()
+                and (m := _PACKET_RE.match(e.name)) and int(m.group(1)) == first)
+    try:
+        return read_layout(d / name).kind
+    except OSError:
+        return None
+
+
+def _packet_dir(folder: Path) -> tuple[Path, set[int]] | None:
+    """Where a build folder's packet files are, and their layers."""
     source = None
     cfg = folder / "config.toml"
     if cfg.is_file():
@@ -178,7 +202,7 @@ def probe_layers(folder) -> tuple[int, int] | None:
     for d in dirs:
         layers = _packet_layers(d)
         if layers:
-            return min(layers), max(layers)
+            return Path(d), layers
     return None
 
 
@@ -218,6 +242,7 @@ class NewStackDialog(DraggableCard, QDialog):
         self.setModal(True)
         self._start_dir = start_dir or str(Path.home())
         self._steps: list[tuple[Path, tuple[int, int]]] = []
+        self._layouts: dict[Path, str | None] = {}  # step -> its export layout
         self._folder_edited = False
         self._result = None
 
@@ -314,6 +339,17 @@ class NewStackDialog(DraggableCard, QDialog):
         span = probe_layers(folder)
         if span is None:
             return f"No packet data found in {folder.name}."
+        # One DataHUB export layout for the whole stack.
+        kind = probe_layout(folder)
+        other = next((p for p, _ in self._steps
+                      if self._layouts.get(p) not in (None, kind)), None)
+        if other is not None and kind is not None:
+            from ohpal.ampm.datastore import LAYOUT_NAMES
+
+            return (f"{folder.name} is in the {LAYOUT_NAMES[kind]} but "
+                    f"{other.name} is in the {LAYOUT_NAMES[self._layouts[other]]}: "
+                    f"a stack's steps must all use the same one.")
+        self._layouts[folder] = kind
         self._steps.append((folder, span))
         if not self.name.text().strip():
             self.name.setText(f"{folder.name} stacked")

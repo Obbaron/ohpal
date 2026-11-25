@@ -2,7 +2,7 @@
 title: About the data
 section: Getting started
 order: 15
-keywords: data, sensor, photodiode, meltview, laserview, plasma, melt pool, meltpool, wavelength, sampling, 100 khz, packet, dat, raw, mean, median, columns, units, start time, duration, demand, back reflection, output power, noise, signal
+keywords: data, older export, old layout, legacy, datahub, sensor, photodiode, meltview, laserview, plasma, melt pool, meltpool, wavelength, sampling, 100 khz, packet, dat, raw, mean, median, columns, units, start time, duration, demand, back reflection, output power, noise, signal
 ---
 # About the data
 
@@ -98,6 +98,33 @@ Every column in the last two tables comes as a *(mean)* and a *(median)*.
 | **layer** | The layer the point belongs to, taken from its file. |
 | **Z** | The height of the layer: the layer number times the layer thickness. |
 | **part_id** | The part the point belongs to, when the build has a [part assignment](help:parts). |
+
+## Older DataHUB exports
+
+Builds exported by an older version of the DataHUB have seven columns, under
+older names. The app reads them under the names above:
+
+| In the older export | Read as |
+| --- | --- |
+| Start time / us | Start time |
+| Duration / us | Duration |
+| x position / mm | Demand X |
+| y position / mm | Demand Y |
+| LaserVIEW | LaserVIEW (mean) |
+| MeltVIEW Plasma | MeltVIEW plasma (mean) |
+| MeltVIEW Melt Pool | MeltVIEW melt pool (mean) |
+
+The units are the same as in the current export. An older export has no
+focus, laser power, back reflection or median columns, so those aren't offered
+for such a build; everything else works as usual, the
+[melt-pool correction](help:datastore-setup) included. The build's
+[Info](help:open-build) page says which layout it is.
+
+Every layer of a build must be in the same layout. A build mixing them (some
+layers exported again with a newer DataHUB) is refused with *This build mixes
+DataHUB exports*, naming a layer of each; export the build again in one
+layout. A [stacked build](help:stacked-builds)'s steps must all be in the same
+layout too.
 
 ## Reading the values
 

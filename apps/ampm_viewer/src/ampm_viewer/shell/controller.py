@@ -670,6 +670,12 @@ class AppController(QObject):
             ("Layer thickness", thick),
             ("Columns", f"{loaded} of {len(store.columns)} loaded"),
         ]
+        layout = getattr(store, "layout", None)
+        if layout is not None:
+            datastore.append(("Packet data", (
+                "DataHUB export, current layout" if layout.kind == "current"
+                else "DataHUB export, older layout (no focus, laser power, "
+                     "back reflection or median columns)")))
 
         method = str(cfg.get("METHOD") or "none").lower()
         parts = {"direct": "Direct", "dhxml": "DHXML", "dbscan": "DBSCAN"}.get(

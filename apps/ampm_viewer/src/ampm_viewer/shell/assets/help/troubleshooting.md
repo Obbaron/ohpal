@@ -2,7 +2,7 @@
 title: When something goes wrong
 section: Reference
 order: 30
-keywords: error, problem, missing, greyed, disabled, fail, slow, empty, blank, issues, troubleshooting, no data, not found, memory, crash, unexpected error, report, version, quit
+keywords: error, problem, missing, greyed, disabled, fail, slow, empty, blank, issues, troubleshooting, no data, not found, memory, crash, unexpected error, report, version, quit, mixes, layout, datahub, older export
 ---
 # When something goes wrong
 
@@ -33,6 +33,17 @@ more layers, rebuild the DataStore with a wider range.
 - It may not have been **loaded**: the DataStore setup page decides which
   columns are imported. Rebuilding with it ticked brings it in.
 - A calculated column disappears if a column it depends on was deleted.
+- The build may be an **older DataHUB export**, which has no focus, laser
+  power, back reflection or median columns. Its Info page says so. See
+  [About the data](help:about-data).
+
+## "This build mixes DataHUB exports"
+
+Some of the build's layers were exported in the older DataHUB layout and some
+in the current one, or with different columns. The message names a layer of
+each. Nothing was converted; export the whole build again in one layout. A
+stacked build whose steps mix layouts is refused the same way. See
+[About the data](help:about-data).
 
 ## Imported part values are blank
 

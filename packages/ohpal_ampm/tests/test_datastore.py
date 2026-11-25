@@ -238,14 +238,23 @@ class TestBuildCache:
         assert store._cache_path(1).exists()
         assert not store._cache_path(999).exists()
 
-    def test_missing_expected_column_raises(self, tmp_path):
+    def test_missing_optional_column_is_left_out(self, tmp_path):
         d = tmp_path / "src"
         d.mkdir()
         cols = [c for c in EXPECTED_COLUMNS if c != "LaserVIEW (mean)"]
         write_layer_file(d, 1, columns=cols)
         ds = DataStore(d)
-        with pytest.raises(ValueError, match="missing expected columns"):
-            ds.build_cache(verbose=False)
+        assert ds.columns == [*cols, "layer", "Z"]
+        ds.build_cache(verbose=False)
+        assert pl.read_parquet(ds._cache_path(1)).columns == [*cols, "layer", "Z"]
+
+    def test_missing_required_column_raises(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        cols = [c for c in EXPECTED_COLUMNS if c != "Start time"]
+        write_layer_file(d, 1, columns=cols)
+        with pytest.raises(ValueError, match="missing required columns"):
+            DataStore(d)
 
     def test_trailing_empty_column_is_dropped(self, tmp_path):
         d = tmp_path / "src"
@@ -441,3 +450,122 @@ class TestRoundTrip:
 
     def test_cache_format_version_constant_present(self):
         assert isinstance(CACHE_FORMAT_VERSION, int)
+
+
+# -- DataHUB export layouts ------------------------------------------------
+
+# The older export's header and a few rows as the DataHUB wrote them (CRLF,
+# whole-number signals), from a real build (JR265).
+LEGACY_HEADER = ("Start time / us\tDuration / us\tx position / mm\ty position / mm"
+                 "\tLaserVIEW\tMeltVIEW Plasma\tMeltVIEW Melt Pool")
+LEGACY_ROWS = ["10340\t150\t-25.875\t-19.105\t307\t420\t175",
+               "10500\t150\t-25.895\t-19.085\t385\t780\t304",
+               "11680\t150\t-25.895\t-18.945\t345\t404\t182"]
+LEGACY_AS = ["Start time", "Duration", "Demand X", "Demand Y",
+             "MeltVIEW plasma (mean)", "MeltVIEW melt pool (mean)",
+             "LaserVIEW (mean)"]
+
+
+def write_legacy_file(directory, layer: int, *, bom: bool = False):
+    path = directory / f"Packet data for layer {layer}, laser 4.txt"
+    text = "\r\n".join([LEGACY_HEADER, *LEGACY_ROWS]) + "\r\n"
+    path.write_bytes(("﻿" if bom else "").encode() + text.encode())
+    return path
+
+
+class TestLayouts:
+    def test_legacy_layout_is_read_under_current_names(self, tmp_path):
+        from ohpal.ampm.datastore import LEGACY
+
+        d = tmp_path / "src"
+        d.mkdir()
+        for L in (1, 2):
+            write_legacy_file(d, L, bom=L == 2)
+        ds = DataStore(d)
+        assert ds.layout.kind == LEGACY
+        assert ds.columns == [*LEGACY_AS, "layer", "Z"], "known order, no blanks"
+        df = ds.query()
+        assert df.columns == [*LEGACY_AS, "layer", "Z"]
+        assert df.schema["Start time"] == pl.Int32
+        assert df.schema["Duration"] == pl.Int16
+        assert df.schema["Demand X"] == pl.Float32
+        assert df.schema["LaserVIEW (mean)"] == pl.Float32
+        first = df.filter(pl.col("layer") == 1).row(0, named=True)
+        assert first["Start time"] == 10340 and first["Duration"] == 150
+        assert first["Demand X"] == pytest.approx(-25.875)
+        assert first["Demand Y"] == pytest.approx(-19.105)
+        assert first["LaserVIEW (mean)"] == 307
+        assert first["MeltVIEW plasma (mean)"] == 420
+        assert first["MeltVIEW melt pool (mean)"] == 175
+        assert not any(ds._needs_rebuild(L) for L in ds.layers)
+
+    def test_current_layout_is_unchanged(self, store):
+        from ohpal.ampm.datastore import CURRENT
+
+        assert store.layout.kind == CURRENT
+        assert store.layout.columns == EXPECTED_COLUMNS
+
+    def test_a_build_mixing_layouts_is_refused_before_converting(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        write_legacy_file(d, 1)
+        write_legacy_file(d, 2)
+        write_layer_file(d, 3)  # the current layout
+        ds = DataStore(d)
+        with pytest.raises(ValueError, match="mixes DataHUB exports.*layer 3"):
+            ds.check_layouts()
+        with pytest.raises(ValueError, match="older DataHUB layout and layer 3"):
+            ds.build_cache(verbose=False)
+        assert not any(ds._cache_path(L).exists() for L in (1, 2, 3)), \
+            "refused before any layer is written"
+        ds.build_cache(layers=[1, 2], verbose=False)  # its own layout: fine
+        with pytest.raises(ValueError, match="mixes"):
+            ds.query(layers=(1, 3))
+
+    def test_layers_with_different_columns_are_refused(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        write_layer_file(d, 1)
+        write_layer_file(d, 2, columns=[c for c in EXPECTED_COLUMNS
+                                        if "median" not in c])
+        ds = DataStore(d)
+        with pytest.raises(ValueError, match=r"layer 2 has different columns"
+                                             r".*missing: \['Demand laser power \(median\)'"):
+            ds.build_cache(verbose=False)
+
+    def test_check_skips_layers_already_cached(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        write_legacy_file(d, 1)
+        write_legacy_file(d, 2)
+        ds = DataStore(d)
+        ds.build_cache(verbose=False)
+        ds.check_layouts()  # nothing to convert: nothing read, nothing raised
+        # Layer 2 re-exported in the current layout: newer than its cache, so
+        # it would be converted, and is refused.
+        _touch_in_future(write_layer_file(d, 2, laser=4))
+        with pytest.raises(ValueError, match="current DataHUB layout"):
+            ds.check_layouts()
+        ds.check_layouts([1])  # layer 1 is still fine
+
+    def test_a_cache_written_for_other_columns_is_rebuilt(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        write_legacy_file(d, 1)
+        ds = DataStore(d)
+        ds.build_cache(verbose=False)
+        path = ds._cache_path(1)
+        df = pl.read_parquet(path).drop("LaserVIEW (mean)")
+        df.write_parquet(path)
+        _touch_in_future(path)
+        assert ds._needs_rebuild(1)
+        ds.build_cache(verbose=False)
+        assert "LaserVIEW (mean)" in pl.read_parquet(path).columns
+
+    def test_unknown_layout_names_both(self, tmp_path):
+        d = tmp_path / "src"
+        d.mkdir()
+        (d / "Packet data for layer 1, laser 4.txt").write_text(
+            "Time\tX\tY\n1\t2\t3\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="current layout or the older one"):
+            DataStore(d)

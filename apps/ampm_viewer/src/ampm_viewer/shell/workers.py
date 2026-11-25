@@ -558,6 +558,11 @@ class CacheWorker(QObject):
         try:
             total = len(self._layers)
             built = 0
+            # A build (or stack) mixing DataHUB export layouts is refused
+            # before any layer is converted (header lines only).
+            check = getattr(self._store, "check_layouts", None)
+            if check is not None:
+                check(self._layers, force=self._force)
             for i, layer in enumerate(self._layers, start=1):
                 if self._cancelled:
                     break

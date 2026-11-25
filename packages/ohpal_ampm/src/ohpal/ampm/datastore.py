@@ -4,6 +4,12 @@ DataStore: lazy-loading, Parquet-cached access to Renishaw 500S AMPM data.
 A directory of 'Packet data for layer N, laser M.txt' files is converted on first
 use to a partitioned Parquet dataset (one file per layer) under <source_dir>/.cache/.
 Queries use Polars' lazy API so only the requested slice is materialized in memory.
+
+Two DataHUB export layouts are read: the current one (``EXPECTED_COLUMNS``,
+mean and median of each signal) and the older one (``LEGACY_COLUMNS``: seven
+columns, renamed on reading to their current names). Only ``REQUIRED_COLUMNS``
+must be present; a build carries just the known columns its files have, and
+every layer of a build must have the same ones.
 """
 
 from __future__ import annotations
@@ -37,6 +43,69 @@ EXPECTED_COLUMNS: list[str] = [
     "Laser output power (median)",
 ]
 
+# The DataHUB's older packet export: its column names and the current columns
+# they hold (LaserVIEW there is the same signal as LaserVIEW (mean) now). It
+# has no focus, laser power, back reflection or median columns.
+LEGACY_COLUMNS: dict[str, str] = {
+    "Start time / us": "Start time",
+    "Duration / us": "Duration",
+    "x position / mm": "Demand X",
+    "y position / mm": "Demand Y",
+    "LaserVIEW": "LaserVIEW (mean)",
+    "MeltVIEW Plasma": "MeltVIEW plasma (mean)",
+    "MeltVIEW Melt Pool": "MeltVIEW melt pool (mean)",
+}
+
+# What every layer must have (after renaming): the row key (layer + Start
+# time), the position, and Duration for a stacked build's timing. The other
+# known columns are kept when present.
+REQUIRED_COLUMNS: list[str] = ["Start time", "Duration", "Demand X", "Demand Y"]
+
+CURRENT = "current"
+LEGACY = "legacy"
+LAYOUT_NAMES = {CURRENT: "current DataHUB layout",
+                LEGACY: "older DataHUB layout"}
+
+
+class Layout:
+    """One packet file's column layout, read from its header line.
+
+    ``kind`` is ``CURRENT`` or ``LEGACY``; ``renames`` maps the file's own
+    header names to their current names; ``columns`` are the known columns the
+    file has (current names, in ``EXPECTED_COLUMNS`` order); ``header`` is the
+    file's header as written.
+    """
+
+    def __init__(self, header: list[str]) -> None:
+        self.header = [h for h in header if h.strip()]
+        names = {h.strip() for h in self.header}
+        legacy = (any(n in LEGACY_COLUMNS for n in names)
+                  and not any(n in EXPECTED_COLUMNS for n in names))
+        self.kind = LEGACY if legacy else CURRENT
+        self.renames = ({h: LEGACY_COLUMNS[h.strip()] for h in self.header
+                         if h.strip() in LEGACY_COLUMNS} if legacy
+                        else {h: h.strip() for h in self.header if h != h.strip()})
+        have = {self.renames.get(h, h) for h in self.header}
+        self.columns = [c for c in EXPECTED_COLUMNS if c in have]
+        self.missing = [c for c in REQUIRED_COLUMNS if c not in have]
+
+    @property
+    def name(self) -> str:
+        return LAYOUT_NAMES[self.kind]
+
+    def same_as(self, other: Layout) -> bool:
+        return self.kind == other.kind and self.columns == other.columns
+
+    def describe(self) -> str:
+        return f"the {self.name}, {len(self.columns)} columns"
+
+
+def read_layout(path: str | Path) -> Layout:
+    """The layout of one packet file, from its first line (cheap)."""
+    with open(path, encoding="utf-8-sig", errors="replace") as fh:
+        line = fh.readline()
+    return Layout(line.rstrip("\r\n").split("\t"))
+
 
 _CSV_SCHEMA_2: dict[str, type[pl.DataType]] = {
     "Start time": pl.Int32,
@@ -62,6 +131,29 @@ _FILENAME_RE = re.compile(
     r"^Packet data for layer (\d+), laser \d+\.txt$",
     re.IGNORECASE,
 )
+
+
+def _missing_message(layer: int, src: Path, layout: Layout) -> str:
+    return (
+        f"Layer {layer} ({src.name}) is missing required columns: "
+        f"{layout.missing}\nFound columns: {[h.strip() for h in layout.header]}\n"
+        f"Packet data must be a DataHUB export, in the current layout or the "
+        f"older one ({', '.join(LEGACY_COLUMNS)})."
+    )
+
+
+def _mixed_message(first: int, base: Layout, layer: int, other: Layout) -> str:
+    if base.kind != other.kind:
+        what = (f"layer {first} is in the {base.name} and layer {layer} in the "
+                f"{other.name}")
+    else:
+        extra = [c for c in other.columns if c not in base.columns]
+        lost = [c for c in base.columns if c not in other.columns]
+        what = (f"layer {layer} has different columns from layer {first}"
+                + (f" (extra: {extra})" if extra else "")
+                + (f" (missing: {lost})" if lost else ""))
+    return (f"This build mixes DataHUB exports: {what}. Every layer of a "
+            f"build must have the same columns; export it again in one layout.")
 
 
 class DataStore:
@@ -97,6 +189,13 @@ class DataStore:
         )
 
         self._source_files: dict[int, Path] = self._discover_source_files()
+        # The build's column layout, from its first layer's header; every other
+        # layer is checked against it before it is converted.
+        first = min(self._source_files)
+        self._layout = read_layout(self._source_files[first])
+        if self._layout.missing:
+            raise ValueError(_missing_message(
+                first, self._source_files[first], self._layout))
 
         # Optional part assignment. When set, ``query`` attaches a ``part_id``
         # column — either by bounding-box containment (``"bbox"``, e.g. from a
@@ -153,13 +252,19 @@ class DataStore:
         return sorted(self._source_files.keys())
 
     @property
+    def layout(self) -> Layout:
+        """The build's DataHUB export layout (see ``Layout``)."""
+        return self._layout
+
+    @property
     def columns(self) -> list[str]:
-        """Available data columns: the 17 source columns + 'layer' + 'Z'.
+        """Available data columns: the known source columns the build has (all
+        of ``EXPECTED_COLUMNS`` for the current layout) + 'layer' + 'Z'.
 
         When a part assignment is active, ``part_id`` is appended — it is
         computed per query rather than stored in the cache.
         """
-        base = [*EXPECTED_COLUMNS, "layer", "Z"]
+        base = [*self._layout.columns, "layer", "Z"]
         if self._parts_table is not None:
             base.append("part_id")
         return base
@@ -208,7 +313,11 @@ class DataStore:
 
         try:
             lf = pl.scan_parquet(str(cache), glob=False)
-            if lf.collect_schema().get("Z") != pl.Float32:
+            schema = lf.collect_schema()
+            if schema.get("Z") != pl.Float32:
+                return True
+            # Written for other columns (an older layout reading, say).
+            if schema.names() != [*self._layout.columns, "layer", "Z"]:
                 return True
 
             head = lf.select("layer", "Z").head(1).collect()
@@ -225,29 +334,58 @@ class DataStore:
 
         return False
 
+    def _check_layout(self, layer: int, layout: Layout) -> None:
+        """Raise if ``layer``'s layout isn't the build's."""
+        if layout.missing:
+            raise ValueError(_missing_message(
+                layer, self._source_files[layer], layout))
+        if not layout.same_as(self._layout):
+            raise ValueError(_mixed_message(
+                min(self._source_files), self._layout, layer, layout))
+
+    def check_layouts(
+        self, layers: Iterable[int] | None = None, *, force: bool = False
+    ) -> None:
+        """Raise ``ValueError`` if a layer to be converted has a different
+        layout from the build's (a build mixing DataHUB exports), before any
+        is converted. Reads only the header line of each layer whose cache is
+        missing or older than its source (every layer with ``force``)."""
+        candidates = (self.layers if layers is None else
+                      sorted({int(L) for L in layers} & set(self._source_files)))
+        for layer in candidates:
+            src = self._source_files[layer]
+            cache = self._cache_path(layer)
+            if (not force and cache.exists()
+                    and cache.stat().st_mtime >= src.stat().st_mtime):
+                continue
+            self._check_layout(layer, read_layout(src))
+
     def _convert_one(self, layer: int) -> None:
         """Read one source .txt and write its Parquet sibling."""
         src = self._source_files[layer]
+        layout = read_layout(src)
+        self._check_layout(layer, layout)
+        # Compact types by the file's own header names (an older layout's
+        # names map to current ones); names not in the file are ignored.
+        overrides = {h: _CSV_SCHEMA_2[layout.renames.get(h, h)]
+                     for h in layout.header
+                     if layout.renames.get(h, h) in _CSV_SCHEMA_2}
         df = pl.read_csv(
             src,
             separator="\t",
             has_header=True,
             truncate_ragged_lines=True,
             glob=False,  # path may contain '[3]' etc. that look like glob patterns
-            schema_overrides=_CSV_SCHEMA_2,
+            schema_overrides=overrides,
         )
 
         drop_cols = [c for c in df.columns if c.strip() == ""]
         if drop_cols:
             df = df.drop(drop_cols)
-
-        missing = [c for c in EXPECTED_COLUMNS if c not in df.columns]
-        if missing:
-            raise ValueError(
-                f"Layer {layer} ({src.name}) is missing expected columns: {missing}\n"
-                f"Found columns: {df.columns}"
-            )
-        df = df.select(EXPECTED_COLUMNS)
+        renames = {c: layout.renames[c] for c in df.columns if c in layout.renames}
+        if renames:
+            df = df.rename(renames)
+        df = df.select(layout.columns)
 
         df = df.with_columns(
             pl.lit(layer, dtype=pl.Int16).alias("layer"),
@@ -286,6 +424,9 @@ class DataStore:
             candidates = sorted(set(int(L) for L in layers) & set(self._source_files))
 
         to_build = [L for L in candidates if force or self._needs_rebuild(L)]
+        # Refuse a build mixing layouts before converting any of it.
+        for layer in to_build:
+            self._check_layout(layer, read_layout(self._source_files[layer]))
 
         if verbose and to_build:
             print(
