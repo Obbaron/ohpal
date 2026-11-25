@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-25
+
+Imports from the parts CSV and the samples template land on the right parts
+when the two number the parts differently.
+
 ### Fixed
 
 - **Imports land on the right parts when the parts CSV and the .dhxml number
@@ -811,7 +816,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/Obbaron/ohpal/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/Obbaron/ohpal/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/Obbaron/ohpal/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/Obbaron/ohpal/compare/v2.0.1...v2.1.0
