@@ -1064,3 +1064,82 @@ def assign_bounding_box_part(
             print(f"  {pid}: {int(counts[i]):>9,} rows")
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Matching one parts list to another by position
+# ---------------------------------------------------------------------------
+
+_BOX = ("x_min", "x_max", "y_min", "y_max")
+
+
+def match_parts_by_position(
+    source: pl.DataFrame,
+    target: pl.DataFrame,
+    *,
+    tol: float = 1.0,
+) -> tuple[dict[str, str], list[str], list[str]]:
+    """Map each ``source`` part to the ``target`` part at the same place.
+
+    The two lists need not agree on names: a QuantAM parts CSV keeps
+    QuantAM's own object names (``Part(2)`` ... ``Part(16)`` when ``Part(1)``
+    was deleted), while the build's ``.dhxml`` numbers the same parts ``1`` ...
+    ``15``. Matching by name pairs each part with its neighbour; by position
+    it can't.
+
+    Parameters
+    ----------
+    source
+        ``part_id``, ``x_center``, ``y_center`` (e.g.
+        :meth:`QuantAMParts.parent_parts`).
+    target
+        ``part_id``, ``x_center``, ``y_center``, and optionally the XY box
+        (``x_min`` ``x_max`` ``y_min`` ``y_max``, e.g. a dhxml's
+        ``parts_table()``).
+    tol
+        mm. A source point inside a target's box (grown by ``tol``) matches it;
+        a target without a box matches when its centre is within ``tol``.
+        Among several, the nearest centre wins.
+
+    Returns
+    -------
+    ``(mapping, unmatched, contested)``: ``mapping`` source id -> target id
+    (one to one); ``unmatched`` source ids at no target; ``contested`` source
+    ids that lost a target to a nearer source part.
+    """
+    if source.height == 0:
+        return {}, [], []
+    tid = [str(t) for t in target["part_id"].to_list()]
+    tx = target["x_center"].cast(pl.Float64).to_numpy()
+    ty = target["y_center"].cast(pl.Float64).to_numpy()
+    boxed = all(c in target.columns for c in _BOX)
+    if boxed:
+        x0, x1, y0, y1 = (target[c].cast(pl.Float64).to_numpy() for c in _BOX)
+
+    best: dict[str, tuple[float, str]] = {}  # target id -> (distance, source id)
+    unmatched: list[str] = []
+    for sid, x, y in zip(source["part_id"].to_list(),
+                         source["x_center"].to_list(), source["y_center"].to_list()):
+        sid = str(sid)
+        if x is None or y is None:
+            unmatched.append(sid)
+            continue
+        x, y = float(x), float(y)
+        dist = np.hypot(tx - x, ty - y)
+        near = dist <= tol
+        if boxed:
+            near = near | ((x >= x0 - tol) & (x <= x1 + tol)
+                           & (y >= y0 - tol) & (y <= y1 + tol))
+        if not near.any():
+            unmatched.append(sid)
+            continue
+        i = int(np.argmin(np.where(near, dist, np.inf)))
+        d = float(dist[i])
+        held = best.get(tid[i])
+        if held is None or d < held[0]:
+            best[tid[i]] = (d, sid)
+
+    mapping = {sid: t for t, (_d, sid) in best.items()}
+    contested = [s for s in (str(v) for v in source["part_id"].to_list())
+                 if s not in mapping and s not in unmatched]
+    return mapping, unmatched, contested

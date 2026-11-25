@@ -85,10 +85,14 @@ _PRIMARY_QSS = (
 
 class ExcelImportDialog(DraggableCard, QDialog):
     def __init__(self, grid_columns, parent=None, *, taken=None,
-                 start_dir=None, match_count=None) -> None:
+                 start_dir=None, match_count=None, align=None) -> None:
         super().__init__(parent)
         self._grid_columns = list(grid_columns)
         self._match_count = match_count
+        # ``align(path, sheet, key column)`` -> {sheet key: build part key}, by
+        # the rows' X/Y boxes (the samples template), or None: keys as written.
+        self._align = align
+        self._aligned: dict = {}  # (sheet, key column) -> that, or None
         self._keys: set[str] = set()       # the Excel key column, normalised
         self._matches: dict[str, tuple] = {}  # grid column -> (keys, row share)
         self._grid_picked = False           # the user chose the grid column
@@ -254,10 +258,26 @@ class ExcelImportDialog(DraggableCard, QDialog):
     def _keys_of(self, header: str) -> list[str]:
         return [norm_key(v) for v in self._columns.get(header, ([], False))[0]]
 
+    def _alignment(self, header: str):
+        """The sheet's part keys -> the build's, by position (see ``align``)."""
+        at = (self._sheet() if self._path else None, header)
+        if at not in self._aligned:
+            got = None
+            if self._align is not None and self._path:
+                try:
+                    got = self._align(self._path, self._sheet(), header)
+                except Exception:  # noqa: BLE001 - a help, not a must
+                    got = None
+            self._aligned[at] = got
+        return self._aligned[at]
+
     def _count(self, header: str) -> tuple[set, dict]:
         """The column's keys, and (keys, row share) for each grid column."""
         if header not in self._counted:
             keys = set(self._keys_of(header))
+            align = self._alignment(header)
+            if align:  # the build's names for the parts, by position
+                keys = {align[k] for k in keys if k in align}
             matches = {}
             if keys and self._match_count is not None:
                 matches = {c: self._match_count(c, keys) for c in self._grid_columns}
@@ -395,7 +415,8 @@ class ExcelImportDialog(DraggableCard, QDialog):
 
     def _parse(self, key_h: str, val_h: str):
         """Return (mapping, dtype, n). Raises ValueError with a message."""
-        return parse_mapping(self._path, self._sheet(), key_h, val_h)
+        return parse_mapping(self._path, self._sheet(), key_h, val_h,
+                             align=self._alignment(key_h))
 
     def source_values(self) -> dict:
         """Where the accepted column came from (sheet + headers) — recorded in
@@ -443,6 +464,45 @@ class ExcelImportDialog(DraggableCard, QDialog):
         return self._result
 
 
+_BOX = ("x_min", "x_max", "y_min", "y_max")
+
+
+def read_part_boxes(path, sheet: str, key_h: str):
+    """Each row's key (normalised) and XY box, ``part_id`` ``x_min`` ``x_max``
+    ``y_min`` ``y_max`` ``x_center`` ``y_center``, when the sheet has the box
+    columns (the samples template does); else None."""
+    import polars as pl
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if sheet not in wb.sheetnames:
+            return None
+        rows = wb[sheet].iter_rows(values_only=True)
+        header = next(rows, None) or ()
+        hdr = ["" if c is None else str(c).strip() for c in header]
+        if key_h not in hdr or any(c not in hdr for c in _BOX):
+            return None
+        ki, idx = hdr.index(key_h), [hdr.index(c) for c in _BOX]
+        out = []
+        for row in rows:
+            k = row[ki] if ki < len(row) else None
+            if _blank(k):
+                continue
+            try:
+                box = [float(row[i]) for i in idx]
+            except (TypeError, ValueError, IndexError):
+                continue
+            out.append((norm_key(k), *box))
+    finally:
+        wb.close()
+    if not out:
+        return None
+    df = pl.DataFrame(out, schema=["part_id", *_BOX], orient="row")
+    return df.with_columns(((pl.col("x_min") + pl.col("x_max")) / 2).alias("x_center"),
+                           ((pl.col("y_min") + pl.col("y_max")) / 2).alias("y_center"))
+
+
 def _blank(v) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
 
@@ -480,11 +540,15 @@ def read_columns(path, sheet: str) -> dict[str, tuple[list, bool]]:
         wb.close()
 
 
-def parse_mapping(path, sheet: str, key_h: str, val_h: str):
+def parse_mapping(path, sheet: str, key_h: str, val_h: str, *, align=None):
     """Read a key -> value table from an Excel sheet.
 
     Return (mapping, dtype, n). Raises ValueError with a message. Module-level
-    (no dialog needed) so a macro's Excel step can re-read a chosen file."""
+    (no dialog needed) so a macro's Excel step can re-read a chosen file.
+
+    ``align`` ({sheet key: build key}, from ``read_part_boxes`` matched by
+    position) renames the keys to the build's part names; rows whose part
+    is at no part of the build are left out."""
     from openpyxl import load_workbook
 
     wb = load_workbook(path, read_only=True, data_only=True)
@@ -511,6 +575,8 @@ def parse_mapping(path, sheet: str, key_h: str, val_h: str):
             pairs.append((norm_key(k), v))
     finally:
         wb.close()
+    if align:
+        pairs = [(align[k], v) for k, v in pairs if k in align]
 
     seen, dups = set(), []
     for nk, _v in pairs:

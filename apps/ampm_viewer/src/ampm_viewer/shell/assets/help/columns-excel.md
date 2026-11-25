@@ -43,6 +43,11 @@ the layer shown got a value.
   (the `part_id` of the samples template from **New ▸ Excel template**) are
   the same part, so the template's columns, such as a density you filled in,
   can be imported on `part_id` directly.
+- The samples template gives each part's box (`x_min` to `y_max`), so when
+  you key on its `part_id` its rows are matched to the build's parts **by
+  position**: the right part even when the template (named like the
+  `.dhxml`, `1` to `15`) and the table (with Direct assignment, named like
+  the parts CSV, `Part(2)` to `Part(16)`) number them differently.
 - A key that appears twice in the sheet stops the import: remove the duplicate
   in Excel and try again.
 - If every value is a number the column is numeric (usable in formulas and as

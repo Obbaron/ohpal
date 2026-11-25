@@ -1093,14 +1093,15 @@ class AppController(QObject):
         CSV). The dhxml carries only geometry."""
         return bool((self._config or {}).get("PARTS_CSV"))
 
-    def _parts_csvs(self) -> list[tuple[str, str]]:
-        """``(part_id prefix, parts CSV)`` for this build: its one CSV, or
-        each step's own for a stacked build (whose part ids carry the step).
-        Raises when there's none."""
+    def _parts_csvs(self) -> list[tuple[str, str, dict]]:
+        """``(part_id prefix, parts CSV, its build's config)`` for this build:
+        its one CSV, or each step's own for a stacked build (whose part ids
+        carry the step). Raises when there's none."""
         store = self.session.store
         if store is not None and stackbuild.is_stack(store):
-            out = [(f"{s.label} ", s.config.get("PARTS_CSV")) for s in store.steps]
-            missing = [p.strip() for p, path in out if not path]
+            out = [(f"{s.label} ", s.config.get("PARTS_CSV"), s.config)
+                   for s in store.steps]
+            missing = [p.strip() for p, path, _c in out if not path]
             if missing:
                 raise ValueError(
                     f"Step {', '.join(missing)} of this stacked build has no "
@@ -1109,7 +1110,70 @@ class AppController(QObject):
         path = (self._config or {}).get("PARTS_CSV")
         if not path:
             raise ValueError("This build has no parts CSV configured.")
-        return [("", path)]
+        return [("", path, self._config or {})]
+
+    def _assigned_parts(self, config: dict):
+        """The parts table the active part assignment names the data's parts
+        from, when that isn't the parts CSV itself: the .dhxml's (DHXML
+        assignment). None for Direct and DBSCAN, whose ids are the CSV's."""
+        method = str((self._config or {}).get("METHOD") or "").lower()
+        if method == "dhxml" and config.get("DHXML"):
+            from ohpal.ampm.parts import BuildStartedDHXML
+
+            return BuildStartedDHXML.from_dhxml(config["DHXML"]).parts_table()
+        return None
+
+    def _build_parts(self):
+        """The parts the active assignment names, with their positions:
+        the .dhxml's (DHXML) or the parts CSV's (Direct, DBSCAN); None without
+        an assignment, or for a stacked build."""
+        store = self.session.store
+        if store is not None and stackbuild.is_stack(store):
+            return None
+        cfg = self._config or {}
+        method = str(cfg.get("METHOD") or "").lower()
+        if method == "dhxml" and cfg.get("DHXML"):
+            from ohpal.ampm.parts import BuildStartedDHXML
+
+            return BuildStartedDHXML.from_dhxml(cfg["DHXML"]).parts_table()
+        if method in ("direct", "dbscan") and cfg.get("PARTS_CSV"):
+            from ohpal.ampm.parts import QuantAMParts
+
+            return QuantAMParts.from_path(cfg["PARTS_CSV"]).parent_parts()
+        return None
+
+    def excel_key_alignment(self, path, sheet: str, key_h: str) -> dict | None:
+        """For an Excel sheet that gives each row's XY box (the samples
+        template): {its key: the build's key for the part at that place}, both
+        normalised like join keys. The template names parts as the .dhxml does
+        (``1`` ... ``15``); with Direct assignment the data names them as the
+        parts CSV does (``Part(2)`` ... ``Part(16)`` when QuantAM's ``Part(1)``
+        was deleted), and by name each part would get its neighbour's values.
+        None when the sheet has no boxes or the build no assignment."""
+        import re
+
+        from ohpal.ampm.parts import match_parts_by_position
+
+        from .excel_dialog import read_part_boxes
+
+        if re.sub(r"[\s_\-]+", "", str(key_h).lower()) not in ("partid", "part"):
+            return None  # keyed on something else: as written
+        boxes = read_part_boxes(path, sheet, key_h)
+        parts = self._build_parts() if boxes is not None else None
+        if parts is None:
+            return None
+        found, _lost, _contested = match_parts_by_position(
+            parts.select("part_id", "x_center", "y_center"), boxes)
+        if not found:
+            return None
+        return {key: derive.norm_key(pid) for pid, key in found.items()}
+
+    def parts_csv_match(self) -> dict:
+        """How the last read of the parts CSV matched its parts to the build's
+        by position: ``{"matched": n, "unmatched": [ids], "contested": [ids]}``
+        (all empty when it didn't need to: Direct / DBSCAN)."""
+        return dict(getattr(self, "_csv_match", None)
+                    or {"matched": 0, "unmatched": [], "contested": []})
 
     def parts_csv_sections(self, *, variant: str = "1"):
         """Every section of the QuantAM parts CSV as ``(name, body_df)`` pairs,
@@ -1131,22 +1195,54 @@ class AppController(QObject):
         import polars as pl
 
         merged: dict[str, list] = {}
-        for prefix, path in self._parts_csvs():
-            for name, body in self._csv_sections(path, variant):
+        report = {"matched": 0, "unmatched": [], "contested": []}
+        for prefix, path, config in self._parts_csvs():
+            target = self._assigned_parts(config)
+            sections, rep = self._csv_sections(path, variant, target)
+            report["matched"] += rep["matched"]
+            report["unmatched"] += [f"{prefix}{p}" for p in rep["unmatched"]]
+            report["contested"] += [f"{prefix}{p}" for p in rep["contested"]]
+            for name, body in sections:
                 merged.setdefault(name, []).append(
                     stackbuild.prefix_part_ids(body, prefix))
+        self._csv_match = report
         return [(name, bodies[0] if len(bodies) == 1
                  else pl.concat(bodies, how="diagonal_relaxed"))
                 for name, bodies in merged.items()]
 
     @staticmethod
-    def _csv_sections(path, variant: str):
-        """``parts_csv_sections`` for one parts CSV."""
+    def _csv_sections(path, variant: str, target=None):
+        """``parts_csv_sections`` for one parts CSV, and how its parts matched
+        ``target`` (the parts table the data's part ids come from, when that
+        isn't the CSV: see ``_assigned_parts``).
+
+        With a ``target``, each row's part id becomes the build's id of the
+        part at the same X/Y (``match_parts_by_position``): the CSV keeps
+        QuantAM's names (``Part(2)`` ... ``Part(16)`` when ``Part(1)`` was
+        deleted), the .dhxml numbers the same parts ``1`` ... ``15``, so
+        matching by name would give each part its neighbour's values. Rows of
+        CSV parts at no build part are dropped (and reported)."""
         import polars as pl
 
-        from ohpal.ampm.parts import QuantAMParts, SECTION_PARENT
+        from ohpal.ampm.parts import (
+            SECTION_PARENT,
+            QuantAMParts,
+            match_parts_by_position,
+        )
 
         qp = QuantAMParts.from_path(path)
+        report = {"matched": 0, "unmatched": [], "contested": []}
+        to_build = None
+        if target is not None:
+            try:
+                mapping, unmatched, contested = match_parts_by_position(
+                    qp.parent_parts(), target)
+            except Exception:  # noqa: BLE001 - no usable positions: by name
+                mapping = None
+            if mapping is not None:
+                to_build = mapping
+                report = {"matched": len(mapping), "unmatched": unmatched,
+                          "contested": contested}
         try:  # instance number -> the grid's part id
             ids = qp.part_ids_by_instance().rename(
                 {"Sr. No.": "_inst", "part_id": "_pid"})
@@ -1178,8 +1274,13 @@ class AppController(QObject):
                 )
             else:
                 body = body.with_columns(bare.alias("part_id"))
+            if to_build is not None:  # the build's id of the part at that place
+                body = body.with_columns(
+                    pl.col("part_id").cast(pl.Utf8)
+                    .replace_strict(to_build, default=None, return_dtype=pl.Utf8)
+                ).filter(pl.col("part_id").is_not_null())
             out.append((name, body.select(["part_id", *data_cols])))
-        return out
+        return out, report
 
     def rename_error(self, old: str, new: str) -> str | None:
         """Validate a rename without mutating — lets the window pre-check before

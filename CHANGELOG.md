@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Imports land on the right parts when the parts CSV and the .dhxml number
+  them differently.** QuantAM keeps its own part names, so a build whose
+  `Part(1)` was deleted has a CSV running `Part(2)` to `Part(16)` while its
+  .dhxml numbers the same parts `1` to `15` (JR343). Matched by name, every part
+  got its neighbour's values and one part none: Import from parts CSV under
+  DHXML assignment, and Add from Excel of the samples template under Direct
+  assignment. Both now match parts by X/Y position (new
+  `ohpal.ampm.parts.match_parts_by_position`: inside a part's box, or its
+  centre within 1 mm; one to one, nearest wins), with any part assignment, in
+  macros too. The import message says "matched by position" and names any CSV
+  part that is at no part of the build. New GUI scenario `parts_by_position`
+  (checks every part's imported value against the row at its place; run on
+  JR343 with DHXML and Direct assignment, and on JR299) and matcher unit tests.
+
 ## [2.2.0] - 2026-11-24
 
 A Mean ± SD plot for measurements such as Archimedes density, axis ranges and

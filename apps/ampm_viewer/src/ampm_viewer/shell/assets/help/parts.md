@@ -45,6 +45,18 @@ part against hatch speed and power in a [contour plot](help:plot-contour).
 
 This needs the parts CSV; without one it is greyed out.
 
+### Matched by position
+
+The parts CSV and the build's `.dhxml` can name the same parts differently.
+QuantAM keeps its own names, so if `Part(1)` was deleted in QuantAM the CSV
+runs `Part(2)` to `Part(16)`, while the `.dhxml` numbers the same 15 parts
+`1` to `15`. Matching by name would give each part its neighbour's values,
+so the import matches each CSV part to the build's part **at the same X/Y
+position**. This works with any part assignment (DHXML, Direct or DBSCAN),
+and the message after an import says "matched by position" when it did. A
+CSV part at no part of the build (a CSV from another build, say) is named in
+the message and its values are left out.
+
 ## Parts with the same name
 
 If the build contains several parts with the same name, each copy is told

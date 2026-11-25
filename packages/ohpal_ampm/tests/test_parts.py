@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -25,6 +26,7 @@ from ohpal.ampm.parts import (
     assign_nearest_part,
     compute_part_id_map,
     join_parts_with_stats,
+    match_parts_by_position,
 )
 
 
@@ -678,3 +680,67 @@ class TestAssignBoundingBoxPartCoverage:
         out = capsys.readouterr().out
         assert "fell outside every part bounding box" in out
         assert "Assigned" in out
+
+
+# ---------------------------------------------------------------------------
+# match_parts_by_position: the CSV's names vs the dhxml's, matched by place
+# ---------------------------------------------------------------------------
+
+# A JR343-like pair: QuantAM's Part(1) was deleted, so the CSV names the parts
+# Part(2), Part(3), Part(4) where the dhxml numbers them 1, 2, 3.
+_DHXML_PARTS = pl.DataFrame({
+    "part_id": ["1", "2", "3"],
+    "x_min": [-28.8, -10.4, 9.1], "x_max": [-18.2, 0.2, 19.7],
+    "y_min": [-15.2, -15.0, -15.0], "y_max": [-4.6, -4.4, -4.4],
+}).with_columns(((pl.col("x_min") + pl.col("x_max")) / 2).alias("x_center"),
+                ((pl.col("y_min") + pl.col("y_max")) / 2).alias("y_center"))
+_CSV_PARTS = pl.DataFrame({
+    "part_id": ["Part(2)", "Part(3)", "Part(4)"],
+    "x_center": [-23.53, -5.12, 14.45], "y_center": [-9.91, -9.67, -9.71],
+})
+
+
+def test_match_by_position_not_name():
+    mapping, unmatched, contested = match_parts_by_position(_CSV_PARTS, _DHXML_PARTS)
+    assert mapping == {"Part(2)": "1", "Part(3)": "2", "Part(4)": "3"}
+    assert unmatched == [] and contested == []
+
+
+def test_match_against_itself_is_identity():
+    mapping, _u, _c = match_parts_by_position(_CSV_PARTS, _CSV_PARTS)
+    assert mapping == {p: p for p in _CSV_PARTS["part_id"]}
+
+
+def test_match_centres_only_needs_tolerance():
+    """Without boxes, a centre must be within ``tol``."""
+    shifted = _CSV_PARTS.with_columns(pl.col("x_center") + 0.5)
+    assert len(match_parts_by_position(shifted, _CSV_PARTS, tol=1.0)[0]) == 3
+    mapping, unmatched, _c = match_parts_by_position(shifted, _CSV_PARTS, tol=0.1)
+    assert mapping == {} and unmatched == ["Part(2)", "Part(3)", "Part(4)"]
+
+
+def test_match_reports_strays_and_contests():
+    extra = pl.concat([_CSV_PARTS, pl.DataFrame({
+        "part_id": ["Part(9)", "Part(10)", "Part(11)"],
+        "x_center": [100.0, -23.0, None], "y_center": [100.0, -9.5, None]})],
+        how="vertical_relaxed")
+    mapping, unmatched, contested = match_parts_by_position(extra, _DHXML_PARTS)
+    assert mapping["Part(2)"] == "1", "the nearer of two in one box keeps it"
+    assert unmatched == ["Part(9)", "Part(11)"]  # far away; no position
+    assert contested == ["Part(10)"]
+    assert set(mapping.values()) == {"1", "2", "3"}, "one to one"
+
+
+_JR343 = Path("/mnt/user-data/attachments/c2f2dddd-9542-52d2-8bf3-e8b4377c4249")
+_JR343_CSV = _JR343 / "d9d3ede9-JR343_params.csv"
+_JR343_DHXML = _JR343 / "1dee0a8b-BuildStarted_2026.9.30.13.15.6.dhxml"
+
+
+@pytest.mark.skipif(not (_JR343_CSV.exists() and _JR343_DHXML.exists()),
+                    reason="JR343 parts CSV + dhxml not available")
+def test_match_real_jr343_pair():
+    csv_parts = QuantAMParts.from_path(_JR343_CSV).parent_parts()
+    build = BuildStartedDHXML.from_dhxml(_JR343_DHXML).parts_table()
+    mapping, unmatched, contested = match_parts_by_position(csv_parts, build)
+    assert mapping == {f"Part({n + 1})": str(n) for n in range(1, 16)}
+    assert unmatched == [] and contested == []

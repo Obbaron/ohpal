@@ -797,6 +797,15 @@ class Actions(QObject):
         if not added:
             return Outcome(True, "No new columns imported from the parts CSV.")
         matched, note = self._match_text(all_keys, "Parts CSV import")
+        report = self._c.parts_csv_match()
+        if report["matched"] and matched:  # matched by position, not name
+            matched = matched.replace(" parts.", " parts by position.")
+        lost = report["unmatched"] + report["contested"]
+        if lost:
+            warn = (f"{len(lost)} part(s) in the parts CSV are at no part of this "
+                    f"build, so their values weren't imported: {_names_preview(lost)}.")
+            matched += " " + warn
+            note = f"{note} {warn}".strip()
         return Outcome(
             True,
             f"Imported {len(added)} column(s) from the parts CSV: "

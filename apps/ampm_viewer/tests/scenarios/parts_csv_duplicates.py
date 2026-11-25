@@ -13,7 +13,8 @@ from ohpal.ampm.parts import QuantAMParts
 ORIG, BUILD = sys.argv[1], sys.argv[2]
 
 def sections(csv):
-    stub = types.SimpleNamespace(_parts_csvs=lambda: [("", csv)],
+    stub = types.SimpleNamespace(_parts_csvs=lambda: [("", csv, {})],
+                                 _assigned_parts=lambda config: None,  # CSV ids
                                  _csv_sections=AppController._csv_sections)
     return dict(AppController.parts_csv_sections(stub))
 

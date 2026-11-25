@@ -1754,7 +1754,8 @@ class MainWindow(QMainWindow):
         frame = self.session.result.df if self.session.result is not None else None
         dlg = ExcelImportDialog(
             dt._columns, self, taken=taken,
-            match_count=lambda col, keys: key_matches(frame, col, keys))
+            match_count=lambda col, keys: key_matches(frame, col, keys),
+            align=self.controller.excel_key_alignment)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         name, grid_key, mapping, dtype, _n = dlg.result_values()
@@ -2406,7 +2407,8 @@ class MainWindow(QMainWindow):
         if not path:
             return None
         try:
-            mapping, dtype, _n = parse_mapping(path, sheet, key_h, val_h)
+            align = self.controller.excel_key_alignment(path, sheet, key_h)
+            mapping, dtype, _n = parse_mapping(path, sheet, key_h, val_h, align=align)
         except Exception as exc:  # noqa: BLE001 — unreadable file etc. → an issue
             return f"{Path(path).name}: {exc}"
         if not mapping:
