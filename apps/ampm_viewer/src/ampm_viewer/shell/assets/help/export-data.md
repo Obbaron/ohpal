@@ -6,9 +6,9 @@ keywords: datahub, generator, monitor, export, packets, export packets, dat, raw
 ---
 # Exporting a build's data
 
-AMPM Viewer reads a build's melt-pool monitoring data once it has been
-exported from the machine's raw `.DAT` files. Renishaw's **DataHUB Generator**
-does this, writing one text file per layer: the *packets*. For part features
+AMPM Viewer reads a build's monitoring data once it has been processed from the
+machine's raw `.DAT` files. Renishaw's **DataHUB Generator** does this,
+writing one text file per layer: the *packets*. For part features
 the app also uses two files from QuantAM, the **parts CSV** and the
 **full-plate STL**. This page goes through both. The numbers in each picture
 match the steps beside it.
