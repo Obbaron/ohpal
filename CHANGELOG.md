@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pictures in Help.** Articles can show screenshots: each in a framed band
+  (drawn from the theme's colours) with its caption under it, scaled to the
+  reading column and refitted as the window is resized; dark mode shows a
+  dark screenshot where there is one. Click a picture to see it full size.
+  Captions are found by search.
+- **New articles:** *Exporting a build's data* (DataHUB Generator, step by
+  step, and the parts CSV and STL from QuantAM) and *Installing and
+  uninstalling* (including what to do when Windows says "Windows protected
+  your PC" and offers only Don't run: Unblock the setup in its Properties).
+  *Welcome*, *Opening a build* and *Excel template* gained pictures of the
+  window, the landing page, the folder picker and a filled-in template.
+- `just help-images <folder>` (`apps/ampm_viewer/help_images.py`) makes the
+  pictures from the original screenshots: cropped, with red boxes and
+  numbers in the how-to guides' style, and a redaction where a screenshot
+  shows a user name. The screenshots themselves aren't kept in the
+  repository.
+
 ## [2.3.0] - 2026-11-25
 
 Builds exported by an older version of the DataHUB open, with only the

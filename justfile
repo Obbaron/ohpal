@@ -54,6 +54,11 @@ build:
 installer: build
     uv --directory {{app_dir}} run --no-sync python installer/build_installer.py
 
+# the help articles' pictures, cropped and marked, from a folder of screenshots
+# (what each picture is made from: SHOTS in apps/ampm_viewer/help_images.py)
+help-images folder:
+    uv run --no-sync python {{app_dir}}/help_images.py {{folder}}
+
 # release a version: checks, changelog, release notes, tests, commit, push, main, tag,
 # then follows GitHub's installer build and offers to publish (needs gh for that part)
 # usage:  just release 2.2.0            (add --dry-run to see the plan, --yes to not be asked)

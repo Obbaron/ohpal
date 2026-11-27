@@ -15,6 +15,11 @@ An article is a Markdown file under ``assets/help`` with a small header::
 for (see ``MainWindow._help_context``). Links between articles are written
 ``[Filters](help:filters)``; the id is the file's name.
 
+A picture is a paragraph of its own, ``![Caption](images/name.png)``, the
+file in ``assets/help/images``; the caption is shown under it and found by
+search. ``name.dark.png``, when there is one, is shown in dark mode instead.
+The images are made by ``apps/ampm_viewer/help_images.py``.
+
 No Qt in here, so the content can be checked without a display.
 """
 
@@ -25,11 +30,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 HELP_DIR = Path(__file__).parent / "assets" / "help"
+IMAGES_DIR = HELP_DIR / "images"
 # Sidebar order of the sections; an unknown section sorts after these.
 SECTIONS = ("Getting started", "Data", "Plots", "Reference")
 HOME = "overview"  # opened when nothing more specific fits
 
 _LINK_RE = re.compile(r"\]\(help:([a-z0-9-]+)\)")
+# A picture: a paragraph that is only ![caption](images/name.png).
+IMAGE_RE = re.compile(r"^[ \t]*!\[([^\]]*)\]\((images/[^)\s]+)\)[ \t]*$", re.M)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -50,10 +58,21 @@ class Article:
         """Ids of the articles this one links to."""
         return _LINK_RE.findall(self.body)
 
+    def images(self) -> list[tuple[str, str]]:
+        """The article's pictures: (caption, path under the help folder)."""
+        return IMAGE_RE.findall(self.body)
+
+
+def dark_variant(path: str) -> str:
+    """``images/a.png`` -> ``images/a.dark.png``."""
+    stem, dot, ext = path.rpartition(".")
+    return f"{stem}.dark.{ext}" if dot else f"{path}.dark"
+
 
 def _plain_text(markdown: str) -> str:
     """Markdown with its markup stripped, for searching and excerpts."""
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", markdown)   # links → label
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", markdown)  # picture → caption
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)   # links → label
     text = re.sub(r"^\s*\|?[\s:|-]+\|?\s*$", " ", text, flags=re.M)  # table rules
     text = re.sub(r"[#*`|>]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
@@ -216,4 +235,15 @@ def check(articles: list[Article]) -> list[str]:
             claimed[key] = a.id
         if a.section not in SECTIONS:
             problems.append(f"{a.id}: unknown section '{a.section}'")
+        for caption, path in a.images():
+            if not (HELP_DIR / path).is_file():
+                problems.append(f"{a.id}: picture '{path}' is missing")
+            if not caption.strip():
+                problems.append(f"{a.id}: picture '{path}' has no caption")
+    used = {path for a in articles for _, path in a.images()}
+    used |= {dark_variant(path) for path in used}
+    if IMAGES_DIR.is_dir():
+        for f in sorted(IMAGES_DIR.iterdir()):
+            if f.suffix.lower() == ".png" and f"images/{f.name}" not in used:
+                problems.append(f"images/{f.name} isn't in any article")
     return problems

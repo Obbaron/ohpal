@@ -8,19 +8,28 @@ It wears the same frameless-card look as the app's dialogs (rounded card, a
 bold title, bold boxless section headings, muted secondary text). Having no
 title bar, it is moved by dragging its top strip and resized from the grip in
 its bottom-right corner.
+
+Pictures (``![caption](images/name.png)``, see ``help``) sit in a framed band
+with their caption under it, the frame and band drawn from the palette so
+they follow the theme; ``name.dark.png`` is shown in dark mode when there is
+one. A picture is scaled down to the reading column (smoothly, at the
+screen's pixel ratio) and refitted when the window is resized; clicking it
+opens it at full size (``ImageWindow``).
 """
 
 from __future__ import annotations
 
 import re
 
-from PyQt6.QtCore import QRect, QSize, Qt, QUrl
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QImage,
     QKeySequence,
     QPalette,
+    QPixmap,
     QShortcut,
     QTextBlockFormat,
     QTextCharFormat,
@@ -28,10 +37,12 @@ from PyQt6.QtGui import (
     QTextDocument,
     QTextFormat,
     QTextFrameFormat,
+    QTextImageFormat,
     QTextLength,
     QTextTable,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -39,6 +50,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
@@ -59,6 +71,29 @@ _HIT = QColor(255, 204, 64, 130)               # search-term highlight in the te
 _TITLE_QSS = "font-size: 14pt; font-weight: 600;"
 _MUTED_QSS = "color: palette(placeholder-text);"
 _DRAG_STRIP_PX = 52  # the card's top strip that moves the window when dragged
+# Pictures: the placeholder paragraph a picture stands as until it is put in
+# (plain letters, which Markdown leaves alone), the band round it, the scheme
+# of its resource names and of its click-to-enlarge link.
+_IMG_TOKEN = "HELPPICTURE{}END"
+_FIG_PAD = 8.0          # band padding round the picture, px
+_FIG_BORDER = 1.0
+_IMG_SCHEME = "helpimg"     # resource: helpimg:<theme>/<width>/<path>
+_OPEN_SCHEME = "helpimage"  # link: helpimage:<path>
+
+
+def is_dark(palette: QPalette) -> bool:
+    return palette.color(QPalette.ColorRole.Window).lightness() < 128
+
+
+def image_path(path: str, dark: bool):
+    """The file to show for an article's picture ``path`` (``images/a.png``):
+    its ``.dark`` variant in dark mode when there is one. None if missing."""
+    candidates = [helpdocs.dark_variant(path), path] if dark else [path]
+    for c in candidates:
+        f = helpdocs.HELP_DIR / c
+        if f.is_file():
+            return f
+    return None
 
 
 def _resized(font: QFont, delta: float) -> QFont:
@@ -234,6 +269,8 @@ class HelpWindow(DraggableCard, QWidget):
         self.view.setOpenLinks(False)  # links are ours: help:<article id>
         self.view.setOpenExternalLinks(False)
         self.view.anchorClicked.connect(self._on_link)
+        # Pictures follow the reading column's width.
+        self._fitter = _OnResize(self._schedule_fit, self.view.viewport())
         ml.addWidget(self.view, 1)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -337,7 +374,9 @@ class HelpWindow(DraggableCard, QWidget):
             self.show_article(self._history[at], record=False)
 
     def _on_link(self, url: QUrl) -> None:
-        if url.scheme() == "help":
+        if url.scheme() == _OPEN_SCHEME:
+            self._open_picture(url.toString()[len(_OPEN_SCHEME) + 1:])
+        elif url.scheme() == "help":
             self.show_article(url.path() or url.toString()[len("help:"):])
         elif url.scheme() in ("http", "https"):
             from PyQt6.QtGui import QDesktopServices
@@ -429,8 +468,16 @@ class HelpWindow(DraggableCard, QWidget):
         doc.setDocumentMargin(2)
         # The article's "# Title" line is shown by the title label instead.
         body = re.sub(r"\A\s*#(?!#)[^\n]*\n+", "", article.body)
+        pictures: list[tuple[str, str]] = []
+
+        def hold(m) -> str:
+            pictures.append((m.group(1), m.group(2)))
+            return _IMG_TOKEN.format(len(pictures) - 1)
+
+        body = helpdocs.IMAGE_RE.sub(hold, body)
         self.view.setMarkdown(body)
         self._polish(doc, base)
+        self._insert_pictures(doc, pictures, base)
         self._mark_hits()
         self.view.verticalScrollBar().setValue(0)
         if self.search.text().strip():
@@ -533,6 +580,175 @@ class HelpWindow(DraggableCard, QWidget):
                     cell.setFormat(cfmt)
         cursor.endEditBlock()
 
+    # -- pictures ----------------------------------------------------------
+    def _insert_pictures(self, doc: QTextDocument, pictures, base: QFont) -> None:
+        """Put each picture where its placeholder paragraph is: a framed band
+        (the palette's border colour round the alternate-base tint) holding
+        the picture and its caption, muted and centred."""
+        if not pictures:
+            return
+        pal = self.palette()
+        dark = is_dark(pal)
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+        for n in range(len(pictures) - 1, -1, -1):
+            caption, path = pictures[n]
+            found = doc.find(_IMG_TOKEN.format(n))
+            if found.isNull():
+                continue
+            block = found.block()
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.position() + block.length() - 1,
+                               QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            # The emptied paragraph stays (a frame goes between blocks), as
+            # does the one Qt adds after the frame: next to no height. (A
+            # fixed line height of 0 counts as unset, hence 1 px.)
+            gone = QTextBlockFormat()
+            gone.setLineHeight(1.0, QTextBlockFormat.LineHeightTypes.FixedHeight.value)
+            gone.setTopMargin(0.0)
+            gone.setBottomMargin(0.0)
+            tiny = QTextCharFormat()       # an empty line is as tall as its font
+            tiny_font = QFont(base)
+            tiny_font.setPixelSize(1)
+            tiny.setFont(tiny_font)
+            cursor.setBlockFormat(gone)
+            cursor.setBlockCharFormat(tiny)
+            ff = QTextFrameFormat()
+            ff.setBorder(_FIG_BORDER)
+            ff.setBorderBrush(QBrush(pal.color(QPalette.ColorRole.Mid)))
+            ff.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+            ff.setPadding(_FIG_PAD)
+            ff.setBackground(QBrush(pal.color(QPalette.ColorRole.AlternateBase)))
+            ff.setTopMargin(4.0)
+            ff.setBottomMargin(12.0)
+            ff.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100.0))
+            frame = cursor.insertFrame(ff)
+            centred = QTextBlockFormat()
+            centred.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            cursor.setBlockFormat(centred)
+            img = QTextImageFormat()
+            img.setName(f"{_IMG_SCHEME}:pending/{path}")
+            img.setProperty(QTextFormat.Property.UserProperty, path)
+            img.setProperty(QTextFormat.Property.UserProperty + 1, int(dark))
+            img.setAnchor(True)
+            img.setAnchorHref(f"{_OPEN_SCHEME}:{path}")
+            img.setToolTip(f"{caption} (click to see it full size)")
+            cursor.insertImage(img)
+            cap = QTextBlockFormat(centred)
+            cap.setTopMargin(6.0)
+            cf = QTextCharFormat()
+            cf.setFont(_resized(base, -1.0),
+                       QTextCharFormat.FontPropertiesInheritanceBehavior
+                       .FontPropertiesSpecifiedOnly)
+            cf.setForeground(QBrush(pal.color(QPalette.ColorRole.PlaceholderText)))
+            cursor.insertBlock(cap, cf)
+            cursor.insertText(caption, cf)
+            after = QTextCursor(doc)
+            after.setPosition(frame.lastPosition() + 1)
+            if not after.block().text():
+                after.setBlockFormat(gone)
+                after.setBlockCharFormat(tiny)
+        cursor.endEditBlock()
+        self._fit_pictures()
+
+    def _picture_room(self) -> tuple[int, int]:
+        """Room for a picture: the reading column's width, and a height
+        (most of the column's) so a tall one doesn't fill the view, px."""
+        doc = self.view.document()
+        vp = self.view.viewport()
+        room = (vp.width() - 2 * doc.documentMargin()
+                - 2 * (_FIG_PAD + _FIG_BORDER) - 6)
+        return max(80, int(room)), max(220, int(vp.height() * 0.62))
+
+    def _fit_pictures(self) -> None:
+        """Scale every picture to the reading column (never above its own
+        size), smoothly and at the screen's pixel ratio, so it stays sharp."""
+        doc = self.view.document()
+        width, height = self._picture_room()
+        ratio = max(1.0, self.view.devicePixelRatioF())
+        cursor = QTextCursor(doc)
+        block = doc.begin()
+        edits = []
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                fmt = frag.charFormat()
+                if frag.isValid() and fmt.isImageFormat():
+                    imgf = fmt.toImageFormat()
+                    path = imgf.property(QTextFormat.Property.UserProperty)
+                    if path:
+                        edits.append((frag.position(), imgf, path))
+                it += 1
+            block = block.next()
+        if not edits:
+            return
+        cursor.beginEditBlock()
+        for pos, imgf, path in edits:
+            dark = bool(imgf.property(QTextFormat.Property.UserProperty + 1))
+            source = self._picture(path, dark)
+            if source is None:
+                continue
+            scale = min(1.0, width / source.width(), height / source.height())
+            w = max(1, round(source.width() * scale))
+            h = max(1, round(source.height() * scale))
+            name = f"{_IMG_SCHEME}:{'dark' if dark else 'light'}/{w}/{path}"
+            if imgf.name() == name:
+                continue
+            if doc.resource(QTextDocument.ResourceType.ImageResource.value,
+                            QUrl(name)) is None:
+                scaled = source if w == source.width() else source.scaled(
+                    round(w * ratio), round(h * ratio),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+                if w != source.width():
+                    scaled.setDevicePixelRatio(ratio)
+                doc.addResource(QTextDocument.ResourceType.ImageResource.value,
+                                QUrl(name), scaled)
+            new = QTextImageFormat(imgf)
+            new.setName(name)
+            new.setWidth(w)
+            new.setHeight(h)
+            cursor.setPosition(pos)
+            cursor.setPosition(pos + 1, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setCharFormat(new)
+        cursor.endEditBlock()
+
+    def _picture(self, path: str, dark: bool) -> QImage | None:
+        """A picture's file, read once per window."""
+        f = image_path(path, dark)
+        if f is None:
+            return None
+        cache = self.__dict__.setdefault("_pictures", {})
+        key = str(f)
+        if key not in cache:
+            img = QImage(key)
+            cache[key] = None if img.isNull() else img
+        return cache[key]
+
+    def _schedule_fit(self) -> None:
+        if not getattr(self, "_fit_pending", False):
+            self._fit_pending = True
+
+            def run() -> None:
+                self._fit_pending = False
+                self._fit_pictures()
+
+            QTimer.singleShot(60, run)
+
+    def _open_picture(self, path: str) -> None:
+        source = self._picture(path, is_dark(self.palette()))
+        if source is None:
+            return
+        caption = next((c for c, p in (helpdocs.find(self._articles, self._current)
+                                        .images() if self._current else [])
+                        if p == path), "")
+        win = getattr(self, "_image_window", None)
+        if win is None:
+            win = self._image_window = ImageWindow(self)
+        win.show_image(source, caption)
+
     def _hit_selections(self) -> list:
         terms = helpdocs._terms(self.search.text())
         if not terms:
@@ -576,3 +792,76 @@ class HelpWindow(DraggableCard, QWidget):
             article = helpdocs.find(self._articles, self._current)
             if article is not None and not self._rendering:
                 self._render(article)
+
+
+class _OnResize(QObject):
+    """Calls ``slot`` when the watched widget is resized."""
+
+    def __init__(self, slot, widget: QWidget) -> None:
+        super().__init__(widget)
+        self._slot = slot
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() == QEvent.Type.Resize:
+            self._slot()
+        return False
+
+
+class ImageWindow(DraggableCard, QWidget):
+    """A help picture at its own size (a screenshot as it was on the screen),
+    scrolling when it is bigger than the window; the help window's card look.
+    Esc or Close closes it."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Picture")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setMinimumSize(360, 240)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        card = QFrame()
+        card.setObjectName("HelpCard")
+        card.setStyleSheet(
+            "#HelpCard { background: palette(window); "
+            "border: 1px solid palette(mid); border-radius: 10px; }")
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(10)
+        self.caption = QLabel("")
+        self.caption.setStyleSheet(_TITLE_QSS)
+        self.caption.setWordWrap(True)
+        lay.addWidget(self.caption)
+        self.area = QScrollArea()
+        self.area.setFrameShape(QFrame.Shape.NoFrame)
+        self.area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.picture = QLabel()
+        self.picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.area.setWidget(self.picture)
+        self.area.setWidgetResizable(True)
+        lay.addWidget(self.area, 1)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.close)
+        buttons.addWidget(self.close_btn)
+        buttons.addSpacing(8)
+        lay.addLayout(buttons)
+        self.enable_resize(outer, card)
+        QShortcut(QKeySequence("Esc"), self, activated=self.close)
+
+    def show_image(self, image: QImage, caption: str) -> None:
+        self.caption.setText(caption)
+        self.picture.setPixmap(QPixmap.fromImage(image))
+        screen = (self.parentWidget() or self).screen() or QApplication.primaryScreen()
+        avail = screen.availableGeometry()
+        chrome_w, chrome_h = 2 * 18 + 24, 14 + 40 + 10 + 40 + 14 + 24
+        w = min(image.width() + chrome_w, int(avail.width() * 0.92))
+        h = min(image.height() + chrome_h, int(avail.height() * 0.92))
+        self.show()
+        self.resize(max(w, 360), max(h, 240))
+        self.move(avail.center() - self.rect().center())
+        self.raise_()
+        self.activateWindow()

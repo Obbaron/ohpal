@@ -2,13 +2,20 @@
 title: Opening a build
 section: Getting started
 order: 20
-keywords: new, open, recent, favourites, folder, build, load, search, star, single build, info, close, properties
+keywords: new, open, recent, favourites, folder, build, load, search, star, single build, info, close, properties, folder picker, select folder
 context: file.start, file
 ---
 # Opening a build
 
 A *build* is a folder. Point the app at the folder and it finds what it needs
 inside.
+
+![The File tab's landing page](images/file-start.png)
+
+1. **New**: a single build, a stacked build or an Excel template.
+2. The builds you have opened: **Recent**, and your **Favourites**.
+3. **Search for a file** narrows the list.
+4. The **star** keeps a build under Favourites.
 
 ## New or Open?
 
@@ -20,8 +27,13 @@ inside.
 - **Open**: for a build that already has a DataStore. It opens straight onto
   the Data tab. If there is no DataStore yet, you are offered to create one.
 
-Both open a folder picker: choose the build's folder (the one that contains
-the exported packets), not a file inside it.
+Both open a folder picker:
+
+1. Choose the build's folder (the one that contains the exported packets),
+   not a file inside it.
+2. Click **Select Folder**.
+
+![The folder picker: a build folder, then Select Folder](images/open-folder-picker.png)
 
 **New** also makes a [Stacked build](help:stacked-builds) (a build printed in
 steps, read as one) and an [Excel template](help:create-excel).
@@ -51,7 +63,8 @@ just leads back to the landing page.
 | **STL**: the full-plate export | Masking. |
 
 Only the packet source is required. Features that need a missing input are
-greyed out, with the reason in their tooltip.
+greyed out, with the reason in their tooltip. How to export these from DataHUB
+and QuantAM: [Exporting a build's data](help:export-data).
 
 ## Recent builds
 
@@ -68,6 +81,7 @@ to open it.
 
 ## See also
 
+- [Exporting a build's data](help:export-data)
 - [Setting up the DataStore](help:datastore-setup)
 - [Stacked builds](help:stacked-builds)
 - [Excel template](help:create-excel)
