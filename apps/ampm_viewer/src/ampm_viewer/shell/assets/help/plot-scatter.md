@@ -2,7 +2,7 @@
 title: Scatter plots
 section: Plots
 order: 20
-keywords: scatter, 2d, 3d, points, colour, markers, rotate, hover, tooltip, sample, bounding box, legend, categories, equal axes, aspect, top, front, side, iso, view, one point per, per part, per specimen, mean, cov, statistic, trend line, regression, fit, linear, r squared, r2, p-value, correlation
+keywords: scatter, 2d, 3d, points, colour, markers, rotate, hover, tooltip, sample, bounding box, legend, categories, equal axes, aspect, top, front, side, iso, view, one point per, per part, per specimen, mean, cov, statistic, trend line, regression, fit, linear, r squared, r2, p-value, correlation, shape by, marker shape, symbols, orientation, rotation, label points, point labels, names, specimen
 context: plot.2D Scatter, plot.3D Scatter
 ---
 # Scatter plots
@@ -70,6 +70,30 @@ Double-click the label to [edit](help:plot-elements) it: font, size, colour,
 which corner, what it shows (the equation, R², p, the number of points), and
 the line's colour, width and dashes. The trend line is also on
 [Mean ± SD](help:plot-mean-sd) plots, through the group means.
+
+## Shapes and labels
+
+Two more choices in the dialog, for a 2D Scatter (of every row or one point
+per group) and a [Mean ± SD](help:plot-mean-sd) plot:
+
+- **Shape by** draws each value of a column in its own marker shape: disc,
+  square, triangle, diamond and so on, in the column's natural order (a
+  ninth value starts the shapes again). The legend gets a section for the
+  shapes, under the colours' when the points are coloured by a text column;
+  beside a colour bar it sits inside the plot, top right. So a colour can show
+  one setting and a shape another: colour by scan length, shape by build
+  orientation. The side panel's **Marker** is off while the shapes come from
+  a column.
+- **Label points** writes a column's value beside each point (a specimen's
+  name, say). Labels are drawn for up to 300 points; a plot of more has none.
+  On a grouped plot the value is the group's (its first, when the group's
+  rows differ).
+
+The labels are a [plot element](help:plot-elements): double-click one to set
+their font, size, colour and side (right, left, above, below, or above right,
+the start on Mean ± SD plots so they clear the error bars). They keep their
+distance from the points as you zoom. Hover a point for its shape and label
+columns too.
 
 ## 3D Scatter
 

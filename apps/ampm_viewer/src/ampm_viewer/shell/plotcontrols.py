@@ -84,6 +84,8 @@ KNEE_LINE = Control("show_ref", "Knee line", "knee_line", "toggle", "options")
 ERROR_BARS = Control("error", "Error bars", "error_bars", "choice", "options",
                      tuple((k, ERROR_NAMES[k]) for k in ERRORS))
 TREND_LINE = Control("fit", "Trend line", "trend_line", "toggle", "options")
+X_ERROR = Control("x_error", "Error bars on X", "x_error_bars", "toggle",
+                  "options")
 
 VIEW_OPTIONS: dict[str, tuple] = {
     SCATTER_2D: (EQUAL_AXES, TREND_LINE),
@@ -97,7 +99,7 @@ VIEW_OPTIONS: dict[str, tuple] = {
     KDE: (KDE_FILL, BANDWIDTH),
     CONTOUR: (CONTOUR_POINTS, CONTOUR_LINES),
     KDIST: (KNEE_LINE,),
-    MEAN_SD: (ERROR_BARS, TREND_LINE),
+    MEAN_SD: (ERROR_BARS, X_ERROR, TREND_LINE),
 }
 
 

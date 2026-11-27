@@ -337,6 +337,10 @@ class SidePanel(QWidget):
         set_slider(self.opacity_slider, state.get("opacity", 100))
         self._opacity_row.value.setText(f"{self.opacity_slider.value()}%")
         set_choice(self.marker_combo, state.get("symbol", "disc"))
+        # Shapes from a column ("Shape by") replace the one marker.
+        shaped = state.get("shape_by") or ""
+        self.marker_combo.setEnabled(not shaped)
+        self.marker_combo.setToolTip(f"The shapes come from {shaped}" if shaped else "")
         set_choice(self.map_combo, state.get("cmap", "turbo"))
         set_choice(self.scale_combo, state.get("scale", "Linear"))
         self.range_bar.set_cmap(self.map_combo.currentText())

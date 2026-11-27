@@ -49,7 +49,7 @@ print("schema: number formats, round ticks, per-field cleaning, a data element p
 
 # --- the title's alignment --------------------------------------------------------------
 tab = w._open_plot(PlotSpec(kind="2D Scatter", x=X, y=Y, color=MP), ALL); drain()
-assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "fit", "data_points"}
+assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "fit", "labels", "data_points"}
 tab.elementActivated.emit("title")
 assert "align" in panel._el_controls and ctl("align").currentData() == "center"
 tv = tab._title_label._text_visual

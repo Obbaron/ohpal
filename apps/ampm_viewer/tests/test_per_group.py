@@ -110,3 +110,86 @@ def test_spec_round_trip_and_columns():
 def test_refuses_text_axes():
     with pytest.raises(ValueError, match="numeric"):
         plotdata.build_per(table(), spec(x="Group"))
+
+
+# -- marker shape by a column, point labels, X error bars --------------------
+def with_marks(df: pl.DataFrame) -> pl.DataFrame:
+    """A per-specimen "Rotation" (three values) and a label column."""
+    rot = {f"SP{i}": (0, 67, 90)[(i - 1) % 3] for i in range(1, 9)}
+    return df.with_columns(
+        pl.col("alias").replace_strict(rot, default=None).alias("Rotation"),
+        pl.col("alias").str.replace("SP", "Specimen ").alias("Name"))
+
+
+def test_shape_map_order_and_wrap():
+    cats, shape = plotdata.shape_map(["b10", "b2", None, "b1"])
+    assert cats == ["b1", "b2", "b10", plotdata.NO_VALUE], "natural order, no value last"
+    assert [shape[c] for c in cats] == list(plotdata.SHAPES[:4])
+    many = [f"c{i}" for i in range(len(plotdata.SHAPES) + 2)]
+    _, shape = plotdata.shape_map(many)
+    assert shape[f"c{len(plotdata.SHAPES)}"] == plotdata.SHAPES[0], "more than the shapes: round again"
+    cats, _ = plotdata.shape_map([90.0, 0.0, 67.0, 22.5, float("nan")])
+    assert cats == ["0", "22.5", "67", "90", plotdata.NO_VALUE], "whole numbers without .0"
+
+
+def test_shapes_and_labels_per_group():
+    df = with_marks(table())
+    d = plotdata.build_per(df, spec(shape_by="Rotation", label_by="Name"))
+    assert d.shape_legend == [("0", "disc"), ("67", "square"), ("90", "triangle_up")]
+    want = {0: "disc", 67: "square", 90: "triangle_up"}
+    for g, sym, text in zip(d.rows[plotdata.PER_GROUP], d.symbols, d.texts):
+        r = df.filter(pl.col("alias") == g).row(0, named=True)
+        assert sym == want[r["Rotation"]] and text == r["Name"], (g, sym, text)
+    assert len(d.symbols) == len(d.texts) == len(d.pos)
+    assert {"Rotation", "Name"} <= set(d.rows.columns), "kept for the tooltip"
+    plain = plotdata.build_per(df, spec())
+    assert plain.symbols is None and plain.shape_legend is None and plain.texts is None
+
+
+def test_shapes_and_labels_on_every_row():
+    df = with_marks(table()).filter(pl.col("alias").is_in(["SP1", "SP2"]))
+    small = df.group_by("alias").head(20)
+    d = plotdata.build(small, PlotSpec(kind=SCATTER_2D, x="Meltpool", y="Distortion",
+                                       shape_by="Rotation", label_by="Meltpool"))
+    assert d.n_drawn == 40 and len(d.symbols) == 40 and len(d.texts) == 40
+    assert set(d.symbols) == {"disc", "square"}
+    assert d.texts[0] == f"{d.rows['Meltpool'][0]:.4g}", "numbers to 4 significant figures"
+    big = plotdata.build(df, PlotSpec(kind=SCATTER_2D, x="Meltpool", y="Distortion",
+                                      label_by="Name"))
+    assert big.n_drawn > plotdata.LABEL_MAX and big.texts is None, "too many to label"
+
+
+def test_mean_sd_x_error_bars():
+    df = with_marks(table())
+    s = PlotSpec(kind=MEAN_SD, x="Meltpool", y="Distortion", group_by="Group",
+                 x_error=True, shape_by="Rotation", label_by="Group")
+    d = plotdata.build_meansd(df, s, sample="alias")
+    for g, xe, ye in zip(d.rows[plotdata.MS_GROUP], d.err_x, d.err):
+        per_part = (df.filter(pl.col("Group") == g).group_by("alias")
+                    .agg(pl.col("Meltpool").mean(), pl.col("Distortion").mean()))
+        assert xe == pytest.approx(np.std(per_part["Meltpool"].to_numpy(), ddof=1), rel=1e-5)
+        assert ye == pytest.approx(np.std(per_part["Distortion"].to_numpy(), ddof=1), rel=1e-5)
+    assert d.texts == ["long", "short"] and len(d.symbols) == 2
+    se = plotdata.build_meansd(df, PlotSpec(**{**s.__dict__, "error": "se"}), sample="alias")
+    n = se.rows[plotdata.MS_X_N].to_numpy()
+    assert np.allclose(se.err_x, d.err_x / np.sqrt(n), rtol=1e-5), "the same error kind as Y"
+    off = plotdata.build_meansd(df, PlotSpec(**{**s.__dict__, "x_error": False}), sample="alias")
+    assert off.err_x is None
+    one = plotdata.build_meansd(df, PlotSpec(**{**s.__dict__, "group_by": "alias"}), sample="alias")
+    assert np.isnan(one.err_x).all(), "one part per group: no spread across"
+
+
+def test_marks_follow_renames_and_macros():
+    from ampm_viewer.shell import macros
+    from ampm_viewer.shell import plot_elements as pe
+    from ampm_viewer.shell.colref import rename_spec
+    s = spec(shape_by="Rotation", label_by="Name")
+    assert {"Rotation", "Name"} <= set(s.columns), "queried with the plot"
+    r = rename_spec(rename_spec(s, "Rotation", "Build angle"), "Name", "Specimen")
+    assert (r.shape_by, r.label_by) == ("Build angle", "Specimen")
+    text = macros.describe("plot", {"spec": {**s.__dict__, "x_error": True}})
+    assert "shape by 'Rotation'" in text and "labelled by 'Name'" in text and "X error bars" in text
+    assert "labels" in pe.keys_for(s) and "labels" not in pe.keys_for(
+        PlotSpec(kind="Histogram", x="a", y="count"))
+    assert pe.builtin_style("labels", MEAN_SD)["side"] == "above_right", "clear of the error bars"
+    assert pe.builtin_style("labels", SCATTER_2D)["side"] == "right"

@@ -83,6 +83,10 @@ class RenderData:
     rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
     err: Any = None            # mean-sd: (N,) error bar half-heights (NaN: none)
     fit: Any = None            # the trend line (``Fit``) when the spec asks for one
+    symbols: Any = None        # (N,) marker shape per point (``shape_by``), or None
+    shape_legend: Any = None   # [(category, symbol)] for the shapes' key, or None
+    texts: Any = None          # (N,) a label per point (``label_by``), or None
+    err_x: Any = None          # mean-sd: (N,) X error bar half-widths (NaN: none)
 
 
 @dataclass
@@ -821,9 +825,95 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
     if getattr(spec, "fit", False) and not spec.is_3d:
         # Over every row (not just the drawn ones), on the columns as they are.
         fit = linear_fit(_axis_array(sub, spec.x), _axis_array(sub, spec.y))
+    symbols, shape_legend, texts = _extras(spec, drawn, sub)
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
                       n_total, len(pos), eff_range, full_range, rows=drawn,
-                      fit=fit)
+                      fit=fit, symbols=symbols, shape_legend=shape_legend,
+                      texts=texts)
+
+
+# -- marker shapes and point labels -----------------------------------
+# Marker shapes for the categories of a "shape by" column, in order; more
+# categories than shapes start again.
+SHAPES = ("disc", "square", "triangle_up", "diamond", "triangle_down", "star",
+          "cross", "x")
+# Each shape's size against a disc's, so they look the same size (a
+# triangle fills less of its square than a disc does).
+SHAPE_SCALE = {"triangle_up": 1.3, "triangle_down": 1.3, "star": 1.3,
+               "diamond": 1.15, "cross": 1.15, "x": 1.1}
+NO_VALUE = "(none)"
+# Point labels are drawn for up to this many points (more would be a smear).
+LABEL_MAX = 300
+
+
+def shape_map(values) -> tuple[list, dict]:
+    """The categories of a shape column (natural order, an empty value last
+    as ``NO_VALUE``) and the shape of each."""
+    names = {_cat_name(v) for v in values}
+    cats = sorted((n for n in names if n != NO_VALUE), key=_natural_key)
+    if NO_VALUE in names:
+        cats.append(NO_VALUE)
+    return cats, {c: SHAPES[i % len(SHAPES)] for i, c in enumerate(cats)}
+
+
+def _shapes_for(values, all_values=None):
+    """(symbols per value, [(category, symbol)]) for a shape column's values
+    (``all_values``: the categories to key, when only some are drawn)."""
+    cats, shape = shape_map(values if all_values is None else all_values)
+    syms = np.array([shape.get(_cat_name(v), SHAPES[0]) for v in values],
+                    dtype=object)
+    return syms, [(c, shape[c]) for c in cats]
+
+
+def _cat_name(v) -> str:
+    """A shape category's name: a whole number without its ".0" (a number
+    column from Excel arrives as decimals)."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return NO_VALUE
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return _label_text(v)
+
+
+def _texts_for(values, n: int):
+    """The point labels, or None when there are too many points to label."""
+    if n > LABEL_MAX:
+        return None
+    return [("" if v is None else _label_text(v)) for v in values]
+
+
+def _label_text(v) -> str:
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() and abs(v) < 1e15 else f"{v:.4g}"
+    return str(v)
+
+
+def _extras(spec, drawn, every=None):
+    """Shapes and labels for the ``drawn`` rows (a polars frame); ``every``:
+    all the rows, so the shapes' key lists every category."""
+    symbols = shape_legend = texts = None
+    shape_by = getattr(spec, "shape_by", None)
+    if shape_by and shape_by in drawn.columns:
+        allv = (every if every is not None else drawn)[shape_by].unique().to_list()
+        symbols, shape_legend = _shapes_for(drawn[shape_by].to_list(), allv)
+    label_by = getattr(spec, "label_by", None)
+    if label_by and label_by in drawn.columns:
+        texts = _texts_for(drawn[label_by].to_list(), drawn.height)
+    return symbols, shape_legend, texts
+
+
+def _group_firsts(df, group: str, cols, groups):
+    """``groups`` (a table with one row per ``group`` value) with each of
+    ``cols`` (other columns of ``df``) as its group's first non-empty value."""
+    import polars as pl
+
+    cols = [c for c in dict.fromkeys(cols) if c and c != group and c in df.columns
+            and c not in groups.columns]
+    if not cols:
+        return groups
+    firsts = df.filter(pl.col(group).is_not_null()).group_by(group).agg(
+        *[pl.col(c).drop_nulls().first() for c in cols])
+    return groups.join(firsts, on=group, how="left")
 
 
 # -- trend line ---------------------------------------------------------
@@ -969,6 +1059,8 @@ def build_per(df, spec, *, cmap: str = DEFAULT_COLORMAP, scale: str = "linear",
                    key=lambda i: _natural_key(groups[group][i]))
     groups = groups[order] if order else groups
     groups = groups.with_columns(pl.col(group).alias(PER_GROUP))
+    groups = _group_firsts(df.filter(keep), group,
+                           [spec.shape_by, spec.label_by], groups)
     # A column with one value in every group (a per-part measurement) is
     # named plainly: its statistic is just that value.
     const_x = groups.height > 0 and bool((groups["__ux"] <= 1).all())
@@ -986,8 +1078,10 @@ def build_per(df, spec, *, cmap: str = DEFAULT_COLORMAP, scale: str = "linear",
         groups, spec, None, lambda a: a, n, cmap, scale, crange)
     fit = (linear_fit(groups[PER_X].to_numpy(), groups[PER_Y].to_numpy())
            if spec.fit else None)
+    symbols, shape_legend, texts = _extras(spec, groups)
     return RenderData(pos, colors, False, labels, legend, n, n, eff_range,
-                      full_range, rows=groups, fit=fit)
+                      full_range, rows=groups, fit=fit, symbols=symbols,
+                      shape_legend=shape_legend, texts=texts)
 
 
 # -- Mean ± SD: one point per group, with error bars -------------------
@@ -998,6 +1092,8 @@ _T95 = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
 # Column names of the group table (``RenderData.rows`` of a mean-sd plot).
 MS_GROUP, MS_X, MS_MEAN, MS_SD, MS_N, MS_ERR = (
     "__group", "__x", "__mean", "__sd", "__n", "__err")
+# ... and X's spread across a group's samples (``spec.x_error``).
+MS_X_SD, MS_X_N, MS_X_ERR = "__xsd", "__xn", "__xerr"
 
 
 def t95(dof: int) -> float:
@@ -1107,7 +1203,9 @@ def build_meansd(df, spec, *, sample: str | None = None,
         pl.col("__val").std(ddof=1).alias(MS_SD),
         pl.col("__val").count().alias(MS_N),
     )
-    first = [pl.col(MS_X).mean().alias(MS_X)]
+    first = [pl.col(MS_X).mean().alias(MS_X),
+             pl.col(MS_X).std(ddof=1).alias(MS_X_SD),
+             pl.col(MS_X).count().alias(MS_X_N)]
     if by_color:
         first.append(reduce("__c", color_numeric).alias(color))
     groups = (per_sample.group_by(group).agg(*first)
@@ -1118,6 +1216,8 @@ def build_meansd(df, spec, *, sample: str | None = None,
         _natural_key(groups[group][i])))
     groups = groups[order] if order else groups
     groups = groups.with_columns(pl.col(group).alias(MS_GROUP))
+    groups = _group_firsts(df.filter(keep), group,
+                           [spec.shape_by, spec.label_by], groups)
 
     n = groups.height
     if n == 0:
@@ -1128,15 +1228,24 @@ def build_meansd(df, spec, *, sample: str | None = None,
     counts = groups[MS_N].to_numpy()
     err = error_half(sd, counts, spec.error)
     groups = groups.with_columns(pl.Series(MS_ERR, err))
+    # X's spread: across the group's samples (each counted once).
+    err_x = None
+    if getattr(spec, "x_error", False):
+        err_x = error_half(groups[MS_X_SD].fill_null(np.nan).to_numpy().astype("float64"),
+                           groups[MS_X_N].to_numpy(), spec.error)
+        groups = groups.with_columns(pl.Series(MS_X_ERR, err_x))
     pos = np.column_stack([groups[MS_X].to_numpy(),
                            groups[MS_MEAN].to_numpy()]).astype("float32")
     colors, legend, eff_range, full_range = _colors(
         groups, spec, None, lambda a: a, n, cmap, scale, crange)
     fit = (linear_fit(groups[MS_X].to_numpy(), groups[MS_MEAN].to_numpy())
            if getattr(spec, "fit", False) else None)
+    symbols, shape_legend, texts = _extras(spec, groups)
     return RenderData(pos, colors, False, (spec.x, value_label(values)), legend,
                       n, n, eff_range, full_range, rows=groups,
-                      err=err.astype("float32"), fit=fit)
+                      err=err.astype("float32"), fit=fit, symbols=symbols,
+                      shape_legend=shape_legend, texts=texts,
+                      err_x=None if err_x is None else err_x.astype("float32"))
 
 
 def _colors(sub, spec, idx, take, n, cmap, scale, crange):

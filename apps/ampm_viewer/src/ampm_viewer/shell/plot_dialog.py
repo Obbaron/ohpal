@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .card import DraggableCard
+from .plotdata import LABEL_MAX
 from .plotspec import (
     BANDWIDTHS,
     BAR_AGGS,
@@ -121,6 +122,9 @@ class NewPlotDialog(DraggableCard, QDialog):
         self.per_combo = None     # 2D scatter: one point per group
         self.x_stat = self.y_stat = None
         self.fit_chk = None       # 2D scatter / Mean ± SD: the trend line
+        self.shape_combo = None   # ...a marker shape per value of a column
+        self.label_combo = None   # ...a text by each point
+        self.xerr_chk = None      # Mean ± SD: error bars on X too
         self._per_touched_span = False
 
         def stat_combo(current: str) -> QComboBox:
@@ -145,6 +149,26 @@ class NewPlotDialog(DraggableCard, QDialog):
             chk.setToolTip("A least-squares straight line through the points, "
                            "labelled with its equation, R\u00b2 and p")
             return chk
+
+        def mark_combo(current, tip: str) -> QComboBox:
+            cb = fix_combo(QComboBox())
+            cb.addItem(_NONE)
+            cb.addItems(self._columns)
+            if current in self._columns:
+                cb.setCurrentText(current)
+            cb.setToolTip(tip)
+            return cb
+
+        def add_marks(form) -> None:
+            """Shape by / Label points (2D scatter, Mean ± SD)."""
+            self.shape_combo = mark_combo(
+                base.shape_by, "A different marker shape for each value of "
+                "this column (a build orientation, say), with a key")
+            form.addRow("Shape by", self.shape_combo)
+            self.label_combo = mark_combo(
+                base.label_by, "Write this column's value by each point (a "
+                f"specimen's name, say); up to {LABEL_MAX} points")
+            form.addRow("Label points", self.label_combo)
 
         def bandwidth_combo(current: str) -> QComboBox:
             cb = fix_combo(QComboBox())
@@ -271,10 +295,17 @@ class NewPlotDialog(DraggableCard, QDialog):
                 self.error_combo.addItem(ERROR_NAMES[key], key)
             self.error_combo.setCurrentIndex(ERRORS.index(base.error))
             form.addRow("Error bars", self.error_combo)
+            self.xerr_chk = QCheckBox("On X too")
+            self.xerr_chk.setChecked(bool(base.x_error))
+            self.xerr_chk.setToolTip(
+                "Error bars across as well, from X's spread within each "
+                "group (when X differs between a group's parts)")
+            form.addRow("", self.xerr_chk)
             self.color_combo = fix_combo(QComboBox())
             self.color_combo.addItem(_NONE)
             self.color_combo.addItems(self._columns)
             form.addRow("Colour by", self.color_combo)
+            add_marks(form)
             self.fit_chk = fit_check(base.fit)
             form.addRow("", self.fit_chk)
         elif base.is_contour:
@@ -312,6 +343,7 @@ class NewPlotDialog(DraggableCard, QDialog):
             if base.color in self._columns:
                 self.color_combo.setCurrentText(base.color)
             form.addRow("Colour by", self.color_combo)
+            add_marks(form)
             self.fit_chk = fit_check(base.fit)
             form.addRow("", self.fit_chk)
             self.per_combo.currentIndexChanged.connect(self._on_per_changed)
@@ -442,6 +474,15 @@ class NewPlotDialog(DraggableCard, QDialog):
         if getattr(self, "_ok", None) is not None:
             self._ok.setEnabled(bool(self._ticked()))
 
+    def _marks(self) -> dict:
+        """The shape and label columns chosen (None: not used)."""
+        out = {}
+        for name, combo in (("shape_by", self.shape_combo),
+                            ("label_by", self.label_combo)):
+            text = combo.currentText() if combo is not None else _NONE
+            out[name] = None if text == _NONE else text
+        return out
+
     def _per(self) -> str | None:
         if self.per_combo is None or self.per_combo.currentText() == _EVERY_ROW:
             return None
@@ -500,6 +541,8 @@ class NewPlotDialog(DraggableCard, QDialog):
                 error=self.error_combo.currentData() or "sd",
                 color=None if color == _NONE else color,
                 fit=self.fit_chk.isChecked(),
+                x_error=self.xerr_chk.isChecked(),
+                **self._marks(),
             )
         if self.group_combo is not None:  # KDE
             grp = self.group_combo.currentText()
@@ -557,6 +600,7 @@ class NewPlotDialog(DraggableCard, QDialog):
         extra = {}
         if self.per_combo is not None:  # 2D scatter
             extra = {"per": self._per(), "fit": self.fit_chk.isChecked(),
+                     **self._marks(),
                      "x_stat": self.x_stat.currentData() or "mean",
                      "y_stat": self.y_stat.currentData() or "mean"}
         return PlotSpec(

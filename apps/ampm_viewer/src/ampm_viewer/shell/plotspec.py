@@ -69,6 +69,9 @@ class PlotSpec:
     show_ref: bool = True         # k-distance: the knee line (suggested eps)
     error: str = "sd"             # mean-sd: sd | se | ci95 | none
     fit: bool = False             # 2d scatter / mean-sd: the trend line
+    shape_by: str | None = None   # 2d scatter / mean-sd: marker shape per value
+    label_by: str | None = None   # 2d scatter / mean-sd: a text by each point
+    x_error: bool = False         # mean-sd: error bars on X too (across parts)
 
     def __post_init__(self) -> None:
         self.more_y = tuple(self.more_y or ())  # a list, from JSON
@@ -144,7 +147,8 @@ class PlotSpec:
         a histogram's "count", a KDE's "density")."""
         return list(dict.fromkeys(
             c for c in (self.x, self.y, self.z, self.color, self.group_by,
-                        *self.more_y, self.per) if c))
+                        *self.more_y, self.per, self.shape_by, self.label_by)
+            if c))
 
     @property
     def is_curve(self) -> bool:

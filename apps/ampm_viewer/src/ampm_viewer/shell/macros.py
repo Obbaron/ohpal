@@ -74,7 +74,7 @@ _SCHEMA: dict[str, dict] = {
     "filter_reset": {},
     # outputs (not undoable)
     "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by", "more_y",
-                                 "per")}},
+                                 "per", "shape_by", "label_by")}},
     "export_excel": {"names": ("key",), "lists": ("columns",),
                      "pairs": ("values",), "drop": ("path",)},
 }
@@ -315,6 +315,12 @@ def describe(op: str, p: dict) -> str:
                     f"'{s.get('x')}', one point per '{s.get('per')}'")
         else:
             what = f"of '{s.get('y')}' against '{s.get('x')}'"
+        if s.get("shape_by"):
+            what += f", shape by '{s.get('shape_by')}'"
+        if s.get("label_by"):
+            what += f", labelled by '{s.get('label_by')}'"
+        if s.get("x_error"):
+            what += ", X error bars"
         if s.get("fit"):
             what += ", trend line"
         if s.get("color"):

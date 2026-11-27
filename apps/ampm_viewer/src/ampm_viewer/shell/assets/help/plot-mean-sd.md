@@ -2,7 +2,7 @@
 title: Mean ± SD plots
 section: Plots
 order: 55
-keywords: mean, sd, standard deviation, error bars, standard error, se, confidence interval, ci, archimedes, density, repeats, replicates, energy density, samples template, measurement, trend line, regression, fit, r squared, p-value
+keywords: mean, sd, standard deviation, error bars, standard error, se, confidence interval, ci, archimedes, density, repeats, replicates, energy density, samples template, measurement, trend line, regression, fit, r squared, p-value, x error bars, horizontal error bars, shape by, label points
 context: plot.Mean ± SD
 ---
 # Mean ± SD plots
@@ -30,8 +30,10 @@ times per part, against a process setting such as the energy density.
      numbered set (**Density (1)**) ticks the rest.
    - **One point per**: `part_id` for one point per part. Choose another
      column, such as the energy density, to pool every part that shares it.
-   - **Error bars**: **SD**, **SE**, **95% CI** or **None**.
-   - **Colour by** is optional.
+   - **Error bars**: **SD**, **SE**, **95% CI** or **None**. Tick **On X
+     too** for error bars across as well (see below).
+   - **Colour by**, **Shape by** and **Label points** are optional: see
+     [Shapes and labels](help:plot-scatter).
 
 ## What each point is
 
@@ -52,6 +54,17 @@ pooled give n = 6.
 Points in no part, and DBSCAN's noise, are left out. Hover over a point to
 see its group, X, mean ± error, SD and n. Change the error bars from the
 toolbar's **Error bars** menu.
+
+## Error bars on X
+
+When X differs between the parts of a group (the mean melt pool of each
+specimen, pooled by scan length, say), **On X too** in the dialog, or
+**Error bars on X** on the toolbar, adds a bar across each point: X's mean ±
+its error over the group's parts, each part counted once, of the same kind
+as the vertical bar (SD, SE or 95% CI). A group whose parts share one X (a
+process setting) has none. The hover shows X ± its error.
+
+## Trend line
 
 **Trend line** (in the dialog or on the toolbar) draws the least-squares line
 through the means, labelled with its equation, R² and p: see

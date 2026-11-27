@@ -34,6 +34,7 @@ anywhere on a filled contour).
 | **Colour bar** | The label; the numbers (font, size, colour, how many, format); where it sits (right of the plot or below it), its gap to the plot and its thickness. |
 | **Legend** | The title; the names (font, size, colour); where it sits (beside the plot or inside a corner of it); the frame and its colour. |
 | **Trend line** | Its label (font, size, style, colour; which corner of the plot; whether it shows the equation, R², p and the number of points) and the line (colour, width, dashed or solid). On 2D scatter and Mean ± SD plots with a [trend line](help:plot-scatter). |
+| **Point labels** | Font, size, style, colour and side (right, left, above, below or above right) of the labels beside the points. On 2D scatter and Mean ± SD plots with **Label points** ([Shapes and labels](help:plot-scatter)). |
 | **The data** | Depends on the plot, see below. |
 
 Leave an axis, colour-bar or legend **Text** empty to use the column's name;
@@ -92,6 +93,11 @@ box with a swatch and a name for each group. Put it **Outside, right** (the
 plot narrows to make room) or **Inside** one of the four corners (it covers
 the data there, on a light backing). When there are more groups than fit,
 the last row counts the rest.
+
+A plot with **Shape by** has a section for the shapes too, under the
+colours' names, headed with the shape column. Beside a colour bar on the
+right there is no room outside, so the shapes' legend goes inside the plot
+(top right unless you choose another corner).
 
 ## The data
 

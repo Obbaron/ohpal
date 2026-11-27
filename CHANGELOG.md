@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its equation, R² and p (scipy's `linregress`). An editable element: font,
   size, colour, corner, what the label shows (equation, R², p, n), and the
   line's colour, width and dashes. Recorded in macros and kept with the plot.
+- **Shape by** and **Label points** on 2D Scatter and Mean ± SD plots (New
+  plot dialog). Shape by draws each value of a column in its own marker
+  shape (disc, square, triangle...; a whole-number column from Excel is
+  named without its ".0"), with a section for the shapes in the legend: under
+  a text colour's names, or inside the plot beside a colour bar, so colour
+  and shape can show two settings at once. Label points writes a column's
+  value by each point (up to 300 points): a new **Point labels** element
+  (font, size, colour, side), kept a set distance from the markers at any
+  zoom. Shapes are sized to look alike. Tooltips show both columns.
+- **Error bars on X** for Mean ± SD (dialog's **On X too**, or the toolbar):
+  X's mean ± its error over each group's parts, of the same kind as the
+  vertical bars; the view takes them in, and the hover shows X ± its error.
 
 ### Fixed
 

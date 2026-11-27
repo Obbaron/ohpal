@@ -226,6 +226,9 @@ _PLACES = (("outside", "Outside, right"), ("top_right", "Inside, top right"),
            ("top_left", "Inside, top left"),
            ("bottom_right", "Inside, bottom right"),
            ("bottom_left", "Inside, bottom left"))
+# Where a point's label sits, beside its marker.
+LABEL_SIDES = (("right", "Right"), ("left", "Left"), ("above", "Above"),
+               ("below", "Below"), ("above_right", "Above right"))
 
 
 def _axis2d_full(key: str, label: str) -> Element:
@@ -402,6 +405,11 @@ ELEMENTS: dict[str, Element] = {e.key: e for e in (
             {**_text_defaults(9, _TITLE_TEXT, text=False), "place": "top_left",
              "equation": True, "r2": True, "p": True, "n": False,
              "line_color": "#7f7f7f", "line_width": 2, "dashed": True}),
+    # A text by each point of a 2D scatter / Mean ± SD ("Label points").
+    Element("labels", "Point labels",
+            (*_text_fields("Labels", text=False),
+             Field("side", "Position", "choice", "Labels", options=LABEL_SIDES)),
+            {**_text_defaults(8, _AXIS_TEXT, text=False), "side": "right"}),
     *_data_elements(),
 )}
 
@@ -416,8 +424,9 @@ def keys_for(spec) -> list[str]:
         return ["title", "xaxis3d", "yaxis3d", "zaxis3d", "cbar", "legend",
                 data_key(spec)]
     fit = ["fit"] if getattr(spec, "can_fit", False) else []
+    labels = ["labels"] if getattr(spec, "can_fit", False) else []
     return ["title", "xaxis", "yaxis", "categories", "cbar", "legend", *fit,
-            data_key(spec)]
+            *labels, data_key(spec)]
 
 
 def style_kind(spec) -> str:
@@ -485,7 +494,8 @@ KIND_DEFAULTS: dict[str, dict[str, dict]] = {
     "Contour": {"cbar": {"num_size": 9}},
     "Bar": _CATEGORY_AXIS, "CoV Summary": _CATEGORY_AXIS, "Violin": _CATEGORY_AXIS,
     "Histogram": {"data_bars": {"bar_width": 100}},   # bins touch
-    "Mean ± SD": {"data_points": {"size": 8}},          # a few points, visible
+    "Mean ± SD": {"data_points": {"size": 8},           # a few points, visible
+                  "labels": {"side": "above_right"}},  # (clear of the bars)
     PER_GROUP_KIND: {"data_points": {"size": 8}},       # (as Mean ± SD)
 }
 # Style keys that belong to one plot, never a default for new plots: an

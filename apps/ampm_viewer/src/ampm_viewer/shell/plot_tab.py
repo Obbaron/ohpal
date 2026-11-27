@@ -85,7 +85,7 @@ _CAMERA_PRESETS = {"top": (90.0, 0.0), "front": (0.0, 0.0),
                    "side": (0.0, 90.0), "iso": (30.0, 45.0)}
 # Toolbar options that live on the spec (they change what is drawn, so a
 # change re-renders); the rest are view state on the tab.
-_SPEC_OPTIONS = ("fit", "show_box", "fill", "bandwidth", "bins", "sort",
+_SPEC_OPTIONS = ("fit", "x_error", "show_box", "fill", "bandwidth", "bins", "sort",
                  "show_points", "show_lines", "show_ref", "error")
 _ERRBAR_RGBA = (0.23, 0.25, 0.29, 0.9)  # Mean ± SD error bars
 _ERRBAR_CAP_PX = 9                     # their caps' width
@@ -390,6 +390,13 @@ class PlotTab(QWidget):
         # Spatial 2D plots keep one X unit == one Y unit unless unlocked.
         self._equal_axes = not spec.is_grouped
         self._err_line = self._err_caps = None  # Mean ± SD error bars
+        self._err_xline = self._err_xcaps = None  # ...and across, on X
+        self._err_xextent = None         # the X bars' reach (framing)
+        self._symbols = None             # a marker shape per point (shape by)
+        self._shape_items = None         # (column, names, symbols) for the key
+        self._point_texts = None         # a label per point (label points)
+        self._point_labels = None        # ...drawn: a Text in the scene
+        self._label_scale = None         # ...the zoom they were placed at
         self._fit = None                 # the trend line (plotdata.Fit) drawn
         self._fit_line = None            # ...its line (data space)
         self._fit_texts: list = []       # ...its label, a Text per line (view px)
@@ -707,6 +714,10 @@ class PlotTab(QWidget):
     def _render(self) -> None:
         if self._df is None or self._scatter is None:
             return
+        self._shape_items = None  # (a scatter sets its shapes' key again)
+        if not self.spec.can_fit:
+            self._symbols = self._point_texts = None
+            self._set_point_labels()
         if self.spec.is_contour:
             self._render_contour()
             return
@@ -749,10 +760,16 @@ class PlotTab(QWidget):
         first = not self._rendered_once
         self._rendered_once = True
         self._last_pos, self._last_colors = data.pos, data.colors
+        self._symbols, self._point_texts = data.symbols, data.texts
+        self._shape_items = ((self.spec.shape_by, [n for n, _ in data.shape_legend],
+                              [m for _, m in data.shape_legend])
+                             if data.shape_legend else None)
         self._full_range = data.full_range
         self._set_scatter(self._effective_size())
         if self.spec.is_meansd:
-            self._set_errorbars(linear.pos[keep], linear.err[keep])
+            self._set_errorbars(linear.pos[keep], linear.err[keep],
+                                None if linear.err_x is None else linear.err_x[keep])
+        self._set_point_labels()
         self._fit = linear.fit
         self._fit_extent = (linear.pos[keep] if len(linear.pos) else None)
         self._set_fit()
@@ -1751,6 +1768,8 @@ class PlotTab(QWidget):
     def _update_legend(self, data) -> None:
         leg = data.legend
         self._legend_cmap = False
+        if self._shape_items is not None:  # (a colour legend renames it)
+            self._legend_auto = str(self._shape_items[0])
         if isinstance(leg, tuple) and leg and leg[0] == "colorbar":
             _, lo, hi, name = leg
             self._set_colorbar(lo, hi, name)
@@ -1760,6 +1779,14 @@ class PlotTab(QWidget):
             colors = np.array([c for _, c in leg], "float32")
             self._legend_cmap = len(names) > _PALETTE_MAX
             self._set_legend(self.spec.color or "", names, colors)
+        elif self._shape_items is not None:
+            # One colour, shapes by a column: a legend box of the shapes.
+            self._has_legend = True
+            self._legend_items = self._cbar_spec = None
+            self._set_cbar_ticks()
+            self._legend_auto = str(self._shape_items[0])
+            self._apply_visibility()
+            self._apply_element("legend")
         else:
             self._hide_colorbar()
 
@@ -1946,7 +1973,26 @@ class PlotTab(QWidget):
         self._apply_element("legend")
 
     def _legend_place(self) -> str:
-        return self._el_style.get("legend", {}).get("place", "outside")
+        """Where the legend box goes. Beside a colour bar on the right (a
+        numeric colour with shapes) there is no room outside: it goes inside,
+        top right."""
+        place = self._el_style.get("legend", {}).get("place", "outside")
+        if (place == "outside" and self._cbar_spec is not None
+                and self._cbar_orient == "right"):
+            return "top_right"
+        return place
+
+    def _legend_box(self) -> bool:
+        """The legend box has something to show: colour groups or shapes."""
+        return self._legend_items is not None or self._shape_items is not None
+
+    def _shape_rgba(self):
+        """The colour of the shapes in their key: the points' own when they
+        are one colour, else a neutral grey."""
+        if (self._legend_items is None and self._cbar_spec is None
+                and self._last_colors is not None and len(self._last_colors)):
+            return np.asarray(self._last_colors[0], "float32")
+        return np.array([0.42, 0.45, 0.5, 1.0], "float32")
 
     @_shared_fonts
     def _build_legend(self) -> None:
@@ -1955,7 +2001,7 @@ class PlotTab(QWidget):
         from vispy import scene
 
         st = self._el_style.get("legend")
-        if st is None or self._legend_items is None or self._view is None:
+        if st is None or not self._legend_box() or self._view is None:
             return
         place = self._legend_place()
         host = self._slots["side"] if place == "outside" else self._view
@@ -1966,8 +2012,19 @@ class PlotTab(QWidget):
             room_now = float(self._view.size[1])
         except Exception:  # noqa: BLE001
             room_now = 400.0
-        names, colors = self._legend_items
-        key = (tuple(str(n) for n in names), np.asarray(colors).tobytes(),
+        # Sections: (heading, names, colours, symbols); the colour groups,
+        # then the shapes (each a symbol in one colour).
+        sections = []
+        if self._legend_items is not None:
+            names, colors = self._legend_items
+            sections.append((None, list(names), np.asarray(colors, "float32"),
+                             None))
+        if self._shape_items is not None:
+            col, snames, syms = self._shape_items
+            rgba = np.tile(self._shape_rgba(), (len(snames), 1))
+            sections.append((str(col) if sections else None, list(snames),
+                             rgba, list(syms)))
+        key = (repr([(h, n, c.tobytes(), m) for h, n, c, m in sections]),
                repr(sorted(st.items())), place, id(host), round(room_now),
                self._legend_auto, self._px(1.0))
         if (key == self._legend_key and self._legend is not None
@@ -1996,21 +2053,37 @@ class PlotTab(QWidget):
         row_h = max(fm_n.height() * 1.35, 10.0)
         swatch = max(6.0, fm_n.height() * 0.7)
         title_h = fm_t.height() * 1.4 if title else 0.0
+        head_h = fm_t.height() * 1.4  # a second section's heading
         try:
             self._legend_room = float(self._view.size[1])
         except Exception:  # noqa: BLE001
             self._legend_room = 400.0
         room = self._legend_room - (
             0 if place == "outside" else 2 * _LEGEND_INSET)
-        fit = max(1, int((room - 2 * _LEGEND_PAD - title_h) // row_h))
-        rows = list(names)
-        if len(rows) > fit:  # the rest, counted
-            rows = rows[:max(0, fit - 1)] + [f"+ {len(names) - fit + 1} more"]
+        fit = max(1, int((room - 2 * _LEGEND_PAD - title_h
+                          - head_h * sum(1 for s in sections if s[0])) // row_h))
+        # Rows: as many as fit; the shapes (few) keep theirs, the colour
+        # groups give way, the rest counted on a last row.
+        later = sum(len(s[1]) for s in sections[1:])
+        laid = []  # (heading, rows, colours, symbols, swatched)
+        for i, (head, names, colors, syms) in enumerate(sections):
+            budget = max(1, fit - (later if i == 0 else 0))
+            fit = max(1, fit - min(len(names), budget))
+            rows = list(names)
+            if len(rows) > budget:
+                rows = rows[:max(0, budget - 1)] + [f"+ {len(names) - budget + 1} more"]
+            n_sw = len(rows) if len(rows) == len(names) else len(rows) - 1
+            laid.append((head, rows, colors, syms, n_sw))
         width = fm_t.horizontalAdvance(title) if title else 0.0
-        for text in rows:
-            width = max(width, swatch + 6 + fm_n.horizontalAdvance(text))
+        for head, rows, *_ in laid:
+            if head:
+                width = max(width, fm_t.horizontalAdvance(head))
+            for text in rows:
+                width = max(width, swatch + 6 + fm_n.horizontalAdvance(text))
         width += 2 * _LEGEND_PAD
-        height = 2 * _LEGEND_PAD + title_h + row_h * len(rows)
+        height = (2 * _LEGEND_PAD + title_h
+                  + sum(head_h for h, *_ in laid if h)
+                  + row_h * sum(len(r) for _, r, *_ in laid))
         self._legend_size = (float(np.ceil(width)), float(np.ceil(height)))
         y = float(_LEGEND_PAD)
         if title:
@@ -2020,25 +2093,42 @@ class PlotTab(QWidget):
             _style_text(t, st, fonts=self._fonts)
             self._legend_parts.append(t)
             y += title_h
-        # Every row has a swatch except a last "+ n more".
-        shown = list(range(len(rows) if len(rows) == len(names)
-                           else len(rows) - 1))
-        if shown:
-            centres = np.array([[_LEGEND_PAD + swatch / 2, y + (i + 0.5) * row_h]
-                                for i in shown], "float32")
-            marks = scene.visuals.Markers(parent=self._legend)
-            marks.set_data(centres, face_color=colors[shown], size=swatch,
-                           symbol="square", edge_width=0)
-            marks.antialias = 0
-            self._legend_parts.append(marks)
         name_st = {"font": st.get("name_font"), "size": st["name_size"],
                    "color": st.get("name_color", _AXIS_TEXT)}
-        for i, text in enumerate(rows):
-            t = scene.visuals.Text(
-                text, parent=self._legend, anchor_x="left", anchor_y="center",
-                pos=(_LEGEND_PAD + swatch + 6, y + (i + 0.5) * row_h), font_manager=self._fonts)
-            _style_text(t, name_st, fonts=self._fonts)
-            self._legend_parts.append(t)
+        for head, rows, colors, syms, n_sw in laid:
+            if head:  # the shapes' column, styled as the title
+                t = scene.visuals.Text(head, parent=self._legend, anchor_x="left",
+                                       anchor_y="center",
+                                       pos=(_LEGEND_PAD, y + head_h / 2),
+                                       font_manager=self._fonts)
+                _style_text(t, st, fonts=self._fonts)
+                self._legend_parts.append(t)
+                y += head_h
+            # Every row has a swatch except a last "+ n more".
+            if n_sw:
+                centres = np.array([[_LEGEND_PAD + swatch / 2, y + (i + 0.5) * row_h]
+                                    for i in range(n_sw)], "float32")
+                marks = scene.visuals.Markers(parent=self._legend)
+                if syms is None:
+                    marks.set_data(centres, face_color=colors[:n_sw], size=swatch,
+                                   symbol="square", edge_width=0)
+                    marks.antialias = 0
+                else:  # the shapes, a little bigger (a triangle reads small)
+                    marks.set_data(centres, face_color=colors[:n_sw],
+                                   size=swatch * 1.2 * np.array(
+                                       [plotdata.SHAPE_SCALE.get(m, 1.0)
+                                        for m in syms[:n_sw]], "float32"),
+                                   edge_width=0,
+                                   symbol=np.array(syms[:n_sw], dtype=object))
+                self._legend_parts.append(marks)
+            for i, text in enumerate(rows):
+                t = scene.visuals.Text(
+                    text, parent=self._legend, anchor_x="left", anchor_y="center",
+                    pos=(_LEGEND_PAD + swatch + 6, y + (i + 0.5) * row_h),
+                    font_manager=self._fonts)
+                _style_text(t, name_st, fonts=self._fonts)
+                self._legend_parts.append(t)
+            y += row_h * len(rows)
         frame = bool(st.get("frame", True))
         self._legend.border_color = st.get("frame_color") if frame else None
         self._legend.border_width = 1 if frame else 0
@@ -2101,10 +2191,9 @@ class PlotTab(QWidget):
         sizes = dict.fromkeys(self._slots, 0.0)
         legend = self._show_legend and self._has_legend
         st = self._el_style["cbar"]
-        if legend and self._legend_items is not None:
-            if self._legend_place() == "outside":
-                sizes["side"] = self._legend_size[0] + 6.0
-        elif legend and self._cbar is not None:
+        if legend and self._legend_box() and self._legend_place() == "outside":
+            sizes["side"] = self._legend_size[0] + 6.0
+        if legend and self._cbar is not None and self._cbar_spec is not None:
             gap = float(st.get("gap", 0))
             label = self._cbar_label_extent(st)
             if self._cbar_orient == "bottom":
@@ -2135,11 +2224,12 @@ class PlotTab(QWidget):
         for t in self._axis_labels:
             t.visible = self._show_axes
         legend = self._show_legend and self._has_legend
-        box = legend and self._legend_items is not None
+        box = legend and self._legend_box()
+        bar = legend and self._cbar_spec is not None  # (with shapes: both)
         if self._cbar is not None:
-            self._cbar.visible = legend and not box
+            self._cbar.visible = bar
         if self._cbar_label is not None:
-            self._cbar_label.visible = legend and not box
+            self._cbar_label.visible = bar
         if box:
             self._build_legend()
         if self._legend is not None:
@@ -2307,7 +2397,8 @@ class PlotTab(QWidget):
             self.crange = None  # new bins, new counts: re-detect the colours
         self._render()
         self.specChanged.emit()
-        if key in ("bins", "bandwidth", "show_ref", "show_points", "error"):
+        if key in ("bins", "bandwidth", "show_ref", "show_points", "error",
+                   "x_error"):
             QTimer.singleShot(0, self.reset_view)  # the extent moved
 
     def _set_title(self, name: str) -> None:
@@ -2398,6 +2489,9 @@ class PlotTab(QWidget):
             return self._legend is not None and bool(self._legend.visible)
         if key == "fit":
             return any(t.parent is not None for t in self._fit_texts)
+        if key == "labels":
+            return (self._point_labels is not None
+                    and self._point_labels.parent is not None)
         if key == self._data_key:
             return self._data_present()
         return False
@@ -2579,12 +2673,14 @@ class PlotTab(QWidget):
             elif key == "cbar":
                 self._apply_cbar(st)
             elif key == "legend":
-                if (self._legend_items is not None and self._show_legend
+                if (self._legend_box() and self._show_legend
                         and self._has_legend):
                     self._build_legend()
                     self._layout_side()
             elif key == "fit":
                 self._set_fit()
+            elif key == "labels":
+                self._set_point_labels()
             self._relayout()
         except Exception:  # noqa: BLE001 - styling is cosmetic; never break a plot
             pass
@@ -2945,6 +3041,14 @@ class PlotTab(QWidget):
             w, h = self._fit_box
             x, y = self._fit_origin
             return QRectF(view.left() + x, view.top() + y, w, h).adjusted(-6, -4, 6, 4)
+        if key == "labels":  # all of them (a click hits one: _label_boxes)
+            boxes = self._label_boxes()
+            if not boxes:
+                return None
+            rect = boxes[0]
+            for b in boxes[1:]:
+                rect = rect.united(b)
+            return rect
         if key == self._data_key:
             return self._widget_rect(self._view)
         if key in _AXIS3D_KEYS:
@@ -2976,6 +3080,9 @@ class PlotTab(QWidget):
                 continue
             rect = self._element_rect(key)
             if rect is not None and rect.contains(pt):
+                if key == "labels" and not any(
+                        b.contains(pt) for b in self._label_boxes()):
+                    continue  # between the labels: the data, or nothing
                 return key
         key = self._data_key
         rect = self._element_rect(key)
@@ -3123,9 +3230,18 @@ class PlotTab(QWidget):
         import polars as pl
 
         rows = data.rows.filter(pl.Series(keep)) if data.rows is not None else None
+
+        def take(a):
+            return None if a is None else np.asarray(a, dtype=object if isinstance(
+                a, list) else None)[keep]
+
+        texts = take(data.texts)
         return replace(data, pos=pos.astype("float32"), colors=data.colors[keep],
                        rows=rows, n_drawn=int(keep.sum()),
-                       err=None if data.err is None else data.err[keep]), keep
+                       err=None if data.err is None else data.err[keep],
+                       err_x=None if data.err_x is None else data.err_x[keep],
+                       symbols=take(data.symbols),
+                       texts=None if texts is None else list(texts)), keep
 
     def _to_plot(self, x, y):
         """Data values to the plot's coordinates (log10 on a log axis)."""
@@ -3135,10 +3251,11 @@ class PlotTab(QWidget):
         with np.errstate(divide="ignore", invalid="ignore"):
             return (np.log10(x) if lx else x), (np.log10(y) if ly else y)
 
-    def _set_errorbars(self, pos, err) -> None:
+    def _set_errorbars(self, pos, err, err_x=None) -> None:
         """Mean ± SD: a vertical bar from mean - err to mean + err, with caps,
         under each point (none where there is no error: n < 2, or None). On a
-        log axis a bar reaching zero or below stops at its point."""
+        log axis a bar reaching zero or below stops at its point. ``err_x``:
+        bars across too, X ± its error (``spec.x_error``)."""
         from vispy import scene
 
         for old in (self._err_line, self._err_caps):
@@ -3146,6 +3263,7 @@ class PlotTab(QWidget):
                 old.parent = None
         self._err_line = self._err_caps = None
         self._err_extent = None
+        self._set_xerrorbars(pos, err_x)
         if self._view is None or err is None or not len(pos):
             return
         x, y = pos[:, 0].astype("float64"), pos[:, 1].astype("float64")
@@ -3172,6 +3290,144 @@ class PlotTab(QWidget):
                                 face_color=_ERRBAR_RGBA, edge_width=0)
         self._err_caps.order = -1
         self._err_extent = (float(np.min(plo)), float(np.max(phi)))
+
+    def _set_xerrorbars(self, pos, err) -> None:
+        """The bars across: X - err to X + err through each point, with
+        upright caps (as the vertical bars, on a log X axis a bar reaching
+        zero or below stops at its point)."""
+        from vispy import scene
+
+        for old in (self._err_xline, self._err_xcaps):
+            if old is not None:
+                old.parent = None
+        self._err_xline = self._err_xcaps = None
+        self._err_xextent = None
+        if self._view is None or err is None or not len(pos):
+            return
+        x, y = pos[:, 0].astype("float64"), pos[:, 1].astype("float64")
+        err = np.asarray(err, dtype="float64")
+        ok = np.isfinite(err) & (err > 0)
+        if not ok.any():
+            return
+        x, y, e = x[ok], y[ok], err[ok]
+        lo, hi = x - e, x + e
+        if self._logs()[0]:
+            lo = np.where(lo > 0, lo, x)
+        plo, py = self._to_plot(lo, y)
+        phi, _ = self._to_plot(hi, y)
+        segs = np.empty((2 * len(py), 2), "float32")
+        segs[0::2, 1] = segs[1::2, 1] = py
+        segs[0::2, 0], segs[1::2, 0] = plo, phi
+        self._err_xline = scene.visuals.Line(
+            segs, connect="segments", color=_ERRBAR_RGBA, width=1.2,
+            method="gl", parent=self._view.scene)
+        self._err_xline.order = -1
+        caps = np.concatenate([np.column_stack([plo, py]),
+                               np.column_stack([phi, py])]).astype("float32")
+        self._err_xcaps = scene.visuals.Markers(parent=self._view.scene)
+        self._err_xcaps.set_data(caps, symbol="vbar", size=_ERRBAR_CAP_PX,
+                                 face_color=_ERRBAR_RGBA, edge_width=0)
+        self._err_xcaps.order = -1
+        self._err_xextent = (float(np.min(plo)), float(np.max(phi)))
+
+    # -- point labels ----------------------------------------------------
+    def _labels_style(self) -> dict:
+        return self._el_style.get("labels") or dict(pe.ELEMENTS["labels"].defaults)
+
+    @_shared_fonts
+    def _set_point_labels(self) -> None:
+        """A text by each point ("Label points": ``plotdata.LABEL_MAX`` points
+        at most), beside its marker. The texts are in the scene, so they pan
+        and are clipped with the points; their gap to the marker is in
+        pixels, so they are placed again when the zoom changes."""
+        from vispy import scene
+
+        texts = self._point_texts
+        pos = self._last_pos
+        if (self._view is None or texts is None or pos is None
+                or not len(pos) or len(texts) != len(pos)):
+            if self._point_labels is not None:
+                self._point_labels.parent = None
+            self._label_scale = None
+            return
+        st = self._labels_style()
+        if self._point_labels is None:
+            self._point_labels = scene.visuals.Text(
+                [str(t) for t in texts], pos=np.asarray(pos)[:, :2],
+                color="black", font_size=8, parent=self._view.scene,
+                font_manager=self._fonts)
+        else:
+            self._point_labels.text = [str(t) for t in texts]
+            if self._point_labels.parent is None:
+                self._point_labels.parent = self._view.scene
+        self._point_labels.order = 4
+        _style_text(self._point_labels, st, fonts=self._fonts)
+        tr = self._view.scene.transform
+        if getattr(self, "_labels_tr", None) is not tr:
+            tr.changed.connect(self._on_scene_moved)
+            self._labels_tr = tr
+        self._label_scale = None
+        self._place_point_labels()
+
+    def _on_scene_moved(self, _event=None) -> None:
+        if self._point_labels is not None and self._point_labels.parent is not None:
+            self._place_point_labels()
+
+    def _place_point_labels(self) -> None:
+        """Each label beside its point, a few pixels clear of the marker on
+        the chosen side (at the zoom now: a pan alone moves nothing)."""
+        lab = self._point_labels
+        if lab is None or lab.parent is None or self._last_pos is None:
+            return
+        try:
+            tr = self._view.scene.transform
+            o, r, d = (np.asarray(v, "float64")[:2] for v in
+                       tr.imap([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])[:, :2])
+        except Exception:  # noqa: BLE001 - labels are cosmetic
+            return
+        side = str(self._labels_style().get("side", "right"))
+        gap = float(self._applied_size or self._base_size) / 2 + 4.0
+        step = {"right": r - o, "left": o - r, "above": o - d, "below": d - o,
+                "above_right": (r - o + o - d) * 0.75}.get(side, r - o) * gap
+        scale = (side, tuple(np.round(step, 12)))
+        if scale == self._label_scale:
+            return
+        self._label_scale = scale
+        # (VisPy's text runs down the screen from its anchor: "top" is the
+        # edge at the anchor... on the plot's upward Y, the text's bottom.)
+        anchors = {"right": ("left", "center"), "left": ("right", "center"),
+                   "above": ("center", "top"), "below": ("center", "bottom"),
+                   "above_right": ("left", "top")}
+        lab.anchors = anchors.get(side, ("left", "center"))
+        lab.pos = (np.asarray(self._last_pos, "float64")[:, :2] + step).astype("float32")
+
+    def _label_boxes(self) -> list:
+        """Each shown label's box on the canvas, px (what a click hits)."""
+        if "_label_boxes" in self._rect_cache:
+            return self._rect_cache["_label_boxes"]
+        out = []
+        lab = self._point_labels
+        view = self._widget_rect(self._view) if self._view is not None else None
+        if lab is not None and lab.parent is not None and view is not None:
+            st = self._labels_style()
+            font = QFont(st.get("font") or pe.DEFAULT_FONT)
+            font.setPixelSize(max(1, round(self._px(st.get("size", 8)))))
+            font.setBold(bool(st.get("bold", False)))
+            font.setItalic(bool(st.get("italic", False)))
+            fm = QFontMetricsF(font)
+            pts = self._scene_points(lab, np.asarray(lab.pos)[:, :2])
+            ax, ay = lab.anchors
+            texts = lab.text if isinstance(lab.text, list) else [lab.text]
+            for text, (x, y) in zip(texts, pts):
+                w, h = fm.horizontalAdvance(text), fm.height()
+                left = x - w if ax == "right" else x - w / 2 if ax == "center" else x
+                # (anchors as placed: on the upward Y, "top" is the bottom)
+                top = y - h if ay == "top" else y if ay == "bottom" else y - h / 2
+                box = QRectF(left, top, w, h).adjusted(-2, -1, 2, 1)
+                if text and view.intersects(box):
+                    out.append(box.intersected(view))
+        self._rect_cache["_label_boxes"] = out
+        return out
 
     def _user_range(self, key: str, lo: float, hi: float) -> tuple:
         """An axis's range: the editor's Minimum / Maximum where set (in the
@@ -3220,12 +3476,16 @@ class PlotTab(QWidget):
             elif self.spec.is_curve:
                 margin = 0.04  # a curve plot runs close to its axes
             ylo, yhi = float(lo[1]), float(hi[1])
+            xlo, xhi = float(lo[0]), float(hi[0])
             if self.spec.is_meansd and getattr(self, "_err_extent", None):
                 ylo, yhi = min(ylo, self._err_extent[0]), max(yhi, self._err_extent[1])
+            if self.spec.is_meansd and getattr(self, "_err_xextent", None):
+                xlo = min(xlo, self._err_xextent[0])
+                xhi = max(xhi, self._err_xextent[1])
             # The editors' Minimum / Maximum are exact; the rest get the margin
             # (set here, as VisPy's own margin can't be zero).
             ranges = []
-            for key, a, z in (("xaxis", lo[0], hi[0]), ("yaxis", ylo, yhi)):
+            for key, a, z in (("xaxis", xlo, xhi), ("yaxis", ylo, yhi)):
                 a, z = _span(a, z)
                 a, z, fixed_a, fixed_z = self._user_range(key, a, z)
                 pad = (z - a) * margin / 2
@@ -3264,11 +3524,20 @@ class PlotTab(QWidget):
         # antialias=0: hard-edged discs tile into solid colour under heavy
         # overlap instead of each blending a semi-transparent rim toward the
         # light background (the zoomed-out "whitening").
+        # A "shape by" column gives each point its own shape.
+        symbol = self._symbols if self._symbols is not None else self._symbol
+        size = px
+        if self._symbols is not None:  # (each shape at a disc's apparent size)
+            size = px * np.array([plotdata.SHAPE_SCALE.get(m, 1.0)
+                                  for m in self._symbols], "float32")
         self._scatter.set_data(self._last_pos, face_color=colors,
-                               size=px, edge_width=0, edge_color=None,
-                               symbol=self._symbol)
+                               size=size, edge_width=0, edge_color=None,
+                               symbol=symbol)
         self._scatter.antialias = 1 if self.spec.is_grouped else 0
         self._applied_size = px
+        if self._point_labels is not None:
+            self._label_scale = None  # (their gap is the marker's radius)
+            self._place_point_labels()
 
     def _resize_markers(self) -> None:
         """Re-apply the adaptive size if the zoom changed it meaningfully."""
@@ -3353,6 +3622,7 @@ class PlotTab(QWidget):
             # The map colours KDE curves and many categories; scale and
             # range don't apply to them.
             "map_only": bool(self.spec.is_kde or self._legend_cmap),
+            "shape_by": self.spec.shape_by if self._symbols is not None else None,
             "has_points": self._has_points(),
             "cmin": cmin if cmin is not None else 0,
             "cmax": cmax if cmax is not None else 100,
@@ -3537,6 +3807,7 @@ class PlotTab(QWidget):
         cols = list(dict.fromkeys(
             [*self.spec.axes]
             + ([self.spec.color] if self.spec.color else [])
+            + [c for c in self._mark_cols() if c in rows.columns]
             + [c for c in extras if c in rows.columns]
         ))
         row = rows.row(i, named=True)
@@ -3549,8 +3820,12 @@ class PlotTab(QWidget):
 
         s = self.spec
         err, sd, n = row.get(plotdata.MS_ERR), row.get(plotdata.MS_SD), row.get(plotdata.MS_N)
-        lines = [f"{s.group_by}: {_fmt(row.get(plotdata.MS_GROUP))}",
-                 f"{s.x}: {_fmt(row.get(plotdata.MS_X))}"]
+        lines = [f"{s.group_by}: {_fmt(row.get(plotdata.MS_GROUP))}"]
+        xerr = row.get(plotdata.MS_X_ERR)
+        if xerr is not None and np.isfinite(xerr) and s.error != "none":
+            lines.append(f"{s.x}: {_fmt(row.get(plotdata.MS_X))} ± {_fmt(xerr)}")
+        else:
+            lines.append(f"{s.x}: {_fmt(row.get(plotdata.MS_X))}")
         mean = _fmt(row.get(plotdata.MS_MEAN))
         name = plotdata.value_label(s.values)
         if err is not None and np.isfinite(err) and s.error != "none":
@@ -3562,6 +3837,7 @@ class PlotTab(QWidget):
         lines.append(f"n: {n}")
         if s.color and s.color != s.group_by and s.color in row:
             lines.append(f"{s.color}: {_fmt(row.get(s.color))}")
+        lines += self._mark_lines(row, s.group_by)
         return "\n".join(lines)
 
     def _per_text(self, row: dict) -> str:
@@ -3575,7 +3851,19 @@ class PlotTab(QWidget):
                  f"rows: {row.get(plotdata.PER_N)}"]
         if s.color and s.color != s.per and s.color in row:
             lines.append(f"{s.color}: {_fmt(row.get(s.color))}")
+        lines += self._mark_lines(row, s.per)
         return "\n".join(lines)
+
+    def _mark_cols(self) -> list:
+        """The shape and label columns (once, not the colour column again)."""
+        s = self.spec
+        return [c for c in dict.fromkeys((s.shape_by, s.label_by))
+                if c and c != s.color]
+
+    def _mark_lines(self, row: dict, group) -> list[str]:
+        """A grouped point's shape and label columns, for its tooltip."""
+        return [f"{c}: {_fmt(row.get(c))}" for c in self._mark_cols()
+                if c != group and c in row]
 
     def _show_tooltip(self, i: int, tipx: float, tipy: float) -> None:
         text = self._hover_text(i)
@@ -3627,6 +3915,8 @@ class PlotTab(QWidget):
         self._title_label = None
         self._last_pos = self._last_colors = None
         self._err_line = self._err_caps = None
+        self._err_xline = self._err_xcaps = None
+        self._point_labels = None
         self._log_grid = None
         self._bars = None
         self._categories = None

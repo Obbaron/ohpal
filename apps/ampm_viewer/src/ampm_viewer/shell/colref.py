@@ -88,8 +88,8 @@ def rename_names(names, old: str, new: str) -> list[str]:
 
 def rename_spec(spec, old: str, new: str):
     """Return a copy of a ``PlotSpec`` with any ``old`` channel renamed to
-    ``new`` (x / y / z / color / group_by / more_y / per). ``None`` channels
-    are left as-is."""
+    ``new`` (x / y / z / color / group_by / more_y / per / shape_by /
+    label_by). ``None`` channels are left as-is."""
     def f(c):
         return new if c == old else c
 
@@ -102,4 +102,6 @@ def rename_spec(spec, old: str, new: str):
         group_by=f(spec.group_by) if spec.group_by else spec.group_by,
         more_y=tuple(f(c) for c in spec.more_y),
         per=f(spec.per) if spec.per else spec.per,
+        shape_by=f(spec.shape_by) if spec.shape_by else spec.shape_by,
+        label_by=f(spec.label_by) if spec.label_by else spec.label_by,
     )
