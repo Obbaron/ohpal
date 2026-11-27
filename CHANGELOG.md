@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-27
+
+One point per part on a 2D Scatter, with trend lines, marker shapes,
+point labels and error bars on X; exports from every row; pictures
+in Help.
+
 ### Added
 
 - **Pictures in Help.** Articles can show screenshots: each in a framed band
@@ -906,7 +912,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ohpal/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/Obbaron/ohpal/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/Obbaron/ohpal/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/Obbaron/ohpal/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/Obbaron/ohpal/compare/v2.1.1...v2.2.0

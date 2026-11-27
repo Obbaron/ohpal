@@ -137,10 +137,12 @@ def release_notes(version: str, entries: str) -> str:
 ## First start
 
 Neither installer is signed yet. On Windows, if SmartScreen stops the setup,
-choose **More info**, then **Run anyway**. On a Mac, the first time: macOS 15
-and later, open AMPM Viewer, close the warning, then System Settings > Privacy
-& Security > **Open Anyway**; macOS 14 and earlier, Control-click AMPM Viewer
-in Applications and choose **Open**.
+choose **More info**, then **Run anyway**; if it only offers **Don't run**,
+right-click the setup, choose **Properties**, tick **Unblock**, click **OK**
+and run it again. On a Mac, the first time: macOS 15 and later, open AMPM
+Viewer, close the warning, then System Settings > Privacy & Security > **Open
+Anyway**; macOS 14 and earlier, Control-click AMPM Viewer in Applications and
+choose **Open**.
 
 See `CHANGELOG.md` for the details.
 """
