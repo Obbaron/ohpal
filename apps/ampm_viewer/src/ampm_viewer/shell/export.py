@@ -61,6 +61,26 @@ def build_summary(df, key: str, value_aggs: list[tuple[str, str]]):
     return out
 
 
+# An Excel sheet holds 1,048,576 rows; one is the header.
+EXCEL_MAX_ROWS = 1_048_575
+
+
+def too_many_rows(n: int) -> str:
+    """Why ``n`` rows can't go into one sheet, and what to do instead."""
+    return (f"{n:,} rows is more than an Excel sheet holds "
+            f"({EXCEL_MAX_ROWS + 1:,} with the header). Export a range of "
+            f"layers, filter the rows, or export a Summary.")
+
+
+def columns_for(spec: dict) -> list[str] | None:
+    """The (display) columns an export writes: the summary's key and value
+    columns, or the raw export's columns (None: every column)."""
+    if spec.get("mode") == "summary":
+        cols = [spec.get("key")] + [c for c, _ in spec.get("values") or []]
+        return [c for c in cols if c]
+    return list(spec.get("columns") or []) or None
+
+
 def build_raw(df, columns: list[str] | None):
     """The rows as-is, limited to ``columns`` (all of them when None/empty)."""
     if not columns:
@@ -70,8 +90,12 @@ def build_raw(df, columns: list[str] | None):
 
 
 def write_xlsx(df, path: str | Path, sheet: str = "Export") -> int:
-    """Write ``df`` to an .xlsx (header + rows). Returns the row count."""
+    """Write ``df`` to an .xlsx (header + rows). Returns the row count.
+    Raises ``ValueError`` when the rows don't fit in a sheet."""
     from openpyxl import Workbook
+
+    if df.height > EXCEL_MAX_ROWS:
+        raise ValueError(too_many_rows(df.height))
 
     wb = Workbook()
     ws = wb.active

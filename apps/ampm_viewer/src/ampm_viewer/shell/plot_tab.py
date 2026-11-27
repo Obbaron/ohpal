@@ -85,7 +85,7 @@ _CAMERA_PRESETS = {"top": (90.0, 0.0), "front": (0.0, 0.0),
                    "side": (0.0, 90.0), "iso": (30.0, 45.0)}
 # Toolbar options that live on the spec (they change what is drawn, so a
 # change re-renders); the rest are view state on the tab.
-_SPEC_OPTIONS = ("show_box", "fill", "bandwidth", "bins", "sort",
+_SPEC_OPTIONS = ("fit", "show_box", "fill", "bandwidth", "bins", "sort",
                  "show_points", "show_lines", "show_ref", "error")
 _ERRBAR_RGBA = (0.23, 0.25, 0.29, 0.9)  # Mean ± SD error bars
 _ERRBAR_CAP_PX = 9                     # their caps' width
@@ -388,8 +388,15 @@ class PlotTab(QWidget):
         self._show_legend = True
         self._show_title = True
         # Spatial 2D plots keep one X unit == one Y unit unless unlocked.
-        self._equal_axes = not spec.is_meansd
+        self._equal_axes = not spec.is_grouped
         self._err_line = self._err_caps = None  # Mean ± SD error bars
+        self._fit = None                 # the trend line (plotdata.Fit) drawn
+        self._fit_line = None            # ...its line (data space)
+        self._fit_texts: list = []       # ...its label, a Text per line (view px)
+        self._fit_box = (0.0, 0.0)       # ...the label's size, px
+        self._fit_origin = (0.0, 0.0)    # ...and its top-left in the view, px
+        self._fit_extent = None          # ...the points it was fitted to
+        self._data_labels = None         # axis names a grouped scatter computed
         self._has_legend = False     # a colour bar / legend is on the plot
         self._legend_cmap = False    # categorical colours from the colormap
         self._contour_lines_ok = False  # the field allows level lines
@@ -493,7 +500,7 @@ class PlotTab(QWidget):
         # Editable elements: one resolved style per element (the default for
         # new plots, then this plot's edits), the selection and its outline.
         self._el_style: dict[str, dict] = {
-            k: pe.default_style(k, spec.kind) for k in pe.keys_for(spec)}
+            k: pe.default_style(k, pe.style_kind(spec)) for k in pe.keys_for(spec)}
         self._data_key = pe.data_key(spec)
         self._take_bridged(self._el_style[self._data_key])
         self._selected: str | None = None
@@ -717,6 +724,9 @@ class PlotTab(QWidget):
                 data = plotdata.build_meansd(
                     self._df, self.spec, sample=self._renames.get("part_id", "part_id"),
                     cmap=self.cmap, scale=self.scale, crange=self.crange)
+            elif self.spec.is_per:
+                data = plotdata.build_per(self._df, self.spec, cmap=self.cmap,
+                                          scale=self.scale, crange=self.crange)
             else:
                 data = plotdata.build(self._df, self.spec, cmap=self.cmap,
                                       scale=self.scale, crange=self.crange)
@@ -733,6 +743,7 @@ class PlotTab(QWidget):
             self._show_overlay("No rows to plot for this selection.")
             return
         self._clear_overlay()
+        self._data_labels = linear.labels if self.spec.is_per else None
         if self.crange is None and data.crange is not None:
             self.crange = data.crange  # auto-detect once; sliders tweak after
         first = not self._rendered_once
@@ -742,6 +753,9 @@ class PlotTab(QWidget):
         self._set_scatter(self._effective_size())
         if self.spec.is_meansd:
             self._set_errorbars(linear.pos[keep], linear.err[keep])
+        self._fit = linear.fit
+        self._fit_extent = (linear.pos[keep] if len(linear.pos) else None)
+        self._set_fit()
         self._build_hover_index(data)
         self._update_decor(data)
         self._apply_elements()
@@ -1092,6 +1106,128 @@ class PlotTab(QWidget):
         self._rendered_once = True
         if self._view is not None and first:
             QTimer.singleShot(0, self.reset_view)
+
+    # -- trend line (2D scatter, Mean ± SD) -------------------------------
+    def _fit_style(self) -> dict:
+        return self._el_style.get("fit") or pe.default_style("fit")
+
+    def _fit_text(self) -> list[str]:
+        st = self._fit_style()
+        if self._fit is None:
+            return []
+        return plotdata.fit_lines(
+            self._fit, equation=bool(st.get("equation", True)),
+            r2=bool(st.get("r2", True)), p=bool(st.get("p", True)),
+            n=bool(st.get("n", False)))
+
+    def _hide_fit(self) -> None:
+        for item in (self._fit_line, *self._fit_texts):
+            if item is not None:
+                item.parent = None
+
+    @_shared_fonts
+    def _set_fit(self) -> None:
+        """The trend line (``plotdata.linear_fit``, through the points as
+        they are, whatever the axes' scale) across the points' X range and
+        a little beyond, and its label in a corner of the plot. Nothing when
+        it is off, or there is no line (fewer than 3 points, X all equal)."""
+        from vispy import scene
+
+        if (not getattr(self.spec, "fit", False) or self._fit is None
+                or self._view is None or self._fit_extent is None
+                or not len(self._fit_extent)):
+            self._hide_fit()
+            return
+        st = self._fit_style()
+        logx, logy = self._logs()
+        xs = np.asarray(self._fit_extent[:, 0], dtype="float64")
+        xs = xs[np.isfinite(xs)]
+        if logx:
+            xs = xs[xs > 0]
+        if not len(xs):
+            self._hide_fit()
+            return
+        lo, hi = float(xs.min()), float(xs.max())
+        n = 120
+        if logx:  # even steps on the log axis
+            a, b = np.log10(lo), np.log10(hi)
+            pad = 0.03 * (b - a)
+            x = 10 ** np.linspace(a - pad, b + pad, n)
+        else:
+            pad = 0.03 * (hi - lo)
+            x = np.linspace(lo - pad, hi + pad, n)
+        y = self._fit.at(x)
+        ok = np.isfinite(y) & ((y > 0) if logy else True)
+        x, y = x[ok], y[ok]
+        if len(x) < 2:
+            self._hide_fit()
+            return
+        pos = np.column_stack([np.log10(x) if logx else x,
+                               np.log10(y) if logy else y]).astype("float32")
+        dashed = bool(st.get("dashed", True))
+        if dashed:  # pairs of consecutive points are drawn: dashes and gaps
+            pos = pos[: len(pos) // 2 * 2]
+        color = QColor(st.get("line_color") or "#7f7f7f").getRgbF()
+        width = float(st.get("line_width", 2))
+        connect = "segments" if dashed else "strip"
+        if self._fit_line is None:
+            self._fit_line = scene.visuals.Line(
+                pos=pos, color=color, width=width, connect=connect,
+                method="gl", parent=self._view.scene)
+        else:
+            self._fit_line.set_data(pos=pos, color=color, width=width,
+                                    connect=connect)
+            if self._fit_line.parent is None:
+                self._fit_line.parent = self._view.scene
+        self._fit_line.order = 2
+        # The label: one Text per line, in the view's own pixels (a corner).
+        lines = self._fit_text()
+        while len(self._fit_texts) < len(lines):
+            self._fit_texts.append(scene.visuals.Text(
+                "", color="black", anchor_x="left", anchor_y="top",
+                font_size=9, parent=self._view, font_manager=self._fonts))
+        for i, t in enumerate(self._fit_texts):
+            if i < len(lines):
+                t.text = lines[i]
+                _style_text(t, st, fonts=self._fonts)
+                if t.parent is None:
+                    t.parent = self._view
+                t.order = 5
+            else:
+                t.parent = None
+        self._place_fit_label()
+
+    def _fit_metrics(self) -> tuple[float, float]:
+        """The label's line height and widest line, px."""
+        st = self._fit_style()
+        font = QFont(st.get("font") or pe.DEFAULT_FONT)
+        font.setPixelSize(max(1, round(self._px(st.get("size", 9)))))
+        font.setBold(bool(st.get("bold", False)))
+        font.setItalic(bool(st.get("italic", False)))
+        fm = QFontMetricsF(font)
+        lines = self._fit_text()
+        width = max((fm.horizontalAdvance(t) for t in lines), default=0.0)
+        return fm.height(), width
+
+    def _place_fit_label(self) -> None:
+        """Pin the label to its corner (the plot's size may have changed)."""
+        lines = [t for t in self._fit_texts if t.parent is not None]
+        if not lines or self._view is None:
+            self._fit_box = (0.0, 0.0)
+            return
+        place = str(self._fit_style().get("place", "top_left"))
+        line_h, width = self._fit_metrics()
+        height = line_h * len(lines)
+        self._fit_box = (width, height)
+        vw, vh = (float(v) for v in self._view.size)
+        inset = _LEGEND_INSET + 2
+        right = place.endswith("right")
+        x = vw - inset if right else inset
+        y0 = inset if place.startswith("top") else vh - inset - height
+        self._fit_origin = (x - width if right else x, y0)
+        for i, t in enumerate(lines):  # (as the legend: centred on each row)
+            t.anchors = ("right" if right else "left", "center")
+            t.pos = (x, y0 + line_h * (i + 0.5))
 
     def _set_knee(self, data, xlo, xhi, lift: float = 0.0) -> None:
         """The k-distance curve's knee (``plotdata.knee_index``): a dot on the
@@ -1913,7 +2049,10 @@ class PlotTab(QWidget):
         self._place_legend()
 
     def _on_view_resize(self, _event=None) -> None:
-        """The plot area changed size: re-fit the legend's rows to it."""
+        """The plot area changed size: re-fit the legend's rows to it, and
+        keep the trend line's label in its corner."""
+        if self._fit_texts:
+            self._place_fit_label()
         if self._legend is None or not self._legend.visible:
             return
         try:
@@ -2047,11 +2186,11 @@ class PlotTab(QWidget):
         s = self.spec
         return not (s.is_3d or s.is_bar or s.is_hist or s.is_cov
                     or s.is_contour or s.is_curve or s.is_violin
-                    or s.is_meansd)
+                    or s.is_grouped)
 
     def _has_points(self) -> bool:
         """Drawn as markers whose size, symbol and opacity can be set."""
-        return self.spec.is_3d or self._is_spatial() or self.spec.is_meansd
+        return self.spec.is_3d or self._is_spatial() or self.spec.is_grouped
 
     def controls(self) -> list:
         """The toolbar controls that apply to this plot right now: its view's
@@ -2067,6 +2206,8 @@ class PlotTab(QWidget):
         for c in plotcontrols.controls_for(s.kind):
             k = c.key
             if k == "bbox" and not s.is_3d:
+                continue
+            if k == "equal_axes" and not self._is_spatial():
                 continue
             if k == "legend" and not self._has_legend:
                 continue
@@ -2211,6 +2352,8 @@ class PlotTab(QWidget):
         if key in ("xaxis", "xaxis3d"):
             if key == "xaxis" and self._curve_data is not None:
                 return str(self._curve_data.x_name)
+            if key == "xaxis" and self._data_labels is not None:
+                return str(self._data_labels[0])
             return str(self.spec.x or "")
         if key == "yaxis":
             if self._bar_data is not None:  # bars measure count / CoV / value
@@ -2219,6 +2362,8 @@ class PlotTab(QWidget):
                 return str(self._curve_data.y_name)
             if self.spec.is_meansd:  # Density (1), (2), (3) -> Density
                 return plotdata.value_label(self.spec.values)
+            if self._data_labels is not None:  # Mean of Meltpool
+                return str(self._data_labels[1])
             return str(self.spec.y or "")
         if key == "yaxis3d":
             return str(self.spec.y or "")
@@ -2251,6 +2396,8 @@ class PlotTab(QWidget):
             return self._cbar is not None and bool(self._cbar.visible)
         if key == "legend":
             return self._legend is not None and bool(self._legend.visible)
+        if key == "fit":
+            return any(t.parent is not None for t in self._fit_texts)
         if key == self._data_key:
             return self._data_present()
         return False
@@ -2436,6 +2583,8 @@ class PlotTab(QWidget):
                         and self._has_legend):
                     self._build_legend()
                     self._layout_side()
+            elif key == "fit":
+                self._set_fit()
             self._relayout()
         except Exception:  # noqa: BLE001 - styling is cosmetic; never break a plot
             pass
@@ -2788,6 +2937,14 @@ class PlotTab(QWidget):
             return rect
         if key == "legend":
             return self._widget_rect(self._legend)
+        if key == "fit":  # the label, in its corner of the plot
+            view = self._widget_rect(self._view)
+            lines = [t for t in self._fit_texts if t.parent is not None]
+            if view is None or not lines:
+                return None
+            w, h = self._fit_box
+            x, y = self._fit_origin
+            return QRectF(view.left() + x, view.top() + y, w, h).adjusted(-6, -4, 6, 4)
         if key == self._data_key:
             return self._widget_rect(self._view)
         if key in _AXIS3D_KEYS:
@@ -3085,7 +3242,7 @@ class PlotTab(QWidget):
     def _effective_size(self) -> float:
         """On-screen px for the markers: base, grown when zoomed out (2D;
         not Mean ± SD, a few points that keep their size)."""
-        if (self.spec.is_3d or self.spec.is_meansd or self._view is None
+        if (self.spec.is_3d or self.spec.is_grouped or self._view is None
                 or not self._fit_width):
             return self._base_size
         try:
@@ -3110,7 +3267,7 @@ class PlotTab(QWidget):
         self._scatter.set_data(self._last_pos, face_color=colors,
                                size=px, edge_width=0, edge_color=None,
                                symbol=self._symbol)
-        self._scatter.antialias = 1 if self.spec.is_meansd else 0
+        self._scatter.antialias = 1 if self.spec.is_grouped else 0
         self._applied_size = px
 
     def _resize_markers(self) -> None:
@@ -3372,6 +3529,8 @@ class PlotTab(QWidget):
             return ""
         if self.spec.is_meansd:
             return self._meansd_text(rows.row(i, named=True))
+        if self.spec.is_per:
+            return self._per_text(rows.row(i, named=True))
         # Axis/colour columns follow renames via the spec; the part_id / layer
         # extras are raw, so map them through the rename map too.
         extras = [self._renames.get(c, c) for c in ("part_id", "layer")]
@@ -3402,6 +3561,19 @@ class PlotTab(QWidget):
             lines.append(f"SD: {_fmt(sd)}")
         lines.append(f"n: {n}")
         if s.color and s.color != s.group_by and s.color in row:
+            lines.append(f"{s.color}: {_fmt(row.get(s.color))}")
+        return "\n".join(lines)
+
+    def _per_text(self, row: dict) -> str:
+        """A point of a one-point-per-group scatter: the group, its X and Y
+        statistics, and how many rows they are over."""
+        s = self.spec
+        xl, yl = self._data_labels or (s.x, s.y)
+        lines = [f"{s.per}: {_fmt(row.get(plotdata.PER_GROUP))}",
+                 f"{xl}: {_fmt(row.get(plotdata.PER_X))}",
+                 f"{yl}: {_fmt(row.get(plotdata.PER_Y))}",
+                 f"rows: {row.get(plotdata.PER_N)}"]
+        if s.color and s.color != s.per and s.color in row:
             lines.append(f"{s.color}: {_fmt(row.get(s.color))}")
         return "\n".join(lines)
 
@@ -3462,6 +3634,8 @@ class PlotTab(QWidget):
         self._curve_data = None
         self._curve_lines = []
         self._curve_fill = self._knee_line = self._knee_label = self._knee_dot = None
+        self._fit_line = None
+        self._fit_texts = []
         self._violin_data = None
         self._violin_mesh = self._violin_edges = self._violin_marks = None
         self._dist_df = self._dist_key = self._dist_data = None

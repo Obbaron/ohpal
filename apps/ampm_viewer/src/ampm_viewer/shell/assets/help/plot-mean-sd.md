@@ -2,7 +2,7 @@
 title: Mean ± SD plots
 section: Plots
 order: 55
-keywords: mean, sd, standard deviation, error bars, standard error, se, confidence interval, ci, archimedes, density, repeats, replicates, energy density, samples template, measurement
+keywords: mean, sd, standard deviation, error bars, standard error, se, confidence interval, ci, archimedes, density, repeats, replicates, energy density, samples template, measurement, trend line, regression, fit, r squared, p-value
 context: plot.Mean ± SD
 ---
 # Mean ± SD plots
@@ -52,6 +52,12 @@ pooled give n = 6.
 Points in no part, and DBSCAN's noise, are left out. Hover over a point to
 see its group, X, mean ± error, SD and n. Change the error bars from the
 toolbar's **Error bars** menu.
+
+**Trend line** (in the dialog or on the toolbar) draws the least-squares line
+through the means, labelled with its equation, R² and p: see
+[Scatter plots](help:plot-scatter). For one point per part with a
+statistic other than the mean (a CoV, say) on an axis, use a 2D Scatter with
+**One point per**.
 
 ## Axes
 

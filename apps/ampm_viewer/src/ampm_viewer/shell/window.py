@@ -1955,9 +1955,12 @@ class MainWindow(QMainWindow):
         else:
             qmode, qlo, qhi = mode, lo, hi
         self.set_status("Exporting…")
+        # Every row (not a plot's sample): the export's numbers are the data's.
+        # Only the columns it needs, so the whole build fits in memory.
         self.controller.query_for(
             qmode, qlo, qhi,
-            lambda raw, s=spec, st=state: self._write_export(s, raw, st)
+            lambda raw, s=spec, st=state: self._write_export(s, raw, st),
+            columns=self.controller.export_sources(spec, state), sample=False,
         )
 
     def _shape_as(self, state, raw_df, filters):

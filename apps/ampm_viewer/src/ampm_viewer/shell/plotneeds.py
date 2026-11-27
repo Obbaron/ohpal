@@ -69,7 +69,14 @@ def derivation_refs(d: dict) -> set[str]:
 def needed_columns(spec, *, derivations=(), renames=None, filters=()) -> set[str]:
     """Every (display) column the plot depends on: what it draws, what its
     filter reads, and what the calculated ones among those are made from."""
-    need = set(drawn_columns(spec, renames))
+    return depends_on(drawn_columns(spec, renames), derivations=derivations,
+                      filters=filters)
+
+
+def depends_on(columns, *, derivations=(), filters=()) -> set[str]:
+    """``columns`` (display names) and every column they depend on: what the
+    filters read, and what the calculated ones are made from."""
+    need = set(columns)
     for cond in filters or ():
         need |= refs(cond)
     # A calculation may build on an earlier one: walk them last to first.
@@ -84,12 +91,22 @@ def source_columns(spec, *, derivations=(), renames=None, filters=(),
     """The source (DataStore) columns a plot's query must bring: its needed
     columns under their original names, plus ``extra`` (inputs of the load
     recipe: mask, correction), of those ``available``. None: every column."""
+    return sources_for(
+        needed_columns(spec, derivations=derivations, renames=renames,
+                       filters=filters),
+        derivations=derivations, renames=renames, available=available,
+        extra=extra)
+
+
+def sources_for(needed, *, derivations=(), renames=None, available=None,
+                extra=()) -> list[str] | None:
+    """The source columns behind ``needed`` (display names, with what they
+    depend on already in): original names, calculated columns left out, plus
+    ``extra``, of those ``available``. None: every column."""
     renames = renames or {}
     original = {new: old for old, new in renames.items()}
     made = {d.get("name") for d in derivations or ()}
-    cols = [original.get(c, c) for c in needed_columns(
-        spec, derivations=derivations, renames=renames, filters=filters)
-        if c not in made]
+    cols = [original.get(c, c) for c in needed if c not in made]
     cols += list(extra or ())
     if available is not None:
         have = set(available)

@@ -73,7 +73,8 @@ _SCHEMA: dict[str, dict] = {
     "filter_remove_last": {},
     "filter_reset": {},
     # outputs (not undoable)
-    "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by", "more_y")}},
+    "plot": {"nested": {"spec": ("x", "y", "z", "color", "group_by", "more_y",
+                                 "per")}},
     "export_excel": {"names": ("key",), "lists": ("columns",),
                      "pairs": ("values",), "drop": ("path",)},
 }
@@ -308,8 +309,14 @@ def describe(op: str, p: dict) -> str:
                     f"'{s.get('group_by')}'")
         elif s.get("z"):
             what = f"of '{s.get('x')}' × '{s.get('y')}' × '{s.get('z')}'"
+        elif s.get("per"):
+            stat = lambda k: (s.get(k) or "mean").replace("sd", "SD").replace("cov", "CoV")
+            what = (f"of {stat('y_stat')} '{s.get('y')}' against {stat('x_stat')} "
+                    f"'{s.get('x')}', one point per '{s.get('per')}'")
         else:
             what = f"of '{s.get('y')}' against '{s.get('x')}'"
+        if s.get("fit"):
+            what += ", trend line"
         if s.get("color"):
             what += f", coloured by '{s.get('color')}'"
         return f"Plot: {kind} {what} ({_span_text(p.get('span'))})"

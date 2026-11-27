@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from .card import DraggableCard
@@ -33,6 +34,9 @@ from .plotspec import (
     COV_MODES,
     ERROR_NAMES,
     ERRORS,
+    SCATTER_2D,
+    STAT_NAMES,
+    STATS,
     PlotSpec,
     default_spec,
     repeat_base,
@@ -42,6 +46,7 @@ from .widgets import fix_combo
 
 _NONE = "— none —"
 _NONE_2D = "None (2D)"
+_EVERY_ROW = "Every row"
 
 # Mirror of derive_dialog._PRIMARY_QSS — accent primary button via palette roles.
 _PRIMARY_QSS = (
@@ -113,6 +118,33 @@ class NewPlotDialog(DraggableCard, QDialog):
         self.epsz_spin = None
         self.values_list = None
         self.error_combo = None
+        self.per_combo = None     # 2D scatter: one point per group
+        self.x_stat = self.y_stat = None
+        self.fit_chk = None       # 2D scatter / Mean ± SD: the trend line
+        self._per_touched_span = False
+
+        def stat_combo(current: str) -> QComboBox:
+            cb = fix_combo(QComboBox())
+            for key in STATS:
+                cb.addItem(STAT_NAMES[key], key)
+            cb.setCurrentIndex(STATS.index(current) if current in STATS else 0)
+            cb.setToolTip("What the point shows of each group's rows")
+            return cb
+
+        def with_stat(axis: QComboBox, stat: QComboBox) -> QWidget:
+            box = QWidget()
+            row = QHBoxLayout(box)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(axis, 1)
+            row.addWidget(stat)
+            return box
+
+        def fit_check(on: bool) -> QCheckBox:
+            chk = QCheckBox("Trend line (equation, R\u00b2, p)")
+            chk.setChecked(bool(on))
+            chk.setToolTip("A least-squares straight line through the points, "
+                           "labelled with its equation, R\u00b2 and p")
+            return chk
 
         def bandwidth_combo(current: str) -> QComboBox:
             cb = fix_combo(QComboBox())
@@ -243,6 +275,8 @@ class NewPlotDialog(DraggableCard, QDialog):
             self.color_combo.addItem(_NONE)
             self.color_combo.addItems(self._columns)
             form.addRow("Colour by", self.color_combo)
+            self.fit_chk = fit_check(base.fit)
+            form.addRow("", self.fit_chk)
         elif base.is_contour:
             # Contour: a value (z) gridded over an (x, y) parameter plane.
             self.x_combo = axis_combo(base.x)
@@ -254,6 +288,33 @@ class NewPlotDialog(DraggableCard, QDialog):
             self.show_points_chk = QCheckBox("Show measured points")
             self.show_points_chk.setChecked(bool(base.show_points))
             form.addRow("", self.show_points_chk)
+        elif kind == SCATTER_2D:
+            # Every row, or one point per group (a part, a specimen): its
+            # X and Y then a statistic of the group's rows.
+            self.per_combo = fix_combo(QComboBox())
+            self.per_combo.addItem(_EVERY_ROW)
+            self.per_combo.addItems(self._columns)
+            self.per_combo.setToolTip(
+                "One point per value of this column (each part, say): its X "
+                "and Y are the statistic chosen beside them, over its rows")
+            if base.per in self._columns:
+                self.per_combo.setCurrentText(base.per)
+            form.addRow("One point per", self.per_combo)
+            self.x_combo = axis_combo(base.x)
+            self.x_stat = stat_combo(base.x_stat)
+            form.addRow("X", with_stat(self.x_combo, self.x_stat))
+            self.y_combo = axis_combo(base.y)
+            self.y_stat = stat_combo(base.y_stat)
+            form.addRow("Y", with_stat(self.y_combo, self.y_stat))
+            self.color_combo = fix_combo(QComboBox())
+            self.color_combo.addItem(_NONE)
+            self.color_combo.addItems(self._columns)
+            if base.color in self._columns:
+                self.color_combo.setCurrentText(base.color)
+            form.addRow("Colour by", self.color_combo)
+            self.fit_chk = fit_check(base.fit)
+            form.addRow("", self.fit_chk)
+            self.per_combo.currentIndexChanged.connect(self._on_per_changed)
         else:
             self.x_combo = axis_combo(base.x)
             form.addRow("X", self.x_combo)
@@ -335,7 +396,9 @@ class NewPlotDialog(DraggableCard, QDialog):
         lay.addLayout(span_row)
 
         self._add_buttons(lay)
-        self.setMinimumWidth(480)
+        # (a 2D scatter's X / Y rows carry a statistic beside the column)
+        self.setMinimumWidth(580 if self.per_combo is not None else 480)
+        self._on_per_changed()
 
     def _add_buttons(self, lay) -> None:
         buttons = QDialogButtonBox(
@@ -379,6 +442,24 @@ class NewPlotDialog(DraggableCard, QDialog):
         if getattr(self, "_ok", None) is not None:
             self._ok.setEnabled(bool(self._ticked()))
 
+    def _per(self) -> str | None:
+        if self.per_combo is None or self.per_combo.currentText() == _EVERY_ROW:
+            return None
+        return self.per_combo.currentText()
+
+    def _on_per_changed(self, _index=None) -> None:
+        """2D scatter: the statistics only mean something per group; a group
+        (a part) is usually wanted whole, so the span moves to All layers the
+        first time one is chosen."""
+        if self.per_combo is None:
+            return
+        per = self._per() is not None
+        for stat in (self.x_stat, self.y_stat):
+            stat.setVisible(per)
+        if per and not self._per_touched_span and hasattr(self, "radio_all"):
+            self._per_touched_span = True
+            self.radio_all.setChecked(True)
+
     def _sync_span_enabled(self) -> None:
         self.single_spin.setEnabled(self.radio_single.isChecked())
         on_range = self.radio_range.isChecked()
@@ -418,6 +499,7 @@ class NewPlotDialog(DraggableCard, QDialog):
                 group_by=self.group_combo.currentText() or None,
                 error=self.error_combo.currentData() or "sd",
                 color=None if color == _NONE else color,
+                fit=self.fit_chk.isChecked(),
             )
         if self.group_combo is not None:  # KDE
             grp = self.group_combo.currentText()
@@ -472,12 +554,18 @@ class NewPlotDialog(DraggableCard, QDialog):
                 show_points=self.show_points_chk.isChecked(),
             )
         color = self.color_combo.currentText()
+        extra = {}
+        if self.per_combo is not None:  # 2D scatter
+            extra = {"per": self._per(), "fit": self.fit_chk.isChecked(),
+                     "x_stat": self.x_stat.currentData() or "mean",
+                     "y_stat": self.y_stat.currentData() or "mean"}
         return PlotSpec(
             kind=self._kind,
             x=self.x_combo.currentText(),
             y=self.y_combo.currentText(),
             z=self.z_combo.currentText() if self.z_combo is not None else None,
             color=None if color == _NONE else color,
+            **extra,
         )
 
     def span(self) -> tuple:

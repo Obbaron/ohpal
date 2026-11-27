@@ -33,7 +33,7 @@ ctl = lambda name: panel._el_controls[name][1]
 tab = w._open_plot(PlotSpec(kind="2D Scatter", x=X, y=Y, color=MP), ("all", None, None)); drain()
 assert tab.element_values("title")["font"] == "Open Sans" and tab.element_values("title")["size"] == 13
 assert tab._title_label._text_visual.face == "OpenSans"
-assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "data_points"}
+assert set(tab._el_style) == {"title", "xaxis", "yaxis", "categories", "cbar", "legend", "fit", "data_points"}
 assert tab._xaxis.axis.axis_label == X and tab._yaxis.axis.axis_label == Y
 
 # --- a click selects (the panel, if open, follows); double-click opens it -------

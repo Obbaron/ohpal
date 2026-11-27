@@ -72,6 +72,7 @@ _GROUP_STEMS = {
     "Measured points": "dot-mark", "Ticks": "x-axis", "Axis line": "x-axis",
     "Gridlines (both axes)": "grid", "Layout": "fit-to-screen", "Box": "legend",
     "Names": "legend", "Numbers": "hashtag", "Scale": "fit-to-screen",
+    "Label": "text--font", "Shows": "hashtag", "Line": "chart--line",
 }
 # The short type tag beside a column's name.
 _KIND_TAGS = {"float": "1.2", "int": "123", "text": "Aa", "bool": "T/F",

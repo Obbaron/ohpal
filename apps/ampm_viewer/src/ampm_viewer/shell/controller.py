@@ -793,7 +793,8 @@ class AppController(QObject):
         return (lo, hi) if lo <= hi else (hi, lo)
 
     # -- per-plot span query (its own dataset, not the grid's) ---------
-    def query_for(self, mode: str, lo, hi, on_raw, columns=None) -> None:
+    def query_for(self, mode: str, lo, hi, on_raw, columns=None,
+                  sample: bool = True) -> None:
         """Query a plot's span off-thread; call ``on_raw(raw_df)`` when ready.
 
         Shaping (derived/removed columns) is applied by the caller via ``shape``
@@ -801,7 +802,8 @@ class AppController(QObject):
         whole build (tens of millions of rows) but it only draws ~150k points,
         so the query is downsampled to a bounded budget to cap memory, and
         ``columns`` (source names) limits it to what the plot depends on
-        (None: every loaded column).
+        (None: every loaded column). ``sample=False`` brings every row (an
+        export: its numbers must come from all of the data).
         """
         store = self.session.store
         if store is None:
@@ -811,8 +813,35 @@ class AppController(QObject):
         # quiet: no global loading UI — the plot tab shows its own overlay.
         self._request(
             (qlo, qhi), lambda res: on_raw(res.df), label, coalesce=False,
-            quiet=True, sample_to=_PLOT_SAMPLE_ROWS, columns=columns,
+            quiet=True, sample_to=_PLOT_SAMPLE_ROWS if sample else None,
+            columns=columns,
         )
+
+    def export_sources(self, spec: dict, state: dict | None = None) -> list[str] | None:
+        """The source columns an Excel export's query needs (None: every
+        loaded column): the columns it writes, what its filters read (when it
+        respects them), what calculated ones among those are made from, and
+        the load recipe's inputs. ``state``: a shaping snapshot (a macro's
+        export) to read the calculations, renames and filters from."""
+        from . import export, plotneeds
+
+        store = self.session.store
+        cols = export.columns_for(spec)
+        if store is None or cols is None:
+            return None
+        s = self.session
+        derivations = state["derivations"] if state else s.derivations
+        renames = state["renames"] if state else s.renames
+        filters = ((state["filters"] if state else self.filters())
+                   if spec.get("respect_filters") else [])
+        loaded = self._query_columns(store)
+        need = plotneeds.depends_on(cols, derivations=derivations, filters=filters)
+        if renames.get("part_id", "part_id") in need:
+            need.add("part_id")
+        return plotneeds.sources_for(
+            need, derivations=derivations, renames=renames,
+            available=loaded if loaded is not None else store.columns,
+            extra=self.pipeline_columns())
 
     def pipeline_columns(self) -> list[str]:
         """Source columns the load recipe reads while shaping (masking,

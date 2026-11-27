@@ -26,6 +26,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   numbers in the how-to guides' style, and a redaction where a screenshot
   shows a user name. The screenshots themselves aren't kept in the
   repository.
+- **2D Scatter: one point per part.** **One point per** in the New plot
+  dialog draws a point for each value of a column (each part, each specimen)
+  instead of each row; X and Y are a statistic of that group's rows, chosen
+  beside each: mean, median, SD, CoV (%), min or max. A per-part
+  measurement brought in from Excel against the mean (or CoV) melt pool of
+  each part is one plot. Axes are named for what they show ("Mean of
+  Meltpool", "CoV of Meltpool (%)"; a column with one value per part keeps
+  its name); hover shows the group, its X and Y and the rows they are over.
+- **Trend line** on 2D Scatter and Mean ± SD plots (dialog and toolbar): the
+  least-squares line through the points on screen, labelled in a corner with
+  its equation, R² and p (scipy's `linregress`). An editable element: font,
+  size, colour, corner, what the label shows (equation, R², p, n), and the
+  line's colour, width and dashes. Recorded in macros and kept with the plot.
+
+### Fixed
+
+- **Export to Excel uses every row.** It went through the plots' query,
+  which keeps every n-th row once a build is over 1,000,000 rows, so an
+  "All layers" export of a big build (and a summary's means and CoVs) came
+  from a sample. Exports now read every row, and only the columns they need
+  (what they write, what their filters and calculations read). A raw export
+  with more rows than an Excel sheet holds is refused with what to do
+  instead, rather than failing in the writer.
 
 ## [2.3.0] - 2026-11-25
 

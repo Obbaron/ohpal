@@ -83,9 +83,10 @@ CONTOUR_LINES = Control("show_lines", "Level lines", "contour_lines",
 KNEE_LINE = Control("show_ref", "Knee line", "knee_line", "toggle", "options")
 ERROR_BARS = Control("error", "Error bars", "error_bars", "choice", "options",
                      tuple((k, ERROR_NAMES[k]) for k in ERRORS))
+TREND_LINE = Control("fit", "Trend line", "trend_line", "toggle", "options")
 
 VIEW_OPTIONS: dict[str, tuple] = {
-    SCATTER_2D: (EQUAL_AXES,),
+    SCATTER_2D: (EQUAL_AXES, TREND_LINE),
     SCATTER_3D: (CAMERA_3D,),
     LAYER_VIEWER: (EQUAL_AXES, LAYER_PREV, LAYER_NEXT),
     SINGLE_LAYER: (EQUAL_AXES,),
@@ -96,7 +97,7 @@ VIEW_OPTIONS: dict[str, tuple] = {
     KDE: (KDE_FILL, BANDWIDTH),
     CONTOUR: (CONTOUR_POINTS, CONTOUR_LINES),
     KDIST: (KNEE_LINE,),
-    MEAN_SD: (ERROR_BARS,),
+    MEAN_SD: (ERROR_BARS, TREND_LINE),
 }
 
 

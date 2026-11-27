@@ -35,6 +35,10 @@ BANDWIDTHS = ("scott", "silverman")
 # Mean ± SD: what the error bars show (sample SD, standard error, 95% CI).
 ERRORS = ("sd", "se", "ci95", "none")
 ERROR_NAMES = {"sd": "SD", "se": "SE", "ci95": "95% CI", "none": "None"}
+# 2D Scatter with one point per group: what each axis shows of a group's rows.
+STATS = ("mean", "median", "sd", "cov", "min", "max")
+STAT_NAMES = {"mean": "Mean", "median": "Median", "sd": "SD", "cov": "CoV (%)",
+              "min": "Min", "max": "Max"}
 
 
 @dataclass
@@ -55,12 +59,16 @@ class PlotSpec:
     eps_xy: float = 1.0           # k-distance: DBSCAN's XY radius (Z scaling,
     eps_z: float = 1.0            #   and the guide line) and its Z radius
     more_y: tuple = ()            # mean-sd: value columns after y (repeats)
+    per: str | None = None        # 2d scatter: one point per value of this
+    x_stat: str = "mean"          #   column, its X / Y the group's statistic
+    y_stat: str = "mean"          #   (STATS) of the X / Y column's rows
     # Changed from the plot's toolbar after it is made:
     fill: bool = True             # kde: shade under the curves
     sort: str = "name"            # bar / cov: order the bars by name | value
     show_lines: bool = True       # contour: level lines between the bands
     show_ref: bool = True         # k-distance: the knee line (suggested eps)
     error: str = "sd"             # mean-sd: sd | se | ci95 | none
+    fit: bool = False             # 2d scatter / mean-sd: the trend line
 
     def __post_init__(self) -> None:
         self.more_y = tuple(self.more_y or ())  # a list, from JSON
@@ -110,6 +118,22 @@ class PlotSpec:
         return self.kind == MEAN_SD
 
     @property
+    def is_per(self) -> bool:
+        """A 2D scatter of one point per group (``per``)."""
+        return self.kind == SCATTER_2D and bool(self.per)
+
+    @property
+    def is_grouped(self) -> bool:
+        """One point per group (Mean ± SD, a scatter of one point per group):
+        a handful of summary points, not positions."""
+        return self.is_meansd or self.is_per
+
+    @property
+    def can_fit(self) -> bool:
+        """Whether this kind of plot can show a trend line."""
+        return self.kind in (SCATTER_2D, MEAN_SD)
+
+    @property
     def values(self) -> list[str]:
         """Mean ± SD: every value column (y, then the repeats)."""
         return list(dict.fromkeys(c for c in (self.y, *self.more_y) if c))
@@ -120,7 +144,7 @@ class PlotSpec:
         a histogram's "count", a KDE's "density")."""
         return list(dict.fromkeys(
             c for c in (self.x, self.y, self.z, self.color, self.group_by,
-                        *self.more_y) if c))
+                        *self.more_y, self.per) if c))
 
     @property
     def is_curve(self) -> bool:

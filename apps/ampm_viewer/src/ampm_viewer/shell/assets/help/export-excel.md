@@ -2,7 +2,7 @@
 title: Exporting to Excel
 section: Data
 order: 70
-keywords: export, excel, xlsx, summary, raw, save, key, aggregate, scope, sheet, table
+keywords: export, excel, xlsx, summary, raw, save, key, aggregate, scope, sheet, table, every row, all rows, sample, too many rows, limit
 ---
 # Exporting to Excel
 
@@ -26,6 +26,11 @@ it, to a workbook.
 - **All layers**: the whole build.
 - **Range**: the layers you set.
 
+An export uses every row of its layers. (Plots draw from up to 1,000,000 rows
+spread evenly through a big build; an export doesn't sample, so its numbers
+are the data's.) Only the columns the export needs are read, so a summary of
+a whole build fits in memory, though a large build takes a while.
+
 Tick **Respect the active row filters** to export only the rows that pass the
 [filters](help:filters).
 
@@ -35,8 +40,9 @@ Tick **Respect the active row filters** to export only the rows that pass the
 **Export**; the status bar reports when the file has been written.
 
 Exporting many layers of raw rows makes a large file and takes a moment.
-Excel itself stops at about a million rows per sheet, so prefer a summary for
-whole-build exports.
+An Excel sheet holds 1,048,576 rows, the header included: a raw export with
+more rows isn't written, and the status bar says so. Export a range of
+layers, filter the rows, or export a summary instead.
 
 ## In a macro
 

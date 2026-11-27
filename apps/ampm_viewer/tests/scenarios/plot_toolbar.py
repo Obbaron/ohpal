@@ -33,7 +33,7 @@ tips = [a.text() for a in w.toolbar.actions() if a.text()]  # names (tooltips ad
 print("plot toolbar:", tips)
 assert not any(t in tips for t in ("Clear", "Invert", "Select")), tips
 assert not w.toolbar.findChildren(QComboBox), "no combo left on the plot toolbar"
-assert tips[:8] == ["Show/hide panel", "Reset view", "Equal axes (1:1)", "Axes", "Grid", "Legend", "Title", "Screenshot"], tips
+assert tips[:9] == ["Show/hide panel", "Reset view", "Equal axes (1:1)", "Axes", "Grid", "Legend", "Title", "Trend line", "Screenshot"], tips
 assert "BBox" not in tips, "a 2D plot has no bounding box"
 assert "Pop out" in tips
 win = (w._popout_plot(), app.processEvents(), w._detached[-1])[2]

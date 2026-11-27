@@ -126,7 +126,7 @@ assert hits[-1] == "settings" and closed == [True], (hits, closed)
 # A plot: Ctrl+0 and Ctrl+Shift+S press its buttons; tabs step with Ctrl+PgDown / Ctrl+Tab.
 w._open_plot(PlotSpec(kind="2D Scatter", x="Demand X", y="Demand Y"), ("all", None, None)); drain()
 plot_index = w.tabbar.currentIndex()
-assert [n for n, _ in w.toolbar.group_rects()][:3] == ["View", "Show", "Save"], w.toolbar.group_rects()
+assert [n for n, _ in w.toolbar.group_rects()][:4] == ["View", "Show", "Options", "Save"], w.toolbar.group_rects()
 check_aligned(w.toolbar, "plot ribbon")
 pressed = []
 w._plot_control = lambda tab, k, v=None: pressed.append(k)

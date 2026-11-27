@@ -82,6 +82,7 @@ class RenderData:
     full_range: tuple | None = None  # (min, max) of the colour column, for Min/Max
     rows: Any = None           # the drawn subset (polars DataFrame) for hover lookup
     err: Any = None            # mean-sd: (N,) error bar half-heights (NaN: none)
+    fit: Any = None            # the trend line (``Fit``) when the spec asks for one
 
 
 @dataclass
@@ -816,8 +817,177 @@ def build(df, spec, max_points: int = 150_000, seed: int = 0, *,
     colors, legend, eff_range, full_range = _colors(
         sub, spec, idx, take, len(pos), cmap, scale, crange)
     drawn = sub if idx is None else sub[idx]  # rows actually plotted, for hover
+    fit = None
+    if getattr(spec, "fit", False) and not spec.is_3d:
+        # Over every row (not just the drawn ones), on the columns as they are.
+        fit = linear_fit(_axis_array(sub, spec.x), _axis_array(sub, spec.y))
     return RenderData(pos, colors, spec.is_3d, tuple(spec.axes), legend,
-                      n_total, len(pos), eff_range, full_range, rows=drawn)
+                      n_total, len(pos), eff_range, full_range, rows=drawn,
+                      fit=fit)
+
+
+# -- trend line ---------------------------------------------------------
+@dataclass
+class Fit:
+    """A least-squares line y = slope * x + intercept through ``n`` points:
+    R squared, and p, the two-sided p-value for a slope of zero."""
+    slope: float
+    intercept: float
+    r2: float
+    p: float
+    n: int
+
+    def at(self, x):
+        return self.slope * np.asarray(x, dtype="float64") + self.intercept
+
+
+def linear_fit(x, y) -> Fit | None:
+    """The least-squares line through the finite (x, y) pairs; None for fewer
+    than 3 points or an x that doesn't vary (no line, or no spread to test)."""
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    n = int(x.size)
+    if n < 3 or np.ptp(x) == 0:
+        return None
+    from scipy import stats
+
+    r = stats.linregress(x, y)
+    r2 = float(r.rvalue) ** 2 if np.isfinite(r.rvalue) else float("nan")
+    return Fit(float(r.slope), float(r.intercept), r2, float(r.pvalue), n)
+
+
+def _sig(v: float, digits: int = 3) -> str:
+    """``v`` to ``digits`` significant figures, plainly (no exponent for
+    everyday sizes)."""
+    if not np.isfinite(v):
+        return "n/a"
+    if v == 0:
+        return "0"
+    mag = int(np.floor(np.log10(abs(v))))
+    if -4 <= mag < 6:
+        decimals = max(0, digits - 1 - mag)
+        return f"{v:.{decimals}f}"
+    return f"{v:.{digits - 1}e}"
+
+
+def p_text(p: float) -> str:
+    if not np.isfinite(p):
+        return "n/a"
+    return "< 0.001" if p < 0.001 else f"= {p:.3f}"
+
+
+def fit_lines(fit: Fit, *, equation=True, r2=True, p=True, n=False) -> list[str]:
+    """The trend line's label: its equation, then R², p and n as asked."""
+    lines = []
+    if equation:
+        sign = "-" if fit.intercept < 0 else "+"
+        lines.append(f"y = {_sig(fit.slope)}x {sign} {_sig(abs(fit.intercept))}")
+    stats = []
+    if r2:
+        stats.append(f"R\u00b2 = {fit.r2:.2f}")
+    if p:
+        stats.append(f"p {p_text(fit.p)}")
+    if n:
+        stats.append(f"n = {fit.n}")
+    if stats:
+        lines.append(", ".join(stats))
+    return lines
+
+
+# -- 2D Scatter, one point per group ------------------------------------
+# Column names of the group table (``RenderData.rows`` of such a plot).
+PER_GROUP, PER_X, PER_Y, PER_N = "__group", "__x", "__y", "__n"
+
+
+def stat_label(stat: str, column: str, constant: bool = False) -> str:
+    """An axis name for a group statistic of a column: ``Mean of Meltpool``,
+    ``CoV of Meltpool (%)``; just the column when it has one value per group
+    (a per-part measurement), whatever the statistic."""
+    if constant:
+        return column
+    if stat == "cov":
+        return f"CoV of {column} (%)"
+    from .plotspec import STAT_NAMES
+
+    return f"{STAT_NAMES.get(stat, stat)} of {column}"
+
+
+def _stat_expr(col: str, stat: str):
+    import polars as pl
+
+    c = pl.col(col).filter(pl.col(col).is_finite())
+    return {
+        "mean": c.mean(),
+        "median": c.median(),
+        "sd": c.std(ddof=1),
+        "cov": 100.0 * c.std(ddof=1) / c.mean(),
+        "min": c.min(),
+        "max": c.max(),
+    }.get(stat, c.mean())
+
+
+def build_per(df, spec, *, cmap: str = DEFAULT_COLORMAP, scale: str = "linear",
+              crange: tuple | None = None) -> RenderData:
+    """A 2D scatter with one point per value of ``spec.per`` (a part, a
+    specimen): X and Y are that group's ``x_stat`` / ``y_stat`` (mean, median,
+    SD, CoV in %, min, max) over its rows of the X and Y columns. Rows in no
+    group (null, DBSCAN's "noise") are left out. A colour column is the
+    group's mean (numbers) or first value (text)."""
+    import polars as pl
+
+    group = spec.per
+    for ch in [spec.x, spec.y, group, spec.color]:
+        if ch and ch not in df.columns:
+            raise KeyError(f"Column {ch!r} is not in the data.")
+    for c in (spec.x, spec.y):
+        if not df[c].dtype.is_numeric():
+            raise ValueError(f"{c!r} isn't a numeric column.")
+    keep = pl.col(group).is_not_null()
+    if not df[group].dtype.is_numeric():
+        keep = keep & (pl.col(group).cast(pl.Utf8) != "noise")
+    color = spec.color
+    by_color = bool(color) and color != group
+    sub = df.filter(keep).select(
+        pl.col(group), pl.col(spec.x).cast(pl.Float64).alias("__x0"),
+        pl.col(spec.y).cast(pl.Float64).alias("__y0"),
+        *([pl.col(color).alias("__c0")] if by_color else []))
+    color_numeric = by_color and df[color].dtype.is_numeric()
+    groups = sub.group_by(group).agg(
+        _stat_expr("__x0", spec.x_stat).alias(PER_X),
+        _stat_expr("__y0", spec.y_stat).alias(PER_Y),
+        pl.len().alias(PER_N),
+        pl.col("__x0").filter(pl.col("__x0").is_finite()).n_unique().alias("__ux"),
+        pl.col("__y0").filter(pl.col("__y0").is_finite()).n_unique().alias("__uy"),
+        *([(pl.col("__c0").mean() if color_numeric
+            else pl.col("__c0").drop_nulls().first()).alias(color)]
+          if by_color else []),
+    ).filter(pl.col(PER_X).is_not_null() & pl.col(PER_X).is_finite()
+             & pl.col(PER_Y).is_not_null() & pl.col(PER_Y).is_finite())
+    order = sorted(range(groups.height),
+                   key=lambda i: _natural_key(groups[group][i]))
+    groups = groups[order] if order else groups
+    groups = groups.with_columns(pl.col(group).alias(PER_GROUP))
+    # A column with one value in every group (a per-part measurement) is
+    # named plainly: its statistic is just that value.
+    const_x = groups.height > 0 and bool((groups["__ux"] <= 1).all())
+    const_y = groups.height > 0 and bool((groups["__uy"] <= 1).all())
+    labels = (stat_label(spec.x_stat, spec.x, const_x),
+              stat_label(spec.y_stat, spec.y, const_y))
+    n = groups.height
+    if n == 0:
+        empty = np.zeros((0, 2), dtype="float32")
+        return RenderData(empty, np.zeros((0, 4), "float32"), False, labels,
+                          None, 0, 0)
+    pos = np.column_stack([groups[PER_X].to_numpy(),
+                           groups[PER_Y].to_numpy()]).astype("float32")
+    colors, legend, eff_range, full_range = _colors(
+        groups, spec, None, lambda a: a, n, cmap, scale, crange)
+    fit = (linear_fit(groups[PER_X].to_numpy(), groups[PER_Y].to_numpy())
+           if spec.fit else None)
+    return RenderData(pos, colors, False, labels, legend, n, n, eff_range,
+                      full_range, rows=groups, fit=fit)
 
 
 # -- Mean ± SD: one point per group, with error bars -------------------
@@ -962,9 +1132,11 @@ def build_meansd(df, spec, *, sample: str | None = None,
                            groups[MS_MEAN].to_numpy()]).astype("float32")
     colors, legend, eff_range, full_range = _colors(
         groups, spec, None, lambda a: a, n, cmap, scale, crange)
+    fit = (linear_fit(groups[MS_X].to_numpy(), groups[MS_MEAN].to_numpy())
+           if getattr(spec, "fit", False) else None)
     return RenderData(pos, colors, False, (spec.x, value_label(values)), legend,
                       n, n, eff_range, full_range, rows=groups,
-                      err=err.astype("float32"))
+                      err=err.astype("float32"), fit=fit)
 
 
 def _colors(sub, spec, idx, take, n, cmap, scale, crange):

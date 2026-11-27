@@ -69,6 +69,7 @@ UI = {
     "sort": "sort--ascending", "contour_points": "dot-mark",
     "contour_lines": "contour--draw", "knee_line": "chart--average",
     "error_bars": "custom/error-bars",
+    "trend_line": "custom/trend-line",
     "popout": "custom/popout", "dockin": "custom/dockin",
     # panel
     "marker": "dot-mark", "colormap": "color-palette",

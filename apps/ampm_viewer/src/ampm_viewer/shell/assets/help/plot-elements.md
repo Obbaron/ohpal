@@ -33,6 +33,7 @@ anywhere on a filled contour).
 | **Category labels** | Font, size, style, colour and angle of the names under a bar, CoV or violin chart. |
 | **Colour bar** | The label; the numbers (font, size, colour, how many, format); where it sits (right of the plot or below it), its gap to the plot and its thickness. |
 | **Legend** | The title; the names (font, size, colour); where it sits (beside the plot or inside a corner of it); the frame and its colour. |
+| **Trend line** | Its label (font, size, style, colour; which corner of the plot; whether it shows the equation, R², p and the number of points) and the line (colour, width, dashed or solid). On 2D scatter and Mean ± SD plots with a [trend line](help:plot-scatter). |
 | **The data** | Depends on the plot, see below. |
 
 Leave an axis, colour-bar or legend **Text** empty to use the column's name;
